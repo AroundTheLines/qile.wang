@@ -4,6 +4,7 @@ import { client } from '@/lib/sanity'
 import { contentBySlugQuery } from '@/lib/queries'
 import type { ContentFull } from '@/lib/types'
 import { notFound } from 'next/navigation'
+import Navbar from '@/components/Navbar'
 
 interface Props {
   params: Promise<{ slug: string }>
@@ -16,7 +17,9 @@ export default async function ArticlePage({ params }: Props) {
   if (!item) return notFound()
 
   return (
-    <main className="min-h-screen bg-white px-6 py-16 max-w-2xl mx-auto">
+    <>
+      <Navbar />
+      <main className="min-h-screen bg-white px-6 pt-24 pb-16 max-w-2xl mx-auto">
       {/* Navbar icon transition target will mount here — Phase 4 */}
       <span className="text-xs tracking-widest uppercase text-gray-300">{item.content_type}</span>
       <h1 className="text-3xl font-light text-black mt-2 mb-12">{item.title}</h1>
@@ -44,6 +47,7 @@ export default async function ArticlePage({ params }: Props) {
           </ul>
         </section>
       )}
-    </main>
+      </main>
+    </>
   )
 }

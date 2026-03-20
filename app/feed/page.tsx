@@ -4,12 +4,15 @@ import { client } from '@/lib/sanity'
 import { allContentQuery } from '@/lib/queries'
 import type { ContentSummary } from '@/lib/types'
 import Link from 'next/link'
+import Navbar from '@/components/Navbar'
 
 export default async function FeedPage() {
   const items: ContentSummary[] = await client.fetch(allContentQuery)
 
   return (
-    <main className="min-h-screen bg-white px-6 py-16 max-w-2xl mx-auto">
+    <>
+      <Navbar />
+      <main className="min-h-screen bg-white px-6 pt-24 pb-16 max-w-2xl mx-auto">
       <h1 className="text-xs tracking-widest uppercase text-gray-400 mb-12">Feed</h1>
       <ul className="flex flex-col gap-8">
         {items.map((item) => (
@@ -31,6 +34,7 @@ export default async function FeedPage() {
           <li className="text-xs tracking-widest uppercase text-gray-300">No content yet.</li>
         )}
       </ul>
-    </main>
+      </main>
+    </>
   )
 }
