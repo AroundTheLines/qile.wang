@@ -5,9 +5,9 @@ import Image from 'next/image'
 import type { ContentSummary } from '@/lib/types'
 import { urlFor } from '@/lib/sanity'
 
-// More aggressive rotation → side items show their edge, sells the 3D depth
-const ANGLE_STEP_RAD = (30 * Math.PI) / 180
-const RADIUS = 420
+// Tight arc radius + steep step → 5 items visible, outer ones almost edge-on
+const ANGLE_STEP_RAD = (38 * Math.PI) / 180
+const RADIUS = 220
 
 export const ITEM_W = 150
 export const ITEM_H = 210  // slightly taller — sleeve proportion
@@ -30,12 +30,12 @@ export default function WardrobeItem({ item, index, offset, onClick }: Props) {
     return `translate3d(${x.toFixed(2)}px, 0, ${z.toFixed(2)}px) rotateY(${rotY.toFixed(2)}deg) translate(-50%, -50%)`
   })
 
-  // ── Opacity: fade items as they recede ────────────────────────────────────
+  // ── Opacity: 5 items visible — centre full, ±1 strong, ±2 readable ─────────
   const opacity = useTransform(offset, (off) => {
     const dist = Math.abs(index - off)
-    if (dist > 3.5) return 0
-    if (dist > 2.5) return 0.15
-    if (dist > 1.5) return 0.55
+    if (dist > 2.6) return 0
+    if (dist > 1.6) return 0.55   // ±2 items — slanted slivers, still legible
+    if (dist > 0.6) return 0.85   // ±1 items — clearly visible
     return 1
   })
 

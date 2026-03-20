@@ -5,7 +5,7 @@ import { useMotionValue, useMotionValueEvent, animate } from 'framer-motion'
 import WardrobeItem from './WardrobeItem'
 import type { ContentSummary } from '@/lib/types'
 
-const DRAG_PX_PER_ITEM = 130
+const DRAG_PX_PER_ITEM = 90
 
 interface Props {
   items: ContentSummary[]
@@ -71,7 +71,7 @@ export default function WardrobeCarousel({ items, initialIndex = 0 }: Props) {
         className="relative w-full touch-pan-y"
         style={{
           height: 'calc(55vh - 3rem)',
-          perspective: '900px',
+          perspective: '600px',
           cursor: 'grab',
         }}
         onPointerDown={handlePointerDown}
