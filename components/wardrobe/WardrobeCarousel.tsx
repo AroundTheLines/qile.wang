@@ -71,7 +71,6 @@ export default function WardrobeCarousel({ items, initialIndex = 0 }: Props) {
         className="relative w-full touch-pan-y"
         style={{
           height: 'calc(55vh - 3rem)',
-          perspective: '700px',
           cursor: 'grab',
         }}
         onPointerDown={handlePointerDown}
@@ -79,7 +78,9 @@ export default function WardrobeCarousel({ items, initialIndex = 0 }: Props) {
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
       >
-        <div className="absolute inset-0" style={{ transformStyle: 'preserve-3d' }}>
+        {/* perspective lives here — items are direct children, so it applies
+            correctly without preserve-3d. z-index then controls stacking order. */}
+        <div className="absolute inset-0" style={{ perspective: '700px' }}>
           {items.map((item, i) => (
             <WardrobeItem
               key={item._id}

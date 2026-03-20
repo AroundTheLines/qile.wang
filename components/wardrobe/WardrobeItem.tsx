@@ -36,6 +36,11 @@ function rotAngleRad(rel: number): number {
 export const ITEM_W = 150
 export const ITEM_H = 210  // sleeve proportion
 
+// Shadow tuning — rectangular projection, light source above + slightly behind
+const SHADOW_GAP = 18                        // px between card bottom and shadow top edge
+const SHADOW_H   = 55                        // how far the shadow projects downward
+const SHADOW_W   = Math.round(ITEM_W * 0.88) // slightly narrower than card (matches item shape)
+
 interface Props {
   item: ContentSummary
   index: number
@@ -63,15 +68,21 @@ export default function WardrobeItem({ item, index, offset, onClick }: Props) {
     return 1
   })
 
+  // ── Z-index: center item always on top ───────────────────────────────────
+  const zIndex = useTransform(offset, (off) => {
+    const dist = Math.abs(index - off)
+    return Math.round(Math.max(0, 20 - dist * 5))
+  })
+
   // ── Floor shadow ──────────────────────────────────────────────────────────
   const shadowOpacity = useTransform(offset, (off) => {
     const dist = Math.abs(index - off)
-    return Math.max(0, 0.32 - dist * 0.1)
+    return Math.max(0, 0.55 - dist * 0.48)  // centre≈0.55, ±1≈0.07, ±2+ → 0
   })
 
   const shadowScaleX = useTransform(offset, (off) => {
     const dist = Math.abs(index - off)
-    return 1 + dist * 0.3
+    return Math.max(0.5, 1 - dist * 0.2)   // shrinks for side items
   })
 
   // ── Diagonal gloss — driven by card rotation angle ───────────────────────
@@ -113,32 +124,37 @@ export default function WardrobeItem({ item, index, offset, onClick }: Props) {
       style={{
         transform,
         opacity,
+        zIndex,
         position: 'absolute',
         top: '50%',
         left: '50%',
         width: `${ITEM_W}px`,
         height: `${ITEM_H}px`,
+        transformOrigin: '0 0',
         willChange: 'transform',
         cursor: 'pointer',
       }}
       onClick={onClick}
     >
       {/* ── Floor shadow ──────────────────────────────────────────────────── */}
+      {/* Rectangular projection — matches blocky item shape. Light is above +
+          slightly behind, so shadow falls forward below the item. Darkest at
+          the top edge (nearest item) and fades out downward. blur() keeps
+          edges soft while the rectangle character is preserved. */}
       <motion.div
         aria-hidden
         style={{
           position: 'absolute',
-          bottom: -20,
-          left: '50%',
-          x: '-50%',
-          width: ITEM_W * 0.85,
-          height: 30,
+          top: ITEM_H + SHADOW_GAP,
+          left: `${(ITEM_W - SHADOW_W) / 2}px`,
+          width: SHADOW_W,
+          height: SHADOW_H,
           scaleX: shadowScaleX,
           opacity: shadowOpacity,
-          borderRadius: '50%',
+          transformOrigin: 'top center',
           background:
-            'radial-gradient(ellipse at 50% 30%, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0) 72%)',
-          transformOrigin: 'center center',
+            'linear-gradient(to bottom, rgba(0,0,0,0.32) 0%, rgba(0,0,0,0.14) 42%, rgba(0,0,0,0) 100%)',
+          filter: 'blur(6px)',
           pointerEvents: 'none',
         }}
       />
