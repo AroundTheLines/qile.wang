@@ -71,7 +71,7 @@ export default function WardrobeCarousel({ items, initialIndex = 0 }: Props) {
         className="relative w-full touch-pan-y"
         style={{
           height: 'calc(55vh - 3rem)',
-          perspective: '500px',
+          perspective: '700px',
           cursor: 'grab',
         }}
         onPointerDown={handlePointerDown}

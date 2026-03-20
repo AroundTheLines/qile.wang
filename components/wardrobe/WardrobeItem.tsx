@@ -5,20 +5,31 @@ import Image from 'next/image'
 import type { ContentSummary } from '@/lib/types'
 import { urlFor } from '@/lib/sanity'
 
-// Tight arc — items pack close like a real garment rack.
-// Progressive angle: ±1 at 45°, ±2 at 75°. Radius kept small enough
-// that all 5 items fit on a 375px mobile screen simultaneously.
-// CSS 3D depth ordering means ±2 items naturally sit behind ±1 items
-// wherever they overlap in 2D — no image bleed, exactly like the reference.
-const RADIUS = 155
+// Two independent axes — decoupled like the reference photo:
+//
+//  posAngle  — gentle 22°/step arc that controls X/Z world position.
+//              Keeps items evenly spaced with clear gaps between them.
+//
+//  rotAngle  — fast-saturating rotation that hits ~82° by ±1 items,
+//              so they appear as near-edge-on slivers regardless of
+//              their position on the arc.
+//
+// Using a single coupled angle (old approach) meant you couldn't get
+// aggressive card rotation without also cramming items together.
 
-function arcAngleRad(rel: number): number {
-  const dist = Math.abs(rel)
+const POS_RADIUS = 280             // arc radius for world position
+const POS_STEP_RAD = (22 * Math.PI) / 180  // gentle 22° step
+
+/** World-space X/Z position: smooth gentle arc */
+function posAngle(rel: number): number {
+  return rel * POS_STEP_RAD
+}
+
+/** Card face rotation: saturates quickly to 82° at ±1, then plateaus */
+function rotAngleRad(rel: number): number {
   const sign = rel < 0 ? -1 : 1
-  let deg: number
-  if (dist <= 1)      deg = dist * 45
-  else if (dist <= 2) deg = 45 + (dist - 1) * 30   // 45° → 75°
-  else                deg = 75 + (dist - 2) * 30
+  const dist  = Math.abs(rel)
+  const deg   = dist <= 1 ? dist * 82 : 82 + (dist - 1) * 8
   return sign * deg * (Math.PI / 180)
 }
 
@@ -33,13 +44,13 @@ interface Props {
 }
 
 export default function WardrobeItem({ item, index, offset, onClick }: Props) {
-  // ── 3D position on progressive arc ───────────────────────────────────────
+  // ── 3D position (gentle arc) + card rotation (aggressive, decoupled) ─────
   const transform = useTransform(offset, (off) => {
-    const rel = index - off
-    const angle = arcAngleRad(rel)
-    const x = RADIUS * Math.sin(angle)
-    const z = RADIUS * (Math.cos(angle) - 1)
-    const rotY = -(angle * 180) / Math.PI
+    const rel   = index - off
+    const pa    = posAngle(rel)
+    const x     = POS_RADIUS * Math.sin(pa)
+    const z     = POS_RADIUS * (Math.cos(pa) - 1)
+    const rotY  = -(rotAngleRad(rel) * 180) / Math.PI
     return `translate3d(${x.toFixed(2)}px, 0, ${z.toFixed(2)}px) rotateY(${rotY.toFixed(2)}deg) translate(-50%, -50%)`
   })
 
@@ -63,13 +74,13 @@ export default function WardrobeItem({ item, index, offset, onClick }: Props) {
     return 1 + dist * 0.3
   })
 
-  // ── Diagonal gloss ────────────────────────────────────────────────────────
+  // ── Diagonal gloss — driven by card rotation angle ───────────────────────
   const glossGradient = useTransform(offset, (off) => {
-    const rel = index - off
-    const angle = arcAngleRad(rel)
-    const xPct = Math.round(50 - (angle / (Math.PI / 2)) * 60)
+    const rel   = index - off
+    const angle = rotAngleRad(rel)   // visual rotation, not position
+    const xPct  = Math.round(50 - (angle / (Math.PI / 2)) * 60)
     const strength = Math.max(0.12, 0.52 - Math.abs(rel) * 0.09)
-    const fade = Math.max(0, strength - 0.18)
+    const fade  = Math.max(0, strength - 0.18)
     return (
       `linear-gradient(130deg, ` +
       `rgba(255,255,255,${strength.toFixed(2)}) 0%, ` +
@@ -79,11 +90,11 @@ export default function WardrobeItem({ item, index, offset, onClick }: Props) {
     )
   })
 
-  // ── Refraction streak ─────────────────────────────────────────────────────
+  // ── Refraction streak — driven by card rotation angle ────────────────────
   const refractionGradient = useTransform(offset, (off) => {
-    const rel = index - off
-    const angle = arcAngleRad(rel)
-    const dist = Math.abs(rel)
+    const rel   = index - off
+    const angle = rotAngleRad(rel)   // visual rotation, not position
+    const dist  = Math.abs(rel)
     const strength = dist < 0.4 ? 0 : Math.min(0.42, (dist - 0.4) * 0.28)
     if (strength < 0.02) return 'none'
     const x = Math.max(6, Math.min(88, Math.round(50 + (angle / (Math.PI / 2)) * 80)))
