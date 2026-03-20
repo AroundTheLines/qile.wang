@@ -5,19 +5,20 @@ import Image from 'next/image'
 import type { ContentSummary } from '@/lib/types'
 import { urlFor } from '@/lib/sanity'
 
-// Progressive arc: angle grows faster as you move outward from centre.
-// dist 0→1 maps to 0°→50°, dist 1→2 maps to 50°→80°, beyond: +30°/step.
-// This gives ±1 items a clear angle and ±2 items nearly edge-on slivers,
-// matching the tight hypebeast rack look in the reference.
-const RADIUS = 240
+// Tight arc — items pack close like a real garment rack.
+// Progressive angle: ±1 at 45°, ±2 at 75°. Radius kept small enough
+// that all 5 items fit on a 375px mobile screen simultaneously.
+// CSS 3D depth ordering means ±2 items naturally sit behind ±1 items
+// wherever they overlap in 2D — no image bleed, exactly like the reference.
+const RADIUS = 155
 
 function arcAngleRad(rel: number): number {
   const dist = Math.abs(rel)
   const sign = rel < 0 ? -1 : 1
   let deg: number
-  if (dist <= 1)      deg = dist * 50
-  else if (dist <= 2) deg = 50 + (dist - 1) * 30
-  else                deg = 80 + (dist - 2) * 30
+  if (dist <= 1)      deg = dist * 45
+  else if (dist <= 2) deg = 45 + (dist - 1) * 30   // 45° → 75°
+  else                deg = 75 + (dist - 2) * 30
   return sign * deg * (Math.PI / 180)
 }
 
@@ -42,12 +43,12 @@ export default function WardrobeItem({ item, index, offset, onClick }: Props) {
     return `translate3d(${x.toFixed(2)}px, 0, ${z.toFixed(2)}px) rotateY(${rotY.toFixed(2)}deg) translate(-50%, -50%)`
   })
 
-  // ── Opacity: centre full, ±1 strong, ±2 faint slivers ───────────────────
+  // ── Opacity: all 5 items clearly visible ─────────────────────────────────
   const opacity = useTransform(offset, (off) => {
     const dist = Math.abs(index - off)
     if (dist > 2.6) return 0
-    if (dist > 1.6) return 0.5
-    if (dist > 0.6) return 0.85
+    if (dist > 1.6) return 0.72  // ±2 — clearly visible slivers
+    if (dist > 0.6) return 0.9   // ±1 — strong
     return 1
   })
 
