@@ -5,12 +5,24 @@ import Image from 'next/image'
 import type { ContentSummary } from '@/lib/types'
 import { urlFor } from '@/lib/sanity'
 
-// Tight arc radius + steep step → 5 items visible, outer ones almost edge-on
-const ANGLE_STEP_RAD = (38 * Math.PI) / 180
-const RADIUS = 220
+// Progressive arc: angle grows faster as you move outward from centre.
+// dist 0→1 maps to 0°→50°, dist 1→2 maps to 50°→80°, beyond: +30°/step.
+// This gives ±1 items a clear angle and ±2 items nearly edge-on slivers,
+// matching the tight hypebeast rack look in the reference.
+const RADIUS = 240
+
+function arcAngleRad(rel: number): number {
+  const dist = Math.abs(rel)
+  const sign = rel < 0 ? -1 : 1
+  let deg: number
+  if (dist <= 1)      deg = dist * 50
+  else if (dist <= 2) deg = 50 + (dist - 1) * 30
+  else                deg = 80 + (dist - 2) * 30
+  return sign * deg * (Math.PI / 180)
+}
 
 export const ITEM_W = 150
-export const ITEM_H = 210  // slightly taller — sleeve proportion
+export const ITEM_H = 210  // sleeve proportion
 
 interface Props {
   item: ContentSummary
@@ -20,22 +32,22 @@ interface Props {
 }
 
 export default function WardrobeItem({ item, index, offset, onClick }: Props) {
-  // ── 3D position on arc ────────────────────────────────────────────────────
+  // ── 3D position on progressive arc ───────────────────────────────────────
   const transform = useTransform(offset, (off) => {
     const rel = index - off
-    const angle = rel * ANGLE_STEP_RAD
+    const angle = arcAngleRad(rel)
     const x = RADIUS * Math.sin(angle)
     const z = RADIUS * (Math.cos(angle) - 1)
     const rotY = -(angle * 180) / Math.PI
     return `translate3d(${x.toFixed(2)}px, 0, ${z.toFixed(2)}px) rotateY(${rotY.toFixed(2)}deg) translate(-50%, -50%)`
   })
 
-  // ── Opacity: 5 items visible — centre full, ±1 strong, ±2 readable ─────────
+  // ── Opacity: centre full, ±1 strong, ±2 faint slivers ───────────────────
   const opacity = useTransform(offset, (off) => {
     const dist = Math.abs(index - off)
     if (dist > 2.6) return 0
-    if (dist > 1.6) return 0.55   // ±2 items — slanted slivers, still legible
-    if (dist > 0.6) return 0.85   // ±1 items — clearly visible
+    if (dist > 1.6) return 0.5
+    if (dist > 0.6) return 0.85
     return 1
   })
 
@@ -50,14 +62,11 @@ export default function WardrobeItem({ item, index, offset, onClick }: Props) {
     return 1 + dist * 0.3
   })
 
-  // ── Diagonal gloss: much more aggressive than before ─────────────────────
-  // Simulates the broad sheen you see on a glossy plastic garment bag.
-  // Centre item: strong top-left highlight. Side items: shifted, still opaque.
+  // ── Diagonal gloss ────────────────────────────────────────────────────────
   const glossGradient = useTransform(offset, (off) => {
     const rel = index - off
-    const angle = rel * ANGLE_STEP_RAD
+    const angle = arcAngleRad(rel)
     const xPct = Math.round(50 - (angle / (Math.PI / 2)) * 60)
-    // Max strength lifted from 0.22 → 0.52 for a proper plastic sheen
     const strength = Math.max(0.12, 0.52 - Math.abs(rel) * 0.09)
     const fade = Math.max(0, strength - 0.18)
     return (
@@ -69,17 +78,13 @@ export default function WardrobeItem({ item, index, offset, onClick }: Props) {
     )
   })
 
-  // ── Refraction streak: vertical band that sweeps as the sleeve rotates ────
-  // When a glossy plastic sleeve is at an angle, you see a bright vertical
-  // line where the light bends through the curved surface. This simulates it.
+  // ── Refraction streak ─────────────────────────────────────────────────────
   const refractionGradient = useTransform(offset, (off) => {
     const rel = index - off
-    const angle = rel * ANGLE_STEP_RAD
+    const angle = arcAngleRad(rel)
     const dist = Math.abs(rel)
-    // No streak on the dead-centre item (facing viewer flat)
     const strength = dist < 0.4 ? 0 : Math.min(0.42, (dist - 0.4) * 0.28)
     if (strength < 0.02) return 'none'
-    // Streak position: driven by rotation angle, clamped away from edges
     const x = Math.max(6, Math.min(88, Math.round(50 + (angle / (Math.PI / 2)) * 80)))
     return (
       `linear-gradient(90deg, ` +
