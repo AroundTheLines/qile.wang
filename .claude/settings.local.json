@@ -8,7 +8,20 @@
       "Bash(npx tsc:*)",
       "Bash(npm run:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(node -e \"const t = require\\(''@sanity/image-url''\\); console.log\\(Object.keys\\(t\\)\\)\")",
+      "Bash(npx sanity:*)",
+      "Read(//Users/qilewang/.config/sanity/**)",
+      "Read(//Users/qilewang/.sanity/**)",
+      "Bash(npx tsx:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(node -e \"require\\(''sharp''\\); console.log\\(''sharp ok''\\)\")",
+      "WebSearch",
+      "WebFetch(domain:unsplash.com)",
+      "WebFetch(domain:images.unsplash.com)",
+      "Bash(git checkout:*)",
+      "Bash(git push:*)",
+      "Bash(brew install:*)"
     ]
   }
 }

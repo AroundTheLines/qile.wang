@@ -1,10 +1,10 @@
 import type { PortableTextBlock } from 'sanity'
+import type { SanityImageObject } from '@sanity/image-url'
 
 export type ContentType = 'item' | 'post'
 
-export interface SanityImage {
-  _type: 'image'
-  asset: { _ref: string; _type: 'reference' }
+// Alias Sanity's own image type so urlFor() accepts it without casting
+export type SanityImage = SanityImageObject & {
   hotspot?: { x: number; y: number; height: number; width: number }
 }
 
