@@ -17,8 +17,8 @@ import { urlFor } from '@/lib/sanity'
 // Using a single coupled angle (old approach) meant you couldn't get
 // aggressive card rotation without also cramming items together.
 
-const POS_RADIUS = 280             // arc radius for world position
-const POS_STEP_RAD = (22 * Math.PI) / 180  // gentle 22° step
+const POS_RADIUS = 220             // arc radius for world position
+const POS_STEP_RAD = (40 * Math.PI) / 180  // 40° step — keeps projected edges ~40px apart
 
 /** World-space X/Z position: smooth gentle arc */
 function posAngle(rel: number): number {
