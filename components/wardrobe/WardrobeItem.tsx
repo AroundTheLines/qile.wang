@@ -5,12 +5,12 @@ import Image from 'next/image'
 import type { ContentSummary } from '@/lib/types'
 import { urlFor } from '@/lib/sanity'
 
-const ANGLE_STEP_RAD = (25 * Math.PI) / 180
+// More aggressive rotation → side items show their edge, sells the 3D depth
+const ANGLE_STEP_RAD = (30 * Math.PI) / 180
 const RADIUS = 420
 
-// Item dimensions — larger for presence
 export const ITEM_W = 150
-export const ITEM_H = 200
+export const ITEM_H = 210  // slightly taller — sleeve proportion
 
 interface Props {
   item: ContentSummary
@@ -39,35 +39,56 @@ export default function WardrobeItem({ item, index, offset, onClick }: Props) {
     return 1
   })
 
-  // ── Floor shadow: ellipse beneath the item, driven by distance from centre ─
-  // Centre item: tight, dark, close. Side items: wide, faint, offset away.
+  // ── Floor shadow ──────────────────────────────────────────────────────────
   const shadowOpacity = useTransform(offset, (off) => {
     const dist = Math.abs(index - off)
-    return Math.max(0, 0.28 - dist * 0.1)
+    return Math.max(0, 0.32 - dist * 0.1)
   })
 
   const shadowScaleX = useTransform(offset, (off) => {
     const dist = Math.abs(index - off)
-    // Shadow widens as item recedes (perspective foreshortening illusion)
-    return 1 + dist * 0.25
+    return 1 + dist * 0.3
   })
 
-  const shadowBlur = useTransform(offset, (off) => {
-    const dist = Math.abs(index - off)
-    return `${6 + dist * 10}px`
-  })
-
-  // ── Gloss: specular highlight shifts with rotation angle ──────────────────
-  // Centre item faces viewer → highlight top-left.
-  // Left items angled right → highlight shifts to right edge.
-  // Right items angled left → highlight shifts to left edge.
+  // ── Diagonal gloss: much more aggressive than before ─────────────────────
+  // Simulates the broad sheen you see on a glossy plastic garment bag.
+  // Centre item: strong top-left highlight. Side items: shifted, still opaque.
   const glossGradient = useTransform(offset, (off) => {
     const rel = index - off
     const angle = rel * ANGLE_STEP_RAD
-    // Map angle to a gradient origin: -π/2..+π/2 → 100%..0%
-    const xPct = Math.round(50 - (angle / (Math.PI / 2)) * 55)
-    const strength = Math.max(0.06, 0.22 - Math.abs(rel) * 0.06)
-    return `linear-gradient(135deg, rgba(255,255,255,${strength}) 0% ${xPct}%, rgba(255,255,255,0) ${xPct + 40}%)`
+    const xPct = Math.round(50 - (angle / (Math.PI / 2)) * 60)
+    // Max strength lifted from 0.22 → 0.52 for a proper plastic sheen
+    const strength = Math.max(0.12, 0.52 - Math.abs(rel) * 0.09)
+    const fade = Math.max(0, strength - 0.18)
+    return (
+      `linear-gradient(130deg, ` +
+      `rgba(255,255,255,${strength.toFixed(2)}) 0%, ` +
+      `rgba(255,255,255,${fade.toFixed(2)}) ${Math.max(0, xPct - 10)}%, ` +
+      `rgba(255,255,255,0.03) ${xPct + 18}%, ` +
+      `rgba(255,255,255,0) 100%)`
+    )
+  })
+
+  // ── Refraction streak: vertical band that sweeps as the sleeve rotates ────
+  // When a glossy plastic sleeve is at an angle, you see a bright vertical
+  // line where the light bends through the curved surface. This simulates it.
+  const refractionGradient = useTransform(offset, (off) => {
+    const rel = index - off
+    const angle = rel * ANGLE_STEP_RAD
+    const dist = Math.abs(rel)
+    // No streak on the dead-centre item (facing viewer flat)
+    const strength = dist < 0.4 ? 0 : Math.min(0.42, (dist - 0.4) * 0.28)
+    if (strength < 0.02) return 'none'
+    // Streak position: driven by rotation angle, clamped away from edges
+    const x = Math.max(6, Math.min(88, Math.round(50 + (angle / (Math.PI / 2)) * 80)))
+    return (
+      `linear-gradient(90deg, ` +
+      `transparent ${x - 6}%, ` +
+      `rgba(255,255,255,${strength.toFixed(2)}) ${x}%, ` +
+      `rgba(255,255,255,${(strength * 0.45).toFixed(2)}) ${x + 3}%, ` +
+      `rgba(255,255,255,${(strength * 0.12).toFixed(2)}) ${x + 6}%, ` +
+      `transparent ${x + 11}%)`
+    )
   })
 
   return (
@@ -90,39 +111,50 @@ export default function WardrobeItem({ item, index, offset, onClick }: Props) {
         aria-hidden
         style={{
           position: 'absolute',
-          bottom: -18,
+          bottom: -20,
           left: '50%',
           x: '-50%',
           width: ITEM_W * 0.85,
-          height: 28,
+          height: 30,
           scaleX: shadowScaleX,
           opacity: shadowOpacity,
           borderRadius: '50%',
           background:
-            'radial-gradient(ellipse at 50% 30%, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 72%)',
+            'radial-gradient(ellipse at 50% 30%, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0) 72%)',
           transformOrigin: 'center center',
           pointerEvents: 'none',
         }}
       />
 
-      {/* ── Acrylic sleeve ────────────────────────────────────────────────── */}
+      {/* ── Acrylic / glossy plastic sleeve ──────────────────────────────── */}
+      {/* Outer box-shadow: a multi-layer acrylic frame edge (bright top/left
+          rims + outer floating drop shadow). Inner padding gives the item
+          room to "hang" inside the sleeve — correct for transparent-bg images. */}
       <div
         className="w-full h-full relative overflow-hidden select-none"
         style={{
-          borderRadius: '3px',
-          border: '1px solid rgba(210,210,210,0.6)',
-          background: 'rgba(250,250,250,0.4)',
-          boxShadow:
-            'inset 0 1px 0 rgba(255,255,255,0.95), inset 0 0 0 1px rgba(255,255,255,0.25)',
+          borderRadius: '4px',
+          border: '1.5px solid rgba(230,230,230,0.75)',
+          background: 'rgba(252,252,250,0.12)',
+          boxShadow: [
+            // Acrylic rim edges — top is brightest (overhead light source)
+            'inset 0 2px 0 rgba(255,255,255,1)',
+            'inset 2px 0 0 rgba(255,255,255,0.65)',
+            'inset -1px 0 0 rgba(255,255,255,0.3)',
+            'inset 0 -1px 0 rgba(255,255,255,0.18)',
+            // Outer floating shadows
+            '0 6px 28px rgba(0,0,0,0.13)',
+            '0 2px 8px rgba(0,0,0,0.08)',
+          ].join(', '),
         }}
       >
-        {/* Cover image */}
+        {/* Cover image — object-contain so transparent-bg items float inside */}
         {item.cover_image ? (
           <Image
-            src={urlFor(item.cover_image).width(300).height(400).url()}
+            src={urlFor(item.cover_image).width(300).height(420).url()}
             alt={item.title}
             fill
-            className="object-cover"
+            className="object-contain p-2"
             sizes="150px"
             draggable={false}
           />
@@ -134,21 +166,40 @@ export default function WardrobeItem({ item, index, offset, onClick }: Props) {
           </div>
         )}
 
-        {/* Position-aware specular gloss overlay */}
+        {/* Static top-light bar: overhead light hitting the plastic rim.
+            Always present — like the bright strip at the top of a plastic bag. */}
+        <div
+          aria-hidden
+          className="absolute inset-x-0 top-0 pointer-events-none"
+          style={{
+            height: '38%',
+            background:
+              'linear-gradient(to bottom, rgba(255,255,255,0.38) 0%, rgba(255,255,255,0.1) 35%, rgba(255,255,255,0) 100%)',
+          }}
+        />
+
+        {/* Position-aware diagonal gloss sweep */}
         <motion.div
           aria-hidden
           className="absolute inset-0 pointer-events-none"
           style={{ background: glossGradient }}
         />
 
-        {/* Plastic film edge — subtle inner border highlight */}
+        {/* Rotation-coupled refraction streak */}
+        <motion.div
+          aria-hidden
+          className="absolute inset-0 pointer-events-none"
+          style={{ background: refractionGradient }}
+        />
+
+        {/* Inner acrylic frame highlight — closes the illusion of physical depth */}
         <div
           aria-hidden
           className="absolute inset-0 pointer-events-none"
           style={{
-            borderRadius: '3px',
+            borderRadius: '4px',
             boxShadow:
-              'inset 0 0 0 1px rgba(255,255,255,0.5), inset 0 1px 3px rgba(255,255,255,0.6)',
+              'inset 0 0 0 1px rgba(255,255,255,0.45), inset 0 1px 4px rgba(255,255,255,0.55)',
           }}
         />
       </div>
