@@ -21,7 +21,21 @@
       "WebFetch(domain:images.unsplash.com)",
       "Bash(git checkout:*)",
       "Bash(git push:*)",
-      "Bash(brew install:*)"
+      "Bash(brew install:*)",
+      "Bash(gh pr:*)",
+      "Bash(gh repo:*)",
+      "Bash(git merge:*)",
+      "Bash(git stash:*)",
+      "Bash(git branch:*)",
+      "Bash(find /Users/qilewang/GithubRepos/personal-site -type f \\\\\\(-name *.ts -o -name *.tsx \\\\\\) ! -path */node_modules/* -exec grep -n \"TODO\\\\|FIXME\\\\|XXX\\\\|HACK\" {} +)",
+      "Bash(grep -n \"Phase\\\\|TODO\\\\|layoutId\\\\|hero\\\\|Phase 4\\\\|transition\" /Users/qilewang/GithubRepos/personal-site/app/[slug]/page.tsx /Users/qilewang/GithubRepos/personal-site/components/Navbar.tsx)",
+      "Bash(/opt/homebrew/bin/node --version)",
+      "Read(//usr/local/Cellar/nvm/0.37.2/**)",
+      "Bash(/opt/homebrew/bin/node /opt/homebrew/lib/node_modules/npm/bin/npm-cli.js --version)",
+      "Bash(chmod +x /Users/qilewang/GithubRepos/personal-site/dev.sh)",
+      "WebFetch(domain:github.com)",
+      "Bash(git pull:*)",
+      "Bash(git diff:*)"
     ]
   }
 }

@@ -12,7 +12,7 @@ export default async function WardrobePage() {
   return (
     <>
       <Navbar />
-      <main className="h-screen bg-white flex flex-col items-center justify-center pt-12 pb-6">
+      <main className="min-h-screen bg-white flex flex-col items-center pt-12">
         <WardrobeShell items={items} />
       </main>
     </>

@@ -17,7 +17,7 @@ import { urlFor } from '@/lib/sanity'
 // Using a single coupled angle (old approach) meant you couldn't get
 // aggressive card rotation without also cramming items together.
 
-const POS_RADIUS = 220             // arc radius for world position
+const BASE_POS_RADIUS = 220        // arc radius for world position at scale=1
 const POS_STEP_RAD = (40 * Math.PI) / 180  // 40° step — keeps projected edges ~40px apart
 
 /** World-space X/Z position: smooth gentle arc */
@@ -33,22 +33,27 @@ function rotAngleRad(rel: number): number {
   return sign * deg * (Math.PI / 180)
 }
 
-export const ITEM_W = 150
-export const ITEM_H = 210  // sleeve proportion
-
-// Shadow tuning — rectangular projection, light source above + slightly behind
-const SHADOW_GAP = 18                        // px between card bottom and shadow top edge
-const SHADOW_H   = 55                        // how far the shadow projects downward
-const SHADOW_W   = Math.round(ITEM_W * 0.88) // slightly narrower than card (matches item shape)
+export const BASE_ITEM_W = 150
+export const BASE_ITEM_H = 210  // sleeve proportion
 
 interface Props {
   item: ContentSummary
   index: number
   offset: MotionValue<number>
   onClick: () => void
+  scale: number
 }
 
-export default function WardrobeItem({ item, index, offset, onClick }: Props) {
+export default function WardrobeItem({ item, index, offset, onClick, scale }: Props) {
+  // ── Scaled geometry — all pixel values derived from the scale factor ──────
+  const ITEM_W    = BASE_ITEM_W * scale
+  const ITEM_H    = BASE_ITEM_H * scale
+  const POS_RADIUS = BASE_POS_RADIUS * scale
+  // Shadow tuning — rectangular projection, light source above + slightly behind
+  const SHADOW_GAP = 18 * scale               // px between card bottom and shadow top edge
+  const SHADOW_H   = 55 * scale               // how far the shadow projects downward
+  const SHADOW_W   = Math.round(ITEM_W * 0.88) // slightly narrower than card
+
   // ── 3D position (gentle arc) + card rotation (aggressive, decoupled) ─────
   const transform = useTransform(offset, (off) => {
     const rel   = index - off
@@ -128,8 +133,8 @@ export default function WardrobeItem({ item, index, offset, onClick }: Props) {
         position: 'absolute',
         top: '50%',
         left: '50%',
-        width: `${ITEM_W}px`,
-        height: `${ITEM_H}px`,
+        width: ITEM_W,
+        height: ITEM_H,
         transformOrigin: '0 0',
         willChange: 'transform',
         cursor: 'pointer',
@@ -184,11 +189,11 @@ export default function WardrobeItem({ item, index, offset, onClick }: Props) {
         {/* Cover image — object-contain so transparent-bg items float inside */}
         {item.cover_image ? (
           <Image
-            src={urlFor(item.cover_image).width(300).height(420).url()}
+            src={urlFor(item.cover_image).width(Math.round(BASE_ITEM_W * 3)).height(Math.round(BASE_ITEM_H * 3)).url()}
             alt={item.title}
             fill
             className="object-contain p-2"
-            sizes="150px"
+            sizes={`${Math.round(ITEM_W)}px`}
             draggable={false}
           />
         ) : (

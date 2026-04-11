@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "Next.js dev",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "/Users/qilewang/GithubRepos/personal-site/dev.sh",
+      "runtimeArgs": [],
       "port": 3000
     }
   ]

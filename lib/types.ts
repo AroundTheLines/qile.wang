@@ -31,6 +31,7 @@ export interface ContentSummary {
   tags?: string[]
   published_at: string
   acquired_at?: string
+  body?: PortableTextBlock[]
 }
 
 export interface ContentFull extends ContentSummary {
