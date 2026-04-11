@@ -24,6 +24,7 @@ export const contentBySlugQuery = groq`
     gallery,
     tags,
     published_at,
+    "acquired_at": locations | order(sort_date asc)[0].sort_date,
     acquisition,
     locations[] | order(sort_date asc) {
       label,
@@ -45,7 +46,6 @@ export const wardrobeContentQuery = groq`
     cover_image,
     tags,
     published_at,
-    body,
     "acquired_at": locations | order(sort_date asc)[0].sort_date,
   }
 `
