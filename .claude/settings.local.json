@@ -35,7 +35,10 @@
       "Bash(chmod +x /Users/qilewang/GithubRepos/personal-site/dev.sh)",
       "WebFetch(domain:github.com)",
       "Bash(git pull:*)",
-      "Bash(git diff:*)"
+      "Bash(git diff:*)",
+      "Bash(git fetch:*)",
+      "Bash(xargs ls:*)",
+      "WebFetch(domain:boneyard.vercel.app)"
     ]
   }
 }
