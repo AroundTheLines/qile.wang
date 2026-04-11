@@ -9,9 +9,11 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@chenglou/pretext": "^0.0.5",
     "@portabletext/react": "^6.0.3",
     "@sanity/image-url": "^2.0.3",
     "@sanity/vision": "^5.17.1",
+    "boneyard-js": "^1.7.2",
     "framer-motion": "^12.38.0",
     "next": "16.2.0",
     "next-sanity": "^12.1.3",

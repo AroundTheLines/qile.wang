@@ -2,50 +2,36 @@
 
 import { useRef, useState, useEffect } from 'react'
 import { useMotionValue, useMotionValueEvent, animate, AnimatePresence, motion } from 'framer-motion'
-import { PortableText } from '@portabletext/react'
-import type { PortableTextComponents } from '@portabletext/react'
+import { prepare, layout } from '@chenglou/pretext'
 import WardrobeItem, { BASE_ITEM_H } from './WardrobeItem'
 import type { ContentSummary } from '@/lib/types'
+import { useRouter, usePathname } from 'next/navigation'
 
 // Reference viewport the design was built for (iPhone 14 Pro / ~390px wide)
 const REF_WIDTH = 390
-// ─── Tune this to control how large items get on wide/tall screens ───────────
 const MAX_SCALE = 1.8
-
-const bodyComponents: PortableTextComponents = {
-  block: {
-    normal: ({ children }) => (
-      <p className="text-gray-500 text-base font-light leading-relaxed mb-5">{children}</p>
-    ),
-    h2: ({ children }) => (
-      <h2 className="text-[10px] tracking-[0.2em] uppercase text-gray-300 mt-10 mb-3">{children}</h2>
-    ),
-  },
-  list: {
-    bullet: ({ children }) => <ul className="mb-5 flex flex-col gap-2">{children}</ul>,
-  },
-  listItem: {
-    bullet: ({ children }) => (
-      <li className="text-gray-500 text-base font-light leading-relaxed flex gap-3">
-        <span className="text-gray-300 select-none shrink-0">—</span>
-        <span>{children}</span>
-      </li>
-    ),
-  },
-  marks: {
-    strong: ({ children }) => <strong className="font-medium text-gray-700">{children}</strong>,
-    em: ({ children }) => <em className="italic">{children}</em>,
-  },
-}
-
 const BASE_DRAG_PX_PER_ITEM = 70
+
+// Font string must match the resolved CSS value on the museum label <h2>.
+// h2 inherits body font-family (Arial, Helvetica, sans-serif) and uses
+// text-xl (20px) font-light (weight 300). pretext only supports standard
+// system fonts — custom web fonts like Geist are not yet supported.
+const LABEL_FONT = '300 20px/1.4 Arial, Helvetica, sans-serif'
 
 interface Props {
   items: ContentSummary[]
-  initialIndex?: number
 }
 
-export default function WardrobeCarousel({ items, initialIndex = 0 }: Props) {
+export default function WardrobeCarousel({ items }: Props) {
+  const router = useRouter()
+  const pathname = usePathname()
+
+  // Derive initial index from URL — handles hard nav directly to /wardrobe/[slug]
+  const slugFromPath = pathname.startsWith('/wardrobe/') ? pathname.slice('/wardrobe/'.length) : null
+  const initialIndex = slugFromPath
+    ? Math.max(0, items.findIndex(i => i.slug.current === slugFromPath))
+    : 0
+
   const offset = useMotionValue(initialIndex)
   const [activeIndex, setActiveIndex] = useState(initialIndex)
   const isDragging = useRef(false)
@@ -53,15 +39,7 @@ export default function WardrobeCarousel({ items, initialIndex = 0 }: Props) {
   const dragStartOffset = useRef(initialIndex)
 
   // ── Responsive scale ────────────────────────────────────────────────────
-  // Scale based purely on viewport width so items occupy the same fraction
-  // of the screen as on the reference mobile viewport (~390px).
-  // Capped at MAX_SCALE (1.8×) so items don't become enormous on ultra-wide monitors.
-  //
-  // Stage height adapts to the scaled items rather than being viewport-
-  // percentage-based — this prevents short laptop screens from clamping scale
-  // to near 1× (landscape desktops are wide but not tall).
   const [scale, setScale] = useState(1)
-  // Default: BASE_ITEM_H (210) + 100 px shadow/breathing + 13 px top-half offset = 323
   const [stageHeight, setStageHeight] = useState(BASE_ITEM_H + 113)
   const [textMaxWidth, setTextMaxWidth] = useState(512)
   useEffect(() => {
@@ -70,13 +48,9 @@ export default function WardrobeCarousel({ items, initialIndex = 0 }: Props) {
       const vh = window.innerHeight
       const s = Math.max(1, Math.min(vw / REF_WIDTH, MAX_SCALE))
       setScale(s)
-      // Stage must contain the item + its shadow + padding.
-      // Also keep at least 55 vh minus navbar for a natural look on mobile.
       const naturalH = Math.round(vh * 0.55 - 48)
-      const contentH = Math.round(BASE_ITEM_H * s + 100) // 100 px for shadow + breathing
+      const contentH = Math.round(BASE_ITEM_H * s + 100)
       setStageHeight(Math.max(naturalH, contentH))
-      // Body text: scale gently but never exceed viewport width minus comfortable margins.
-      // Hard cap at 680 px keeps line lengths readable on large screens.
       setTextMaxWidth(Math.min(Math.round(512 * s), 680, vw - 64))
     }
     update()
@@ -88,6 +62,11 @@ export default function WardrobeCarousel({ items, initialIndex = 0 }: Props) {
     const rounded = Math.round(val)
     if (rounded >= 0 && rounded < items.length) setActiveIndex(rounded)
   })
+
+  const navigateTo = (index: number) => {
+    const item = items[index]
+    if (item) router.push('/wardrobe/' + item.slug.current, { scroll: false })
+  }
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     isDragging.current = true
@@ -108,15 +87,22 @@ export default function WardrobeCarousel({ items, initialIndex = 0 }: Props) {
     isDragging.current = false
     const snapped = Math.max(0, Math.min(items.length - 1, Math.round(offset.get())))
     animate(offset, snapped, { type: 'spring', stiffness: 500, damping: 48 })
+    navigateTo(snapped)
   }
 
   const goTo = (index: number) => {
-    animate(offset, Math.max(0, Math.min(items.length - 1, index)), {
-      type: 'spring', stiffness: 420, damping: 42,
-    })
+    const idx = Math.max(0, Math.min(items.length - 1, index))
+    animate(offset, idx, { type: 'spring', stiffness: 420, damping: 42 })
+    navigateTo(idx)
   }
 
   const activeItem = items[activeIndex]
+
+  // ── Pretext pre-sizing for museum label ─────────────────────────────────
+  const preparedTitle = activeItem ? prepare(activeItem.title, LABEL_FONT) : null
+  const labelLayout = preparedTitle
+    ? layout(preparedTitle, textMaxWidth - 48, 1.4 * 20)
+    : null
 
   if (items.length === 0) {
     return (
@@ -129,22 +115,15 @@ export default function WardrobeCarousel({ items, initialIndex = 0 }: Props) {
   return (
     <div className="flex flex-col items-center w-full select-none">
 
-      {/* ── 3D Stage ─────────────────────────────────────────────────────────
-          Height is computed from scale so items always fit. Minimum is 55 vh
-          minus the navbar (natural mobile feel); grows with scale on desktop. */}
+      {/* ── 3D Stage ───────────────────────────────────────────────────────── */}
       <div
         className="relative w-full touch-pan-y"
-        style={{
-          height: stageHeight,
-          cursor: 'grab',
-        }}
+        style={{ height: stageHeight, cursor: 'grab' }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
       >
-        {/* perspective lives here — items are direct children, so it applies
-            correctly without preserve-3d. z-index then controls stacking order. */}
         <div className="absolute inset-0" style={{ perspective: `${Math.round(700 * scale)}px` }}>
           {items.map((item, i) => (
             <WardrobeItem
@@ -202,40 +181,33 @@ export default function WardrobeCarousel({ items, initialIndex = 0 }: Props) {
       </div>
 
       {/* ── Museum label ──────────────────────────────────────────────────── */}
-      {activeItem && (
-        <div className="shrink-0 text-center px-6">
-          <p className="text-[10px] tracking-[0.2em] uppercase text-gray-400">
-            {activeItem.content_type}
-            {activeItem.acquired_at ? ` · ${new Date(activeItem.acquired_at).getFullYear()}` : ''}
-          </p>
-          <h2 className="text-xl font-light text-black mt-1.5 tracking-wide">
-            {activeItem.title}
-          </h2>
-          {activeItem.tags && activeItem.tags.length > 0 && (
-            <p className="text-[10px] tracking-widest uppercase text-gray-300 mt-2">
-              {activeItem.tags.join(' · ')}
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* ── Item body ─────────────────────────────────────────────────────── */}
       <AnimatePresence mode="wait">
-        {activeItem?.body && activeItem.body.length > 0 && (
+        {activeItem && (
           <motion.div
             key={activeItem._id}
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.28, ease: 'easeOut' }}
-            className="w-full px-8 pt-10 pb-20"
-            style={{ maxWidth: textMaxWidth }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="shrink-0 text-center px-6"
+            style={labelLayout ? { minHeight: labelLayout.height } : undefined}
           >
-            <div className="w-6 h-px bg-gray-200 mx-auto mb-10" />
-            <PortableText value={activeItem.body} components={bodyComponents} />
+            <p className="text-[10px] tracking-[0.2em] uppercase text-gray-400">
+              {activeItem.content_type}
+              {activeItem.acquired_at ? ` · ${new Date(activeItem.acquired_at).getFullYear()}` : ''}
+            </p>
+            <h2 className="text-xl font-light text-black mt-1.5 tracking-wide">
+              {activeItem.title}
+            </h2>
+            {activeItem.tags && activeItem.tags.length > 0 && (
+              <p className="text-[10px] tracking-widest uppercase text-gray-300 mt-2">
+                {activeItem.tags.join(' · ')}
+              </p>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
+
     </div>
   )
 }
