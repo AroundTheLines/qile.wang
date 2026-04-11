@@ -38,6 +38,14 @@ export default function WardrobeCarousel({ items }: Props) {
   const dragStartX = useRef(0)
   const dragStartOffset = useRef(initialIndex)
 
+  // ── Navigate to initial item on mount if no slug in URL ─────────────────
+  useEffect(() => {
+    if (!slugFromPath && items.length > 0) {
+      router.replace('/wardrobe/' + items[initialIndex].slug.current, { scroll: false })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // ── Responsive scale ────────────────────────────────────────────────────
   const [scale, setScale] = useState(1)
   const [stageHeight, setStageHeight] = useState(BASE_ITEM_H + 113)
