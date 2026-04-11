@@ -141,7 +141,7 @@ Reached by tapping the centered wardrobe item or a feed card.
 
 ---
 
-## Hero-to-Navbar Transition *(Phase 3 — next)*
+## Hero-to-Navbar Transition *(Phase 4 — next)*
 
 As the user scrolls the wardrobe off the top of the page while reading an article:
 
@@ -209,9 +209,9 @@ Sanity's MCP server allows AI-driven content updates. The intended workflow:
 |---|---|---|
 | 1 | ✅ Done | Scaffolding — Next.js, Sanity schema, routing, seed data |
 | 2 | ✅ Done | Wardrobe carousel — 3D arc, acrylic sleeve aesthetic, drag interaction, shadows |
-| 3 | 🔲 Next | Article detail — PortableText body, photo gallery, location timeline |
-| 3b | 🔲 Next | Wardrobe → article content reveal (scroll down to read) |
-| 4 | 🔲 Upcoming | Hero-to-navbar transition (`layoutId` shared element animation) |
+| 3 | ✅ Done | Article detail — PortableText body, photo gallery, location timeline |
+| 3b | ✅ Done | Wardrobe → article content reveal (scroll down to read) |
+| 4 | 🔲 Next | Hero-to-navbar transition (scroll-driven transit element animation) |
 | 5 | 🔲 Upcoming | Feed view polish — filtering, sorting, tag UI |
 | 6 | 🔲 Future | Globe view — Three.js wireframe globe with travel traces |
 | — | 🔲 Ongoing | Deploy to Vercel |
