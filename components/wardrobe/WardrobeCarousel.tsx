@@ -57,13 +57,14 @@ export default function WardrobeCarousel({ items, initialIndex = 0 }: Props) {
   // ── Responsive scale ────────────────────────────────────────────────────
   // Scale based purely on viewport width so items occupy the same fraction
   // of the screen as on the reference mobile viewport (~390px).
-  // Capped at 3× so items don't become enormous on ultra-wide monitors.
+  // Capped at MAX_SCALE (1.8×) so items don't become enormous on ultra-wide monitors.
   //
   // Stage height adapts to the scaled items rather than being viewport-
   // percentage-based — this prevents short laptop screens from clamping scale
   // to near 1× (landscape desktops are wide but not tall).
   const [scale, setScale] = useState(1)
-  const [stageHeight, setStageHeight] = useState(323) // BASE_ITEM_H + shadow + breathing
+  // Default: BASE_ITEM_H (210) + 100 px shadow/breathing + 13 px top-half offset = 323
+  const [stageHeight, setStageHeight] = useState(BASE_ITEM_H + 113)
   const [textMaxWidth, setTextMaxWidth] = useState(512)
   useEffect(() => {
     const update = () => {
