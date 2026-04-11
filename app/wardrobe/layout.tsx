@@ -5,7 +5,7 @@ import { client } from '@/lib/sanity'
 import { wardrobeContentQuery } from '@/lib/queries'
 import type { ContentSummary } from '@/lib/types'
 import WardrobeShell from '@/components/wardrobe/WardrobeShell'
-// import '@/bones/registry' // Uncomment after running: npx boneyard-js build
+import '@/bones/registry'
 
 export default async function WardrobeLayout({
   children,

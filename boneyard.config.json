@@ -1,0 +1,8 @@
+{
+  "out": "./bones",
+  "skeletons": {
+    "article-content": {
+      "route": "/wardrobe/white-denim-wide-leg"
+    }
+  }
+}
