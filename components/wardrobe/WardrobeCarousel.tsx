@@ -1,11 +1,46 @@
 'use client'
 
-import { useRef, useState } from 'react'
-import { useMotionValue, useMotionValueEvent, animate } from 'framer-motion'
+import { useRef, useState, useEffect } from 'react'
+import { useMotionValue, useMotionValueEvent, animate, AnimatePresence, motion } from 'framer-motion'
+import { PortableText } from '@portabletext/react'
+import type { PortableTextComponents } from '@portabletext/react'
 import WardrobeItem from './WardrobeItem'
 import type { ContentSummary } from '@/lib/types'
 
-const DRAG_PX_PER_ITEM = 70
+// Reference viewport the design was built for (iPhone 14 Pro / ~390px wide)
+const REF_WIDTH = 390
+// Base item height must match WardrobeItem's BASE_ITEM_H
+const BASE_ITEM_H = 210
+// ─── Tune this to control how large items get on wide/tall screens ───────────
+const MAX_SCALE = 1.8
+
+const bodyComponents: PortableTextComponents = {
+  block: {
+    normal: ({ children }) => (
+      <p className="text-gray-500 text-base font-light leading-relaxed mb-5">{children}</p>
+    ),
+    h2: ({ children }) => (
+      <h2 className="text-[10px] tracking-[0.2em] uppercase text-gray-300 mt-10 mb-3">{children}</h2>
+    ),
+  },
+  list: {
+    bullet: ({ children }) => <ul className="mb-5 flex flex-col gap-2">{children}</ul>,
+  },
+  listItem: {
+    bullet: ({ children }) => (
+      <li className="text-gray-500 text-base font-light leading-relaxed flex gap-3">
+        <span className="text-gray-300 select-none shrink-0">—</span>
+        <span>{children}</span>
+      </li>
+    ),
+  },
+  marks: {
+    strong: ({ children }) => <strong className="font-medium text-gray-700">{children}</strong>,
+    em: ({ children }) => <em className="italic">{children}</em>,
+  },
+}
+
+const BASE_DRAG_PX_PER_ITEM = 70
 
 interface Props {
   items: ContentSummary[]
@@ -18,6 +53,37 @@ export default function WardrobeCarousel({ items, initialIndex = 0 }: Props) {
   const isDragging = useRef(false)
   const dragStartX = useRef(0)
   const dragStartOffset = useRef(initialIndex)
+
+  // ── Responsive scale ────────────────────────────────────────────────────
+  // Scale based purely on viewport width so items occupy the same fraction
+  // of the screen as on the reference mobile viewport (~390px).
+  // Capped at 3× so items don't become enormous on ultra-wide monitors.
+  //
+  // Stage height adapts to the scaled items rather than being viewport-
+  // percentage-based — this prevents short laptop screens from clamping scale
+  // to near 1× (landscape desktops are wide but not tall).
+  const [scale, setScale] = useState(1)
+  const [stageHeight, setStageHeight] = useState(323) // BASE_ITEM_H + shadow + breathing
+  const [textMaxWidth, setTextMaxWidth] = useState(512)
+  useEffect(() => {
+    const update = () => {
+      const vw = window.innerWidth
+      const vh = window.innerHeight
+      const s = Math.max(1, Math.min(vw / REF_WIDTH, MAX_SCALE))
+      setScale(s)
+      // Stage must contain the item + its shadow + padding.
+      // Also keep at least 55 vh minus navbar for a natural look on mobile.
+      const naturalH = Math.round(vh * 0.55 - 48)
+      const contentH = Math.round(BASE_ITEM_H * s + 100) // 100 px for shadow + breathing
+      setStageHeight(Math.max(naturalH, contentH))
+      // Body text: scale gently but never exceed viewport width minus comfortable margins.
+      // Hard cap at 680 px keeps line lengths readable on large screens.
+      setTextMaxWidth(Math.min(Math.round(512 * s), 680, vw - 64))
+    }
+    update()
+    window.addEventListener('resize', update, { passive: true })
+    return () => window.removeEventListener('resize', update)
+  }, [])
 
   useMotionValueEvent(offset, 'change', (val) => {
     const rounded = Math.round(val)
@@ -34,7 +100,7 @@ export default function WardrobeCarousel({ items, initialIndex = 0 }: Props) {
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isDragging.current) return
     const dx = e.clientX - dragStartX.current
-    const next = dragStartOffset.current - dx / DRAG_PX_PER_ITEM
+    const next = dragStartOffset.current - dx / (BASE_DRAG_PX_PER_ITEM * scale)
     offset.set(Math.max(-0.4, Math.min(items.length - 1 + 0.4, next)))
   }
 
@@ -65,12 +131,12 @@ export default function WardrobeCarousel({ items, initialIndex = 0 }: Props) {
     <div className="flex flex-col items-center w-full select-none">
 
       {/* ── 3D Stage ─────────────────────────────────────────────────────────
-          Height is 55vh minus the navbar. On a 375×812 phone that's ~399px —
-          big enough to show items with breathing room above and below. */}
+          Height is computed from scale so items always fit. Minimum is 55 vh
+          minus the navbar (natural mobile feel); grows with scale on desktop. */}
       <div
         className="relative w-full touch-pan-y"
         style={{
-          height: 'calc(55vh - 3rem)',
+          height: stageHeight,
           cursor: 'grab',
         }}
         onPointerDown={handlePointerDown}
@@ -80,13 +146,14 @@ export default function WardrobeCarousel({ items, initialIndex = 0 }: Props) {
       >
         {/* perspective lives here — items are direct children, so it applies
             correctly without preserve-3d. z-index then controls stacking order. */}
-        <div className="absolute inset-0" style={{ perspective: '700px' }}>
+        <div className="absolute inset-0" style={{ perspective: `${Math.round(700 * scale)}px` }}>
           {items.map((item, i) => (
             <WardrobeItem
               key={item._id}
               item={item}
               index={i}
               offset={offset}
+              scale={scale}
               onClick={() => goTo(i)}
             />
           ))}
@@ -152,6 +219,24 @@ export default function WardrobeCarousel({ items, initialIndex = 0 }: Props) {
           )}
         </div>
       )}
+
+      {/* ── Item body ─────────────────────────────────────────────────────── */}
+      <AnimatePresence mode="wait">
+        {activeItem?.body && activeItem.body.length > 0 && (
+          <motion.div
+            key={activeItem._id}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.28, ease: 'easeOut' }}
+            className="w-full px-8 pt-10 pb-20"
+            style={{ maxWidth: textMaxWidth }}
+          >
+            <div className="w-6 h-px bg-gray-200 mx-auto mb-10" />
+            <PortableText value={activeItem.body} components={bodyComponents} />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
