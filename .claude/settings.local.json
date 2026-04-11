@@ -38,7 +38,14 @@
       "Bash(git diff:*)",
       "Bash(git fetch:*)",
       "Bash(xargs ls:*)",
-      "WebFetch(domain:boneyard.vercel.app)"
+      "WebFetch(domain:boneyard.vercel.app)",
+      "Bash(npm show:*)",
+      "Bash(grep -l \"use client\" /Users/qilewang/GithubRepos/personal-site/node_modules/framer-motion/dist/es/*.mjs)",
+      "Bash(grep -v \"^$\")",
+      "Bash(ls /Users/qilewang/GithubRepos/personal-site/app/wardrobe/[slug]/loading.tsx)",
+      "Bash(cat /Users/qilewang/GithubRepos/personal-site/app/wardrobe/[slug]/loading.tsx)",
+      "Bash(ls /Users/qilewang/GithubRepos/personal-site/.env*)",
+      "Bash(npx boneyard-js:*)"
     ]
   }
 }
