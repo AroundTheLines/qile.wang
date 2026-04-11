@@ -4,13 +4,11 @@ import { useRef, useState, useEffect } from 'react'
 import { useMotionValue, useMotionValueEvent, animate, AnimatePresence, motion } from 'framer-motion'
 import { PortableText } from '@portabletext/react'
 import type { PortableTextComponents } from '@portabletext/react'
-import WardrobeItem from './WardrobeItem'
+import WardrobeItem, { BASE_ITEM_H } from './WardrobeItem'
 import type { ContentSummary } from '@/lib/types'
 
 // Reference viewport the design was built for (iPhone 14 Pro / ~390px wide)
 const REF_WIDTH = 390
-// Base item height must match WardrobeItem's BASE_ITEM_H
-const BASE_ITEM_H = 210
 // ─── Tune this to control how large items get on wide/tall screens ───────────
 const MAX_SCALE = 1.8
 
