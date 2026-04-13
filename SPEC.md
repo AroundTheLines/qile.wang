@@ -102,24 +102,24 @@ These two angles are intentionally decoupled so each can be tuned independently.
 - Tap/click the centered item → URL updates shallowly, full article content fades and rises up from below the wardrobe
 - No page reload, wardrobe stays mounted
 
-### 2. Feed View `/feed`
+### 2. Globe View *(Phase 5 — next)*
 
-Standard fallback. Every item and post is reachable here.
-
-- Card list: cover image, title, date, tags
-- Filterable and sortable by tag system (same tags as wardrobe)
-- The RSS/shareable version of the site
-- Currently minimal — a simple vertical list
-
-### 3. Globe View *(Phase 6 — future)*
-
-Deferred, but the data model is globe-ready from day one.
+The data model is globe-ready from day one.
 
 - Wireframe globe: country borders only, no fill, no surface labels
 - Pins at each item's acquisition location with a thumbnail
 - Hover: animated lines trace where the item has traveled with the owner
 - Click: goes to the item article
 - Built with Three.js / R3F once wardrobe and article are solid
+
+### 3. Feed View *(Phase 6 — future)*
+
+Standard fallback. Every item and post is reachable here. Deferred because the feed's design will likely be influenced by the globe view.
+
+- Card list: cover image, title, date, tags
+- Filterable and sortable by tag system (same tags as wardrobe)
+- The RSS/shareable version of the site
+- Currently minimal — a simple vertical list
 
 ---
 
@@ -171,7 +171,7 @@ On return (tap navbar icon):
 | Animation | Framer Motion | Gesture handling, scroll-driven transforms, spring-wrapped transit animation |
 | Text measurement | `@chenglou/pretext` | DOM-free text layout for animation — measures line count, height, and per-line ranges without triggering reflow |
 | Wardrobe 3D | CSS 3D transforms | No canvas required; GPU-composited; performant on mobile |
-| Globe (future) | Three.js / R3F | Saved for Phase 6 |
+| Globe (next) | Three.js / R3F | Phase 5 |
 | CMS | Sanity | MCP-driven updates, image CDN, GROQ queries, hosted Studio at `/studio` |
 | Hosting | Vercel | Zero-config Next.js, edge CDN |
 
@@ -215,8 +215,8 @@ Sanity's MCP server allows AI-driven content updates. The intended workflow:
 | 3 | ✅ Done | Article detail — PortableText body, photo gallery, location timeline |
 | 3b | ✅ Done | Wardrobe → article content reveal (scroll down to read) |
 | 4 | ✅ Done | Hero-to-navbar transition — scroll-driven transit element, WardrobeProvider/Context, WardrobeNavbar |
-| 5 | 🔲 Next | Feed view polish — filtering, sorting, tag UI |
-| 6 | 🔲 Future | Globe view — Three.js wireframe globe with travel traces |
+| 5 | 🔲 Next | Globe view — Three.js wireframe globe with travel traces |
+| 6 | 🔲 Future | Feed view polish — filtering, sorting, tag UI |
 | — | 🔲 Ongoing | Deploy to Vercel |
 | — | 🔲 Ongoing | Real product images with transparent backgrounds |
 
