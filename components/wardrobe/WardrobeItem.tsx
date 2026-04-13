@@ -1,9 +1,8 @@
 'use client'
 
 import { motion, useTransform, type MotionValue } from 'framer-motion'
-import Image from 'next/image'
 import type { ContentSummary } from '@/lib/types'
-import { urlFor } from '@/lib/sanity'
+import WardrobeSleeveVisual from './WardrobeSleeveVisual'
 
 // Two independent axes — decoupled like the reference photo:
 //
@@ -42,17 +41,27 @@ interface Props {
   offset: MotionValue<number>
   onClick: () => void
   scale: number
+  /** When true, the item's wrapper is hidden via visibility:hidden so
+   *  the transit element can render in its place without doubling. */
+  hideForTransit?: boolean
+  /** Callback ref attached only to the active item, used by the
+   *  carousel to measure the centered sleeve as the transit source. */
+  innerRef?: (el: HTMLDivElement | null) => void
 }
 
-export default function WardrobeItem({ item, index, offset, onClick, scale }: Props) {
+export default function WardrobeItem({
+  item,
+  index,
+  offset,
+  onClick,
+  scale,
+  hideForTransit = false,
+  innerRef,
+}: Props) {
   // ── Scaled geometry — all pixel values derived from the scale factor ──────
   const ITEM_W    = BASE_ITEM_W * scale
   const ITEM_H    = BASE_ITEM_H * scale
   const POS_RADIUS = BASE_POS_RADIUS * scale
-  // Shadow tuning — rectangular projection, light source above + slightly behind
-  const SHADOW_GAP = 18 * scale               // px between card bottom and shadow top edge
-  const SHADOW_H   = 55 * scale               // how far the shadow projects downward
-  const SHADOW_W   = Math.round(ITEM_W * 0.88) // slightly narrower than card
 
   // ── 3D position (gentle arc) + card rotation (aggressive, decoupled) ─────
   const transform = useTransform(offset, (off) => {
@@ -126,6 +135,7 @@ export default function WardrobeItem({ item, index, offset, onClick, scale }: Pr
 
   return (
     <motion.div
+      ref={innerRef}
       style={{
         transform,
         opacity,
@@ -138,109 +148,25 @@ export default function WardrobeItem({ item, index, offset, onClick, scale }: Pr
         transformOrigin: '0 0',
         willChange: 'transform',
         cursor: 'pointer',
+        // Hide entirely (including the floor shadow) when the transit
+        // element is in flight or parked. visibility: hidden keeps the
+        // element in layout so siblings don't shift, while suppressing
+        // every paint — including the box-shadow drop shadow on the
+        // sleeve and the floor shadow underneath it.
+        visibility: hideForTransit ? 'hidden' : 'visible',
       }}
       onClick={onClick}
     >
-      {/* ── Floor shadow ──────────────────────────────────────────────────── */}
-      {/* Rectangular projection — matches blocky item shape. Light is above +
-          slightly behind, so shadow falls forward below the item. Darkest at
-          the top edge (nearest item) and fades out downward. blur() keeps
-          edges soft while the rectangle character is preserved. */}
-      <motion.div
-        aria-hidden
-        style={{
-          position: 'absolute',
-          top: ITEM_H + SHADOW_GAP,
-          left: `${(ITEM_W - SHADOW_W) / 2}px`,
-          width: SHADOW_W,
-          height: SHADOW_H,
-          scaleX: shadowScaleX,
-          opacity: shadowOpacity,
-          transformOrigin: 'top center',
-          background:
-            'linear-gradient(to bottom, rgba(0,0,0,0.32) 0%, rgba(0,0,0,0.14) 42%, rgba(0,0,0,0) 100%)',
-          filter: 'blur(6px)',
-          pointerEvents: 'none',
-        }}
+      <WardrobeSleeveVisual
+        item={item}
+        width={ITEM_W}
+        height={ITEM_H}
+        showShadow
+        shadowOpacity={shadowOpacity}
+        shadowScaleX={shadowScaleX}
+        glossGradient={glossGradient}
+        refractionGradient={refractionGradient}
       />
-
-      {/* ── Acrylic / glossy plastic sleeve ──────────────────────────────── */}
-      {/* Outer box-shadow: a multi-layer acrylic frame edge (bright top/left
-          rims + outer floating drop shadow). Inner padding gives the item
-          room to "hang" inside the sleeve — correct for transparent-bg images. */}
-      <div
-        className="w-full h-full relative overflow-hidden select-none"
-        style={{
-          borderRadius: '4px',
-          border: '1.5px solid rgba(230,230,230,0.75)',
-          background: 'rgba(252,252,250,0.12)',
-          boxShadow: [
-            // Acrylic rim edges — top is brightest (overhead light source)
-            'inset 0 2px 0 rgba(255,255,255,1)',
-            'inset 2px 0 0 rgba(255,255,255,0.65)',
-            'inset -1px 0 0 rgba(255,255,255,0.3)',
-            'inset 0 -1px 0 rgba(255,255,255,0.18)',
-            // Outer floating shadows
-            '0 6px 28px rgba(0,0,0,0.13)',
-            '0 2px 8px rgba(0,0,0,0.08)',
-          ].join(', '),
-        }}
-      >
-        {/* Cover image — object-contain so transparent-bg items float inside */}
-        {item.cover_image ? (
-          <Image
-            src={urlFor(item.cover_image).width(Math.round(BASE_ITEM_W * 3)).height(Math.round(BASE_ITEM_H * 3)).url()}
-            alt={item.title}
-            fill
-            className="object-contain p-2"
-            sizes={`${Math.round(ITEM_W)}px`}
-            draggable={false}
-          />
-        ) : (
-          <div className="w-full h-full bg-gray-50 flex items-center justify-center p-4">
-            <span className="text-[9px] tracking-widest uppercase text-center text-gray-300 leading-relaxed">
-              {item.title}
-            </span>
-          </div>
-        )}
-
-        {/* Static top-light bar: overhead light hitting the plastic rim.
-            Always present — like the bright strip at the top of a plastic bag. */}
-        <div
-          aria-hidden
-          className="absolute inset-x-0 top-0 pointer-events-none"
-          style={{
-            height: '38%',
-            background:
-              'linear-gradient(to bottom, rgba(255,255,255,0.38) 0%, rgba(255,255,255,0.1) 35%, rgba(255,255,255,0) 100%)',
-          }}
-        />
-
-        {/* Position-aware diagonal gloss sweep */}
-        <motion.div
-          aria-hidden
-          className="absolute inset-0 pointer-events-none"
-          style={{ background: glossGradient }}
-        />
-
-        {/* Rotation-coupled refraction streak */}
-        <motion.div
-          aria-hidden
-          className="absolute inset-0 pointer-events-none"
-          style={{ background: refractionGradient }}
-        />
-
-        {/* Inner acrylic frame highlight — closes the illusion of physical depth */}
-        <div
-          aria-hidden
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            borderRadius: '4px',
-            boxShadow:
-              'inset 0 0 0 1px rgba(255,255,255,0.45), inset 0 1px 4px rgba(255,255,255,0.55)',
-          }}
-        />
-      </div>
     </motion.div>
   )
 }

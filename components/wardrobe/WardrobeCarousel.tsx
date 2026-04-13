@@ -1,10 +1,10 @@
 'use client'
 
-import { useRef, useState, useEffect } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useMotionValue, useMotionValueEvent, animate, AnimatePresence, motion } from 'framer-motion'
 import { prepare, layout } from '@chenglou/pretext'
 import WardrobeItem, { BASE_ITEM_H } from './WardrobeItem'
-import type { ContentSummary } from '@/lib/types'
+import { useWardrobeContext } from './WardrobeContext'
 import { useRouter, usePathname } from 'next/navigation'
 
 // Reference viewport the design was built for (iPhone 14 Pro / ~390px wide)
@@ -18,32 +18,33 @@ const BASE_DRAG_PX_PER_ITEM = 70
 // system fonts — custom web fonts like Geist are not yet supported.
 const LABEL_FONT = '300 20px/1.4 Arial, Helvetica, sans-serif'
 
-interface Props {
-  items: ContentSummary[]
-}
-
-export default function WardrobeCarousel({ items }: Props) {
+export default function WardrobeCarousel() {
   const router = useRouter()
   const pathname = usePathname()
+  const ctx = useWardrobeContext()
+  const {
+    items,
+    activeIndex,
+    setActiveIndex,
+    activeItem,
+    reportSourceRect,
+    isTransitActive,
+  } = ctx
 
-  // Derive initial index from URL — handles hard nav directly to /wardrobe/[slug]
-  const slugFromPath = pathname.startsWith('/wardrobe/') ? pathname.slice('/wardrobe/'.length) : null
-  const initialIndex = slugFromPath
-    ? Math.max(0, items.findIndex(i => i.slug.current === slugFromPath))
-    : 0
-
-  const offset = useMotionValue(initialIndex)
-  const [activeIndex, setActiveIndex] = useState(initialIndex)
+  const offset = useMotionValue(activeIndex)
   const isDragging = useRef(false)
   const dragStartX = useRef(0)
-  const dragStartOffset = useRef(initialIndex)
+  const dragStartOffset = useRef(activeIndex)
 
   // ── Navigate to initial item on mount if no slug in URL ─────────────────
   useEffect(() => {
+    const slugFromPath = pathname.startsWith('/wardrobe/')
+      ? pathname.slice('/wardrobe/'.length)
+      : null
     if (!slugFromPath && items.length > 0) {
-      router.replace('/wardrobe/' + items[initialIndex].slug.current, { scroll: false })
+      router.replace('/wardrobe/' + items[activeIndex].slug.current, { scroll: false })
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // ── Responsive scale ────────────────────────────────────────────────────
@@ -68,7 +69,9 @@ export default function WardrobeCarousel({ items }: Props) {
 
   useMotionValueEvent(offset, 'change', (val) => {
     const rounded = Math.round(val)
-    if (rounded >= 0 && rounded < items.length) setActiveIndex(rounded)
+    if (rounded >= 0 && rounded < items.length && rounded !== activeIndex) {
+      setActiveIndex(rounded)
+    }
   })
 
   const navigateTo = (index: number) => {
@@ -77,6 +80,7 @@ export default function WardrobeCarousel({ items }: Props) {
   }
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isTransitActive) return  // locked during transit
     isDragging.current = true
     dragStartX.current = e.clientX
     dragStartOffset.current = offset.get()
@@ -99,12 +103,67 @@ export default function WardrobeCarousel({ items }: Props) {
   }
 
   const goTo = (index: number) => {
+    if (isTransitActive) return  // locked during transit
     const idx = Math.max(0, Math.min(items.length - 1, index))
     animate(offset, idx, { type: 'spring', stiffness: 420, damping: 42 })
     navigateTo(idx)
   }
 
-  const activeItem = items[activeIndex]
+  // ── Source rect measurement (centered sleeve) ────────────────────────────
+  // The centered sleeve element is the only item that ever serves as the
+  // transit source. We attach a ref via a callback so it can swap as
+  // activeIndex changes, then measure on layout effects + ResizeObserver.
+  const activeSleeveRef = useRef<HTMLDivElement | null>(null)
+  const setActiveSleeveEl = useCallback((el: HTMLDivElement | null) => {
+    activeSleeveRef.current = el
+  }, [])
+
+  // useLayoutEffect runs only on the client because WardrobeCarousel is
+  // dynamically imported with ssr: false from WardrobeProvider.
+  useLayoutEffect(() => {
+    const measure = () => {
+      const el = activeSleeveRef.current
+      if (!el) {
+        reportSourceRect(null)
+        return
+      }
+      const r = el.getBoundingClientRect()
+      // Store source rect in DOCUMENT coordinates (not viewport), so a
+      // mid-page scroll-restoration landing produces a measurement that
+      // still describes "where the sleeve sits when scroll = 0." The
+      // navbar target is fixed-positioned, so its viewport coords are
+      // already document-equivalent — consistent with source.
+      reportSourceRect({
+        x: r.x + window.scrollX,
+        y: r.y + window.scrollY,
+        width: r.width,
+        height: r.height,
+      })
+    }
+    measure()
+
+    // Re-measure once the drag-snap spring has had time to settle.
+    // activeIndex flips mid-spring (via the useMotionValueEvent on
+    // offset rounding), so the immediate measurement above can be a
+    // few px off until offset lands on the integer. 280ms covers the
+    // typical snap duration with stiffness 500 / damping 48.
+    const settleTimer = setTimeout(measure, 280)
+
+    const el = activeSleeveRef.current
+    let ro: ResizeObserver | null = null
+    if (el) {
+      ro = new ResizeObserver(measure)
+      ro.observe(el)
+    }
+    window.addEventListener('resize', measure, { passive: true })
+    return () => {
+      clearTimeout(settleTimer)
+      ro?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+    // Re-measure when active item changes or scale changes (which
+    // re-sizes every sleeve).
+  }, [activeIndex, scale, reportSourceRect])
 
   // ── Pretext pre-sizing for museum label ─────────────────────────────────
   const preparedTitle = activeItem ? prepare(activeItem.title, LABEL_FONT) : null
@@ -126,7 +185,7 @@ export default function WardrobeCarousel({ items }: Props) {
       {/* ── 3D Stage ───────────────────────────────────────────────────────── */}
       <div
         className="relative w-full touch-pan-y"
-        style={{ height: stageHeight, cursor: 'grab' }}
+        style={{ height: stageHeight, cursor: isTransitActive ? 'default' : 'grab' }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -141,6 +200,8 @@ export default function WardrobeCarousel({ items }: Props) {
               offset={offset}
               scale={scale}
               onClick={() => goTo(i)}
+              hideForTransit={isTransitActive && i === activeIndex}
+              innerRef={i === activeIndex ? setActiveSleeveEl : undefined}
             />
           ))}
         </div>
@@ -150,7 +211,7 @@ export default function WardrobeCarousel({ items }: Props) {
       <div className="flex items-center gap-10 py-5 shrink-0">
         <button
           onClick={() => goTo(activeIndex - 1)}
-          disabled={activeIndex === 0}
+          disabled={activeIndex === 0 || isTransitActive}
           className="w-10 h-10 flex items-center justify-center text-gray-300 hover:text-black transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
           aria-label="Previous item"
         >
@@ -164,8 +225,9 @@ export default function WardrobeCarousel({ items }: Props) {
             <button
               key={i}
               onClick={() => goTo(i)}
+              disabled={isTransitActive}
               aria-label={`Go to item ${i + 1}`}
-              className="transition-all duration-300"
+              className="transition-all duration-300 disabled:cursor-not-allowed"
               style={{
                 width: i === activeIndex ? '16px' : '4px',
                 height: '4px',
@@ -178,7 +240,7 @@ export default function WardrobeCarousel({ items }: Props) {
 
         <button
           onClick={() => goTo(activeIndex + 1)}
-          disabled={activeIndex === items.length - 1}
+          disabled={activeIndex === items.length - 1 || isTransitActive}
           className="w-10 h-10 flex items-center justify-center text-gray-300 hover:text-black transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
           aria-label="Next item"
         >
