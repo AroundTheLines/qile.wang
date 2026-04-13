@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { usePathname } from 'next/navigation'
 import {
+  animate,
   useMotionValue,
   useMotionValueEvent,
   useScroll,
@@ -62,6 +63,10 @@ export default function WardrobeProvider({ items, children }: Props) {
   // ── Source rect (centered sleeve) — pushed from WardrobeCarousel ───────
   const [sourceRect, setSourceRect] = useState<DOMRectLike | null>(null)
 
+  // ── Navbar auto-hide (values declared early — effects below) ────────────
+  const navbarHideOffset = useMotionValue(0)
+  const hideTargetRef = useRef(0)
+
   // ── Target rect (invisible navbar anchor) ──────────────────────────────
   const navbarAnchorRef = useRef<HTMLDivElement | null>(null)
   const [targetRect, setTargetRect] = useState<DOMRectLike | null>(null)
@@ -69,7 +74,12 @@ export default function WardrobeProvider({ items, children }: Props) {
   useEffect(() => {
     const el = navbarAnchorRef.current
     if (!el) return
-    const measure = () => setTargetRect(toRectLike(el.getBoundingClientRect()))
+    const measure = () => {
+      // Skip while the navbar is translated off-screen — getBoundingClientRect
+      // includes the CSS transform, so the reported Y would be wrong.
+      if (navbarHideOffset.get() > 0.01) return
+      setTargetRect(toRectLike(el.getBoundingClientRect()))
+    }
     measure()
 
     // Settle re-measurements: the first useEffect tick can run before
@@ -137,7 +147,48 @@ export default function WardrobeProvider({ items, children }: Props) {
     // Tiny epsilon avoids flicker right at the rest position.
     const next = v > 0.001
     setIsTransitActive((prev) => (prev === next ? prev : next))
+
+    // Force-show navbar when returning to carousel (transit un-parking).
+    if (v < 0.9 && navbarHideOffset.get() > 0) {
+      hideTargetRef.current = 0
+      animate(navbarHideOffset, 0, { duration: 0.2 })
+    }
   })
+
+  // ── Navbar auto-hide (effects) ───────────────────────────────────────
+  // Once the transit is parked, scrolling down slides the navbar mostly
+  // off-screen — only the bottom edge of the image and its shadow peek
+  // out from the top. Scrolling up reveals it again.
+  useEffect(() => {
+    let lastY = window.scrollY
+
+    const onScroll = () => {
+      const y = window.scrollY
+      const delta = y - lastY
+      lastY = y
+
+      if (Math.abs(delta) < 2) return
+
+      const p = transitProgress.get()
+
+      if (p > 0.95 && delta > 5 && hideTargetRef.current === 0) {
+        // Deliberate scroll-down while parked → hide navbar
+        hideTargetRef.current = 1
+        animate(navbarHideOffset, 1, { duration: 0.3, ease: 'easeOut' })
+      } else if (delta < -2 && hideTargetRef.current === 1) {
+        // Any upward scroll → reveal immediately
+        hideTargetRef.current = 0
+        animate(navbarHideOffset, 0, { duration: 0.25, ease: 'easeOut' })
+      } else if (p < 0.9 && hideTargetRef.current === 1) {
+        // Returning to carousel → reveal
+        hideTargetRef.current = 0
+        animate(navbarHideOffset, 0, { duration: 0.2 })
+      }
+    }
+
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [transitProgress, navbarHideOffset])
 
   // ── Tap-to-return ──────────────────────────────────────────────────────
   // Smooth-scrolls back to the shell. The spring-wrapped transitProgress
@@ -172,6 +223,7 @@ export default function WardrobeProvider({ items, children }: Props) {
     transitProgress,
     isTransitActive,
     scrollToShell,
+    navbarHideOffset,
   }
 
   return (

@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { motion, useMotionValueEvent, useTransform } from 'framer-motion'
 import WardrobeSleeveVisual from './WardrobeSleeveVisual'
-import { useWardrobeContext } from './WardrobeContext'
+import { useWardrobeContext, NAVBAR_H } from './WardrobeContext'
 
 /**
  * The transit element. Lives outside the carousel's 3D context (rendered
@@ -26,6 +26,7 @@ export default function WardrobeTransit() {
     transitProgress,
     isTransitActive,
     scrollToShell,
+    navbarHideOffset,
   } = useWardrobeContext()
 
   // Mirror "progress is near 1" into React state so we can flip pointer
@@ -55,21 +56,37 @@ export default function WardrobeTransit() {
   // fixed to the navbar. We blend between the two by incorporating
   // window.scrollY — at p=0 we fully compensate for scroll, at p=1
   // we ignore it (the element is parked at the navbar).
-  const transform = useTransform(transitProgress, (p) => {
-    if (!sourceRect || !targetRect) return 'none'
-    const sx = targetRect.width / sourceRect.width
-    const sy = targetRect.height / sourceRect.height
-    const tx = targetRect.x - sourceRect.x
-    const ty = targetRect.y - sourceRect.y
-    // At p=0: compensate for scroll so transit tracks the page.
-    // At p=1: ignore scroll, land on the navbar anchor.
-    const scrollY = window.scrollY
-    const x = tx * p
-    const y = -scrollY * (1 - p) + ty * p
-    const scaleX = 1 + (sx - 1) * p
-    const scaleY = 1 + (sy - 1) * p
-    return `translate(${x}px, ${y}px) scale(${scaleX}, ${scaleY})`
-  })
+  // How many pixels of the image bottom remain visible when the navbar is
+  // hidden on mobile. The floor shadow extends below this, creating a
+  // subtle "peek" that invites the user to scroll up.
+  const PEEK_PX = 8
+  // Must match the navbar's hide displacement (NAVBAR_H + 8 shadow buffer).
+  const NAVBAR_HIDE_PX = NAVBAR_H + 8
+
+  const transform = useTransform(
+    [transitProgress, navbarHideOffset],
+    ([p, hide]: number[]) => {
+      if (!sourceRect || !targetRect) return 'none'
+      const sx = targetRect.width / sourceRect.width
+      const sy = targetRect.height / sourceRect.height
+      const tx = targetRect.x - sourceRect.x
+      const ty = targetRect.y - sourceRect.y
+      // At p=0: compensate for scroll so transit tracks the page.
+      // At p=1: ignore scroll, land on the navbar anchor.
+      const scrollY = window.scrollY
+      const x = tx * p
+      // The transit tracks the navbar's displacement exactly so the
+      // image stays seated on the anchor during reveal/hide. Once
+      // the navbar has moved far enough, the transit stops (capped at
+      // maxHide) so PEEK_PX of the image bottom + its shadow remain.
+      const maxHide = targetRect.y + targetRect.height - PEEK_PX
+      const hideY = Math.min(hide * NAVBAR_HIDE_PX, maxHide) * p
+      const y = -scrollY * (1 - p) + ty * p - hideY
+      const scaleX = 1 + (sx - 1) * p
+      const scaleY = 1 + (sy - 1) * p
+      return `translate(${x}px, ${y}px) scale(${scaleX}, ${scaleY})`
+    },
+  )
 
   if (!sourceRect || !targetRect || !activeItem) return null
 

@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useMotionValueEvent } from 'framer-motion'
+import { motion, useMotionValueEvent, useTransform } from 'framer-motion'
 import { useWardrobeContext, NAVBAR_H } from './WardrobeContext'
 
 // Wardrobe-only navbar. Mirrors the visual layout of the shared
@@ -11,7 +11,11 @@ import { useWardrobeContext, NAVBAR_H } from './WardrobeContext'
 // transit element's end-state. The transit element will land on top of
 // this anchor and become the persistent navbar icon.
 export default function WardrobeNavbar() {
-  const { navbarAnchorRef, transitProgress } = useWardrobeContext()
+  const { navbarAnchorRef, transitProgress, navbarHideOffset } = useWardrobeContext()
+
+  // Slide the entire navbar off-screen when the hide offset is active.
+  // Extra 8px ensures even the box-shadow clears the viewport edge.
+  const navbarY = useTransform(navbarHideOffset, (v) => -v * (NAVBAR_H + 8))
 
   // Transit progress bucketed to ~10 steps to avoid re-rendering every
   // frame. Drives both the background gradient and the shadow.
@@ -35,10 +39,11 @@ export default function WardrobeNavbar() {
   const shadowAlpha = Math.max(0, (progress - 0.6) / 0.4) * 0.06
 
   return (
-    <header
+    <motion.header
       className="fixed top-0 left-0 right-0 z-50 grid grid-cols-3 items-center px-6"
       style={{
         height: NAVBAR_H,
+        y: navbarY,
         background: bg,
         boxShadow: shadowAlpha > 0
           ? `0 1px 6px rgba(0,0,0,${shadowAlpha.toFixed(3)})`
@@ -68,6 +73,6 @@ export default function WardrobeNavbar() {
       />
 
       <span aria-hidden />
-    </header>
+    </motion.header>
   )
 }
