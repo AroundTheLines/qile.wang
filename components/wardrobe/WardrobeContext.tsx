@@ -4,6 +4,10 @@ import { createContext, useContext, type RefObject } from 'react'
 import type { MotionValue } from 'framer-motion'
 import type { ContentSummary } from '@/lib/types'
 
+/** Navbar height in px — shared so the navbar and the main content
+ *  padding stay in sync. */
+export const NAVBAR_H = 72
+
 // Plain shape mirroring the parts of DOMRect we actually use. Easier to
 // stash in state than the live DOMRect, which is mutated by the browser.
 export interface DOMRectLike {

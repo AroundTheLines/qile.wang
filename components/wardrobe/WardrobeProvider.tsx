@@ -13,6 +13,7 @@ import {
 import type { ContentSummary } from '@/lib/types'
 import {
   WardrobeContext,
+  NAVBAR_H,
   type DOMRectLike,
   type WardrobeContextValue,
 } from './WardrobeContext'
@@ -176,7 +177,7 @@ export default function WardrobeProvider({ items, children }: Props) {
   return (
     <WardrobeContext.Provider value={value}>
       <WardrobeNavbar />
-      <main className="min-h-screen bg-white flex flex-col items-center pt-[72px]">
+      <main className="min-h-screen bg-white flex flex-col items-center" style={{ paddingTop: NAVBAR_H }}>
         {/* `position: relative` is required by framer-motion's useScroll
             so it can compute the scroll offset against this container.
             Without it, useScroll falls back to the document and warns. */}

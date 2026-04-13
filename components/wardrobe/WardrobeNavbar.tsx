@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useMotionValueEvent } from 'framer-motion'
-import { useWardrobeContext } from './WardrobeContext'
+import { useWardrobeContext, NAVBAR_H } from './WardrobeContext'
 
 // Wardrobe-only navbar. Mirrors the visual layout of the shared
 // components/Navbar.tsx (3-column grid, ← Home on the left), but its
@@ -36,8 +36,9 @@ export default function WardrobeNavbar() {
 
   return (
     <header
-      className="fixed top-0 left-0 right-0 z-50 grid grid-cols-3 items-center h-[72px] px-6"
+      className="fixed top-0 left-0 right-0 z-50 grid grid-cols-3 items-center px-6"
       style={{
+        height: NAVBAR_H,
         background: bg,
         boxShadow: shadowAlpha > 0
           ? `0 1px 6px rgba(0,0,0,${shadowAlpha.toFixed(3)})`
