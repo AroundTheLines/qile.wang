@@ -64,8 +64,9 @@ If `date_label` is set, show it. If not, format `sort_date`. Ordering always use
 ```
 /              Landing — minimal, two paths ("choose your own adventure")
 /wardrobe      Wardrobe view (primary entry point)
+/globe         Globe view (geographic lens on the collection)
 /feed          Feed / library view
-/[slug]        Article — shallow-routed from either view without reload
+/[slug]        Article — shallow-routed from any view without reload
 ```
 
 The landing page is intentionally minimal at this stage.
@@ -102,24 +103,154 @@ These two angles are intentionally decoupled so each can be tuned independently.
 - Tap/click the centered item → URL updates shallowly, full article content fades and rises up from below the wardrobe
 - No page reload, wardrobe stays mounted
 
-### 2. Feed View `/feed`
+### 2. Globe View `/globe` *(Phase 5 — next)*
 
-Standard fallback. Every item and post is reachable here.
+A visual storytelling interface — not a dashboard. The globe is an alternative lens on the same collection, organized by geography instead of wardrobe order. Editorial, minimal, intentional. Same clinical-luxury aesthetic as the rest of the site.
+
+**Globe design:**
+- True 3D wireframe sphere (WebGL via Three.js / R3F)
+- Black wireframe with medium-density grid lines
+- **Country border outlines** rendered on the surface — no fill, no surface labels, no satellite imagery
+- Pure white background — same void as the wardrobe
+- Soft shadow beneath the globe grounding it in space
+
+**Globe interaction:**
+- **Drag** to rotate (click-drag on desktop, touch-drag on mobile)
+- **Zoom** allowed (scroll wheel on desktop, pinch on mobile) — constrained to continent-level max, no street-level
+- **Slow idle rotation** when no interaction — resumes after a few seconds of inactivity
+- Selecting a pin does **not** stop idle rotation
+- No scroll hijacking — globe interaction is contained within the globe viewport
+
+**Entrance animation:**
+- Every navigation to `/globe` triggers a **0.75s zoom-in** — the globe starts small/distant and scales up to its resting size
+- Quick and purposeful, not dramatic
+
+#### Pins (Points of Interest)
+
+- Solid red dots anchored to the globe surface, rotating with it
+- Each pin represents a **manually curated location group** (e.g., "Tokyo, Japan" may contain items from Shibuya, Harajuku, Shimokitazawa) — grouping is editorial, not proximity-based
+- A location must have **one or more items** to appear as a pin
+- **Selected state:** pin pulses gently and gains an outline ring to indicate it is active
+
+#### Interaction Model
+
+**Desktop — two-tier interaction:**
+
+1. **Hover (preview state):**
+   - A thin black connector line animates outward from the pin
+   - A lightweight **tooltip** appears at the end of the line: location name + item count only
+   - Globe does **not** shift position
+   - Tooltip disappears when hover ends (unless clicked)
+
+2. **Click (locked state):**
+   - Globe **slides left and shrinks slightly** to ~50–65% viewport width
+   - Full **detail panel** appears to the right with the connector line linking pin → panel
+   - Panel remains until user clicks elsewhere, clicks another pin, or clicks the close button
+   - Clicking empty globe space closes the panel and returns the globe to center
+
+**Mobile — single-tier interaction:**
+
+1. **Tap a pin:**
+   - Globe **slides left and shrinks slightly**
+   - Detail panel **slides in from the right** as a partial overlay (does not cover the full screen — globe remains partially visible in the shadowed left area)
+   - No connector line on mobile (spatial relationship is clear from the layout)
+   - Panel dismissed by tapping outside, swiping it away, or tapping the close button
+
+2. **Tap empty space:** rotates globe slightly, closes any open panel
+
+No hover state exists on mobile.
+
+#### Connector Line (Desktop Only)
+
+- Thin, black, straight line from the selected pin to the detail panel
+- Animates outward (grows from pin toward panel) on interaction
+- No curvature, no glow — clean and editorial
+- Present in both hover-tooltip and click-panel states
+
+#### Detail Panel
+
+**Positioning:**
+- **Desktop:** Anchored to the right side of the viewport when globe shifts left. Connector line bridges the gap. Panel can shift slightly vertically based on pin position but always stays within readable bounds (no edge clipping).
+- **Mobile:** Slides in from the right edge as a partial-screen overlay. Globe remains partially visible behind it on the left.
+- Only **one panel open at a time** — tapping a new pin closes the current panel and opens the new one.
+
+**Visual design:**
+- Hard-edge card — **no border radius**
+- Thin border or very subtle shadow — minimal chrome
+- Clean editorial spacing, modern sans-serif typography
+- Close button (×) in the top-right corner
+
+**Panel content:**
+
+| Section | Content |
+|---|---|
+| Header | Location name in caps (e.g., "TOKYO, JAPAN"), optional item count |
+| Item list | Vertical scroll list showing ~3.5 items (partial item visible at bottom as scroll affordance) |
+| Each item | Framed thumbnail image (not full-bleed) + title (caps) + sub-location label + year |
+
+- Scroll is **vertical, inside the panel only** — completely independent from globe rotation/zoom
+- Scroll does not affect the globe in any way
+
+**Item tap behavior:**
+- **Phase 5a (MVP):** Navigates directly to `/[slug]` article page
+- **Phase 5b (future):** Camera zooms in closely onto that pin's location on the globe, then the article page fades in over the zoomed view — cinematic transition
+
+#### Globe Layout States
+
+| State | Desktop | Mobile |
+|---|---|---|
+| Default (no selection) | Globe centered, full width | Globe centered, full width |
+| Pin hovered | Globe stays centered, tooltip appears near pin | N/A |
+| Pin selected / panel open | Globe slides left + shrinks (~50–65% width), panel on right | Globe slides left + shrinks, panel slides in from right |
+| Panel closed | Globe animates back to center, full width | Globe animates back to center |
+
+#### Interaction Priority
+
+When interactions overlap, priority is:
+1. **Panel interaction** (scroll list, tap item) — highest
+2. **Pin interaction** (hover/tap)
+3. **Globe interaction** (drag to rotate, zoom) — lowest
+
+#### Motion Principles
+
+All animation is subtle and purposeful:
+- Globe idle rotation: slow, constant
+- Connector line: grows outward from pin
+- Panel: fades and slides in lightly
+- Globe position shift: smooth spring animation
+- **No** bounce, overshoot, or flashy transitions
+
+#### Data Requirements
+
+Pin grouping is manual. The content model needs a way to associate locations with a **globe group label** — the editorial name that appears in the panel header (e.g., "Tokyo, Japan"). This could be:
+- A new `globe_group` string field on the Location embedded type, or
+- A separate Sanity document type for globe locations that references content items
+
+_Decision deferred to implementation — the key constraint is that grouping is author-controlled, not auto-clustered._
+
+#### Future Extensions (Out of Scope for Phase 5)
+
+- **Travel traces:** Animated lines on the globe showing where an item has traveled over time (item A: Seoul → Tokyo → New York). Belongs to the Timeline view, not the globe MVP.
+- **Camera-zoom article transition:** Tapping an item in the panel triggers a cinematic zoom into the pin location before the article fades in (Phase 5b).
+- **Pin color encoding** by item category (clothing vs. artifact vs. souvenir)
+- **Time-based filtering** — slider or timeline integration to show pins from a specific era
+- **Cluster expansion** — zooming into a dense region auto-expands grouped pins into individual sub-locations
+
+#### Non-Goals (Phase 5)
+
+- No 3D realism, satellite imagery, or terrain
+- No glowing sci-fi effects — the wireframe aesthetic is editorial, not cyberpunk
+- No cluttered legends, filters, or search (v1)
+- No complex zoom system beyond continent-level constraint
+
+### 3. Feed View *(Phase 6 — future)*
+
+Standard fallback. Every item and post is reachable here. Deferred because the feed's design will likely be influenced by the globe view.
 
 - Card list: cover image, title, date, tags
 - Filterable and sortable by tag system (same tags as wardrobe)
 - The RSS/shareable version of the site
 - Currently minimal — a simple vertical list
-
-### 3. Globe View *(Phase 6 — future)*
-
-Deferred, but the data model is globe-ready from day one.
-
-- Wireframe globe: country borders only, no fill, no surface labels
-- Pins at each item's acquisition location with a thumbnail
-- Hover: animated lines trace where the item has traveled with the owner
-- Click: goes to the item article
-- Built with Three.js / R3F once wardrobe and article are solid
 
 ---
 
@@ -171,7 +302,7 @@ On return (tap navbar icon):
 | Animation | Framer Motion | Gesture handling, scroll-driven transforms, spring-wrapped transit animation |
 | Text measurement | `@chenglou/pretext` | DOM-free text layout for animation — measures line count, height, and per-line ranges without triggering reflow |
 | Wardrobe 3D | CSS 3D transforms | No canvas required; GPU-composited; performant on mobile |
-| Globe (future) | Three.js / R3F | Saved for Phase 6 |
+| Globe (next) | Three.js / R3F | Phase 5 |
 | CMS | Sanity | MCP-driven updates, image CDN, GROQ queries, hosted Studio at `/studio` |
 | Hosting | Vercel | Zero-config Next.js, edge CDN |
 
@@ -215,8 +346,9 @@ Sanity's MCP server allows AI-driven content updates. The intended workflow:
 | 3 | ✅ Done | Article detail — PortableText body, photo gallery, location timeline |
 | 3b | ✅ Done | Wardrobe → article content reveal (scroll down to read) |
 | 4 | ✅ Done | Hero-to-navbar transition — scroll-driven transit element, WardrobeProvider/Context, WardrobeNavbar |
-| 5 | 🔲 Next | Feed view polish — filtering, sorting, tag UI |
-| 6 | 🔲 Future | Globe view — Three.js wireframe globe with travel traces |
+| 5a | 🔲 Next | Globe view MVP — wireframe globe, pins, detail panel, drag/zoom |
+| 5b | 🔲 Future | Globe polish — camera-zoom article transition, travel traces |
+| 6 | 🔲 Future | Feed view polish — filtering, sorting, tag UI |
 | — | 🔲 Ongoing | Deploy to Vercel |
 | — | 🔲 Ongoing | Real product images with transparent backgrounds |
 
@@ -227,4 +359,4 @@ Sanity's MCP server allows AI-driven content updates. The intended workflow:
 - Landing page `/` design — currently a stub; eventual "choose your own adventure" between wardrobe and feed
 - Exact PortableText component set — which block types are supported in body content
 - Tag taxonomy — currently free-form strings; whether to constrain to a fixed set
-- Globe aesthetic details — exact wireframe style, pin design, animation timing
+- Globe data model — whether pin grouping uses a `globe_group` field on Location or a separate Sanity document type
