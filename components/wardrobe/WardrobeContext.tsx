@@ -45,6 +45,10 @@ export interface WardrobeContextValue {
   // Tap-to-return: triggers a smooth scroll back to the shell, which the
   // spring then turns into a reverse transit animation.
   scrollToShell: () => void
+
+  // Mobile navbar auto-hide. 0 = fully visible, 1 = hidden (peek only).
+  // Driven by scroll direction when the transit is parked on mobile.
+  navbarHideOffset: MotionValue<number>
 }
 
 export const WardrobeContext = createContext<WardrobeContextValue | null>(null)

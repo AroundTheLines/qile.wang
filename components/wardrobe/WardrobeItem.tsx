@@ -44,9 +44,6 @@ interface Props {
   /** When true, the item's wrapper is hidden via visibility:hidden so
    *  the transit element can render in its place without doubling. */
   hideForTransit?: boolean
-  /** Callback ref attached only to the active item, used by the
-   *  carousel to measure the centered sleeve as the transit source. */
-  innerRef?: (el: HTMLDivElement | null) => void
 }
 
 export default function WardrobeItem({
@@ -56,7 +53,6 @@ export default function WardrobeItem({
   onClick,
   scale,
   hideForTransit = false,
-  innerRef,
 }: Props) {
   // ── Scaled geometry — all pixel values derived from the scale factor ──────
   const ITEM_W    = BASE_ITEM_W * scale
@@ -135,7 +131,6 @@ export default function WardrobeItem({
 
   return (
     <motion.div
-      ref={innerRef}
       style={{
         transform,
         opacity,

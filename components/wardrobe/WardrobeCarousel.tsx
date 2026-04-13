@@ -1,9 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useMotionValue, useMotionValueEvent, animate, AnimatePresence, motion } from 'framer-motion'
 import { prepare, layout } from '@chenglou/pretext'
-import WardrobeItem, { BASE_ITEM_H } from './WardrobeItem'
+import WardrobeItem, { BASE_ITEM_W, BASE_ITEM_H } from './WardrobeItem'
 import { useWardrobeContext } from './WardrobeContext'
 import { useRouter, usePathname } from 'next/navigation'
 
@@ -34,6 +34,7 @@ export default function WardrobeCarousel() {
   const offset = useMotionValue(activeIndex)
   const isDragging = useRef(false)
   const dragStartX = useRef(0)
+  const dragStartY = useRef(0)
   const dragStartOffset = useRef(activeIndex)
 
   // ── Navigate to initial item on mount if no slug in URL ─────────────────
@@ -83,6 +84,7 @@ export default function WardrobeCarousel() {
     if (isTransitActive) return  // locked during transit
     isDragging.current = true
     dragStartX.current = e.clientX
+    dragStartY.current = e.clientY
     dragStartOffset.current = offset.get()
     e.currentTarget.setPointerCapture(e.pointerId)
   }
@@ -94,9 +96,22 @@ export default function WardrobeCarousel() {
     offset.set(Math.max(-0.4, Math.min(items.length - 1 + 0.4, next)))
   }
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isDragging.current) return
     isDragging.current = false
+    const dx = Math.abs(e.clientX - dragStartX.current)
+    const dy = Math.abs(e.clientY - dragStartY.current)
+    // Treat as a tap/click if pointer barely moved
+    if (dx < 5 && dy < 5) {
+      const rect = e.currentTarget.getBoundingClientRect()
+      const clickX = e.clientX - rect.left
+      if (clickX > rect.width / 2) {
+        goTo(activeIndex + 1)
+      } else {
+        goTo(activeIndex - 1)
+      }
+      return
+    }
     const snapped = Math.max(0, Math.min(items.length - 1, Math.round(offset.get())))
     animate(offset, snapped, { type: 'spring', stiffness: 500, damping: 48 })
     navigateTo(snapped)
@@ -110,60 +125,56 @@ export default function WardrobeCarousel() {
   }
 
   // ── Source rect measurement (centered sleeve) ────────────────────────────
-  // The centered sleeve element is the only item that ever serves as the
-  // transit source. We attach a ref via a callback so it can swap as
-  // activeIndex changes, then measure on layout effects + ResizeObserver.
-  const activeSleeveRef = useRef<HTMLDivElement | null>(null)
-  const setActiveSleeveEl = useCallback((el: HTMLDivElement | null) => {
-    activeSleeveRef.current = el
-  }, [])
+  // Every centered item lands at the same position: stage center minus
+  // half the item dimensions. We compute this analytically from the stage
+  // container's rect rather than measuring the active item's DOM element,
+  // because the active item has 3D transforms (rotateY, translate3d) that
+  // distort getBoundingClientRect() while the carousel spring is in flight.
+  const stageRef = useRef<HTMLDivElement | null>(null)
+
+  const ITEM_W = BASE_ITEM_W * scale
+  const ITEM_H = BASE_ITEM_H * scale
 
   // useLayoutEffect runs only on the client because WardrobeCarousel is
   // dynamically imported with ssr: false from WardrobeProvider.
   useLayoutEffect(() => {
     const measure = () => {
-      const el = activeSleeveRef.current
-      if (!el) {
+      const stage = stageRef.current
+      if (!stage) {
         reportSourceRect(null)
         return
       }
-      const r = el.getBoundingClientRect()
-      // Store source rect in DOCUMENT coordinates (not viewport), so a
-      // mid-page scroll-restoration landing produces a measurement that
-      // still describes "where the sleeve sits when scroll = 0." The
-      // navbar target is fixed-positioned, so its viewport coords are
-      // already document-equivalent — consistent with source.
+      const sr = stage.getBoundingClientRect()
+      // The centered item is position:absolute at top:50% left:50%
+      // with transform: translate(-50%, -50%) when offset = activeIndex.
+      // Its visual rect is therefore centered in the stage.
+      // Store in DOCUMENT coordinates (not viewport), so a mid-page
+      // scroll-restoration landing produces a measurement that still
+      // describes "where the sleeve sits when scroll = 0."
       reportSourceRect({
-        x: r.x + window.scrollX,
-        y: r.y + window.scrollY,
-        width: r.width,
-        height: r.height,
+        x: sr.x + sr.width / 2 - ITEM_W / 2 + window.scrollX,
+        y: sr.y + sr.height / 2 - ITEM_H / 2 + window.scrollY,
+        width: ITEM_W,
+        height: ITEM_H,
       })
     }
     measure()
 
-    // Re-measure once the drag-snap spring has had time to settle.
-    // activeIndex flips mid-spring (via the useMotionValueEvent on
-    // offset rounding), so the immediate measurement above can be a
-    // few px off until offset lands on the integer. 280ms covers the
-    // typical snap duration with stiffness 500 / damping 48.
-    const settleTimer = setTimeout(measure, 280)
-
-    const el = activeSleeveRef.current
+    const stage = stageRef.current
     let ro: ResizeObserver | null = null
-    if (el) {
+    if (stage) {
       ro = new ResizeObserver(measure)
-      ro.observe(el)
+      ro.observe(stage)
     }
     window.addEventListener('resize', measure, { passive: true })
     return () => {
-      clearTimeout(settleTimer)
       ro?.disconnect()
       window.removeEventListener('resize', measure)
     }
-    // Re-measure when active item changes or scale changes (which
-    // re-sizes every sleeve).
-  }, [activeIndex, scale, reportSourceRect])
+    // Re-measure when scale changes (which re-sizes item dimensions).
+    // No need to depend on activeIndex — all centered items occupy the
+    // same position.
+  }, [scale, ITEM_W, ITEM_H, reportSourceRect])
 
   // ── Pretext pre-sizing for museum label ─────────────────────────────────
   const preparedTitle = activeItem ? prepare(activeItem.title, LABEL_FONT) : null
@@ -185,13 +196,13 @@ export default function WardrobeCarousel() {
       {/* ── 3D Stage ───────────────────────────────────────────────────────── */}
       <div
         className="relative w-full touch-pan-y"
-        style={{ height: stageHeight, cursor: isTransitActive ? 'default' : 'grab' }}
+        style={{ height: stageHeight, cursor: isTransitActive ? 'default' : 'pointer' }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
+        onPointerCancel={() => { isDragging.current = false }}
       >
-        <div className="absolute inset-0" style={{ perspective: `${Math.round(700 * scale)}px` }}>
+        <div ref={stageRef} className="absolute inset-0" style={{ perspective: `${Math.round(700 * scale)}px` }}>
           {items.map((item, i) => (
             <WardrobeItem
               key={item._id}
@@ -199,9 +210,8 @@ export default function WardrobeCarousel() {
               index={i}
               offset={offset}
               scale={scale}
-              onClick={() => goTo(i)}
+              onClick={() => {}}
               hideForTransit={isTransitActive && i === activeIndex}
-              innerRef={i === activeIndex ? setActiveSleeveEl : undefined}
             />
           ))}
         </div>
@@ -212,7 +222,7 @@ export default function WardrobeCarousel() {
         <button
           onClick={() => goTo(activeIndex - 1)}
           disabled={activeIndex === 0 || isTransitActive}
-          className="w-10 h-10 flex items-center justify-center text-gray-300 hover:text-black transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+          className="w-10 h-10 flex items-center justify-center text-gray-300 hover:text-black transition-colors cursor-pointer disabled:opacity-20 disabled:cursor-not-allowed"
           aria-label="Previous item"
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -241,7 +251,7 @@ export default function WardrobeCarousel() {
         <button
           onClick={() => goTo(activeIndex + 1)}
           disabled={activeIndex === items.length - 1 || isTransitActive}
-          className="w-10 h-10 flex items-center justify-center text-gray-300 hover:text-black transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+          className="w-10 h-10 flex items-center justify-center text-gray-300 hover:text-black transition-colors cursor-pointer disabled:opacity-20 disabled:cursor-not-allowed"
           aria-label="Next item"
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
