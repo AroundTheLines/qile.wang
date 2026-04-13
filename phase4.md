@@ -6,7 +6,7 @@ As the user scrolls past the wardrobe stage, the currently centered sleeve — t
 
 On first load of `/wardrobe/*` the navbar is nearly empty: only a home/back affordance on the left. The right side has nothing visible until the transit element arrives there as the user scrolls. The transit element **is** the navbar icon at `progress = 1` — there is no swap or handoff between "flying sleeve" and "mounted icon."
 
-**Status:** Planning
+**Status:** ✅ Complete
 **Depends on:** Phase 3 (article body rendering + responsive wardrobe scaling) — ✅ complete
 
 ---
@@ -334,18 +334,18 @@ This step is QA. Load `/wardrobe/some-slug` with the browser having a restored s
 
 ## Implementation order
 
-1. **Step 1** — Rename + provider + context + new `WardrobeNavbar`. Non-behavioral, unblocks everything.
-2. **Step 2** — Thin wardrobe layout. Non-behavioral.
-3. **Step 3** — Lift `activeIndex` into context. Non-visual.
-4. **Step 4** — `shellRef` + spring-wrapped `transitProgress`. Non-visual.
-5. **Step 5** — Source rect measurement. Verifiable in isolation via console logs.
-6. **Step 6** — Invisible navbar anchor + target rect measurement. Same.
-7. **Step 7** — Build `WardrobeTransit` rendering the full acrylic sleeve. First visible result. Use the red-border trick to verify alignment at both ends.
-8. **Step 8** — Hide the centered sleeve and its drop shadow.
-9. **Step 9** — Tap-to-return wiring on the transit element.
-10. **Step 10** — Scroll restoration QA.
+1. ✅ **Step 1** — Rename + provider + context + new `WardrobeNavbar`.
+2. ✅ **Step 2** — Thin wardrobe layout.
+3. ✅ **Step 3** — Lift `activeIndex` into context.
+4. ✅ **Step 4** — `shellRef` + spring-wrapped `transitProgress`.
+5. ✅ **Step 5** — Source rect measurement.
+6. ✅ **Step 6** — Invisible navbar anchor + target rect measurement.
+7. ✅ **Step 7** — Build `WardrobeTransit` rendering the full acrylic sleeve.
+8. ✅ **Step 8** — Hide the centered sleeve and its drop shadow.
+9. ✅ **Step 9** — Tap-to-return wiring on the transit element.
+10. ✅ **Step 10** — Scroll restoration QA.
 
-Steps 1–4 are pure plumbing and can be committed independently before any visible work starts. Steps 5 and 6 can be done in parallel once Step 4 is done. Everything from Step 7 onward is strictly sequential.
+All steps complete as of 2026-04-13.
 
 ---
 
