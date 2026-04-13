@@ -103,7 +103,7 @@ These two angles are intentionally decoupled so each can be tuned independently.
 - Tap/click the centered item → URL updates shallowly, full article content fades and rises up from below the wardrobe
 - No page reload, wardrobe stays mounted
 
-### 2. Globe View `/globe` *(Phase 5 — next)*
+### 2. Globe View `/globe` *(Phase 5a/5b — next)*
 
 A visual storytelling interface — not a dashboard. The globe is an alternative lens on the same collection, organized by geography instead of wardrobe order. Editorial, minimal, intentional. Same clinical-luxury aesthetic as the rest of the site.
 
@@ -192,8 +192,8 @@ No hover state exists on mobile.
 - Scroll does not affect the globe in any way
 
 **Item tap behavior:**
-- **Phase 5a (MVP):** Navigates directly to `/[slug]` article page
-- **Phase 5b (future):** Camera zooms in closely onto that pin's location on the globe, then the article page fades in over the zoomed view — cinematic transition
+- **Phase 5a/5b:** Desktop: globe shifts to left sliver, article fills right 70%. Mobile: navigates to `/[slug]`
+- **Phase 5c (future):** Camera zooms in closely onto that pin's location on the globe, then the article page fades in over the zoomed view — cinematic transition
 
 #### Globe Layout States
 
@@ -222,21 +222,17 @@ All animation is subtle and purposeful:
 
 #### Data Requirements
 
-Pin grouping is manual. The content model needs a way to associate locations with a **globe group label** — the editorial name that appears in the panel header (e.g., "Tokyo, Japan"). This could be:
-- A new `globe_group` string field on the Location embedded type, or
-- A separate Sanity document type for globe locations that references content items
+Pin grouping is manual. A `globe_group` string field on the Location embedded type declares which globe pin a location belongs to (e.g., `"Tokyo, Japan"`). All locations sharing the same `globe_group` string cluster under one pin. Locations without `globe_group` are excluded from the globe. Pin coordinates are the centroid of grouped locations. See `Phase 5A.markdown` for full implementation details.
 
-_Decision deferred to implementation — the key constraint is that grouping is author-controlled, not auto-clustered._
-
-#### Future Extensions (Out of Scope for Phase 5)
+#### Future Extensions (Out of Scope — Phase 5c and beyond)
 
 - **Travel traces:** Animated lines on the globe showing where an item has traveled over time (item A: Seoul → Tokyo → New York). Belongs to the Timeline view, not the globe MVP.
-- **Camera-zoom article transition:** Tapping an item in the panel triggers a cinematic zoom into the pin location before the article fades in (Phase 5b).
+- **Camera-zoom article transition:** Tapping an item in the panel triggers a cinematic zoom into the pin location before the article fades in (Phase 5c).
 - **Pin color encoding** by item category (clothing vs. artifact vs. souvenir)
 - **Time-based filtering** — slider or timeline integration to show pins from a specific era
 - **Cluster expansion** — zooming into a dense region auto-expands grouped pins into individual sub-locations
 
-#### Non-Goals (Phase 5)
+#### Non-Goals (Phase 5a/5b)
 
 - No 3D realism, satellite imagery, or terrain
 - No glowing sci-fi effects — the wireframe aesthetic is editorial, not cyberpunk
@@ -302,7 +298,7 @@ On return (tap navbar icon):
 | Animation | Framer Motion | Gesture handling, scroll-driven transforms, spring-wrapped transit animation |
 | Text measurement | `@chenglou/pretext` | DOM-free text layout for animation — measures line count, height, and per-line ranges without triggering reflow |
 | Wardrobe 3D | CSS 3D transforms | No canvas required; GPU-composited; performant on mobile |
-| Globe (next) | Three.js / R3F | Phase 5 |
+| Globe (next) | Three.js / R3F | Phase 5a/5b |
 | CMS | Sanity | MCP-driven updates, image CDN, GROQ queries, hosted Studio at `/studio` |
 | Hosting | Vercel | Zero-config Next.js, edge CDN |
 
@@ -346,8 +342,9 @@ Sanity's MCP server allows AI-driven content updates. The intended workflow:
 | 3 | ✅ Done | Article detail — PortableText body, photo gallery, location timeline |
 | 3b | ✅ Done | Wardrobe → article content reveal (scroll down to read) |
 | 4 | ✅ Done | Hero-to-navbar transition — scroll-driven transit element, WardrobeProvider/Context, WardrobeNavbar |
-| 5a | 🔲 Next | Globe view MVP — wireframe globe, pins, detail panel, drag/zoom |
-| 5b | 🔲 Future | Globe polish — camera-zoom article transition, travel traces |
+| 5a | 🔲 Next | Globe scene & interaction — wireframe globe, country borders, pins, detail panel, drag/zoom, hover/click connectors |
+| 5b | 🔲 Next | Globe article integration — desktop split-view (globe sliver + article), mobile navigation, pin-to-title connector, globe persistence |
+| 5c | 🔲 Future | Globe polish — panel position tracking during rotation, camera-zoom article transition, travel traces |
 | 6 | 🔲 Future | Feed view polish — filtering, sorting, tag UI |
 | — | 🔲 Ongoing | Deploy to Vercel |
 | — | 🔲 Ongoing | Real product images with transparent backgrounds |
@@ -359,4 +356,3 @@ Sanity's MCP server allows AI-driven content updates. The intended workflow:
 - Landing page `/` design — currently a stub; eventual "choose your own adventure" between wardrobe and feed
 - Exact PortableText component set — which block types are supported in body content
 - Tag taxonomy — currently free-form strings; whether to constrain to a fixed set
-- Globe data model — whether pin grouping uses a `globe_group` field on Location or a separate Sanity document type
