@@ -45,7 +45,8 @@
       "Bash(ls /Users/qilewang/GithubRepos/personal-site/app/wardrobe/[slug]/loading.tsx)",
       "Bash(cat /Users/qilewang/GithubRepos/personal-site/app/wardrobe/[slug]/loading.tsx)",
       "Bash(ls /Users/qilewang/GithubRepos/personal-site/.env*)",
-      "Bash(npx boneyard-js:*)"
+      "Bash(npx boneyard-js:*)",
+      "Bash(echo \"exit=$?\")"
     ]
   }
 }

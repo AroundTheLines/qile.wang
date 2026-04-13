@@ -111,7 +111,7 @@ Standard fallback. Every item and post is reachable here.
 - The RSS/shareable version of the site
 - Currently minimal — a simple vertical list
 
-### 3. Globe View *(Phase 4 — future)*
+### 3. Globe View *(Phase 6 — future)*
 
 Deferred, but the data model is globe-ready from day one.
 
@@ -141,20 +141,23 @@ Reached by tapping the centered wardrobe item or a feed card.
 
 ---
 
-## Hero-to-Navbar Transition *(Phase 4 — next)*
+## Hero-to-Navbar Transition *(Phase 4 — ✅ complete)*
 
 As the user scrolls the wardrobe off the top of the page while reading an article:
 
-1. The selected item's cover image **shrinks and migrates into the navbar** as a small persistent icon
-2. The rest of the navbar appears around it
-3. This uses Framer Motion's `layoutId` — both the wardrobe sleeve and the navbar icon share `layoutId="item-{id}"`
+1. The centered acrylic sleeve (gloss, rim highlight, drop shadow — the full visual) **shrinks and migrates into the top-right of the navbar** as a miniature sleeve-shaped icon
+2. A wardrobe-scoped `WardrobeNavbar` shows a home/back button on the left; the right side hosts an invisible measurement anchor where the transit element lands
+3. The transit element is a single fixed-position `motion.div` rendered outside the 3D perspective context, driven by `useScroll` → `useTransform` over `scrollYProgress`, using `transform: translate() scale()` (no layout-affecting properties)
+
+The transit element **is** the navbar icon at `progress = 1` — there is no swap, no handoff, no second mounted icon.
 
 On return (tap navbar icon):
-- Page scrolls back to top
-- The navbar icon **expands and transforms back** into the full wardrobe sleeve, re-centered on the article's item
+- `scrollToShell()` triggers `scrollIntoView({ behavior: 'smooth' })`
+- Scroll reversal drives the same spring-wrapped `transitProgress` back to 0
+- The icon **expands and transforms back** into the full wardrobe sleeve at its carousel position
 - Wardrobe is alive again, same item selected
 
-Implementation note: scroll position triggers the swap. When wardrobe scrolls past the viewport top edge, the navbar icon mounts and the sleeve unmounts. Framer Motion handles the FLIP animation automatically.
+**Architecture:** `WardrobeProvider` (Client Component) owns all shared state via `WardrobeContext` — `activeIndex`, source/target rect measurements, `transitProgress`, and `scrollToShell`. `WardrobeCarousel`, `WardrobeNavbar`, and `WardrobeTransit` are siblings under the provider and communicate exclusively through context. See `phase4.md` for full implementation details.
 
 ---
 
@@ -165,10 +168,10 @@ Implementation note: scroll position triggers the swap. When wardrobe scrolls pa
 | Framework | Next.js (App Router) | Shallow routing, SSG, mobile-optimized, Vercel-native |
 | Language | TypeScript | Sanity schema types flow into component props |
 | Styling | Tailwind CSS | Mobile-first utility classes |
-| Animation | Framer Motion | Gesture handling, layout animations, hero-to-navbar `layoutId` |
+| Animation | Framer Motion | Gesture handling, scroll-driven transforms, spring-wrapped transit animation |
 | Text measurement | `@chenglou/pretext` | DOM-free text layout for animation — measures line count, height, and per-line ranges without triggering reflow |
 | Wardrobe 3D | CSS 3D transforms | No canvas required; GPU-composited; performant on mobile |
-| Globe (future) | Three.js / R3F | Saved for Phase 4 |
+| Globe (future) | Three.js / R3F | Saved for Phase 6 |
 | CMS | Sanity | MCP-driven updates, image CDN, GROQ queries, hosted Studio at `/studio` |
 | Hosting | Vercel | Zero-config Next.js, edge CDN |
 
@@ -211,8 +214,8 @@ Sanity's MCP server allows AI-driven content updates. The intended workflow:
 | 2 | ✅ Done | Wardrobe carousel — 3D arc, acrylic sleeve aesthetic, drag interaction, shadows |
 | 3 | ✅ Done | Article detail — PortableText body, photo gallery, location timeline |
 | 3b | ✅ Done | Wardrobe → article content reveal (scroll down to read) |
-| 4 | 🔲 Next | Hero-to-navbar transition (scroll-driven transit element animation) |
-| 5 | 🔲 Upcoming | Feed view polish — filtering, sorting, tag UI |
+| 4 | ✅ Done | Hero-to-navbar transition — scroll-driven transit element, WardrobeProvider/Context, WardrobeNavbar |
+| 5 | 🔲 Next | Feed view polish — filtering, sorting, tag UI |
 | 6 | 🔲 Future | Globe view — Three.js wireframe globe with travel traces |
 | — | 🔲 Ongoing | Deploy to Vercel |
 | — | 🔲 Ongoing | Real product images with transparent backgrounds |
