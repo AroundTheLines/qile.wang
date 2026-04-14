@@ -20,6 +20,7 @@ export interface Location {
   date_label?: string
   body?: PortableTextBlock[]
   images?: SanityImage[]
+  globe_group?: string
 }
 
 export interface ContentSummary {

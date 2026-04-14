@@ -12,6 +12,13 @@ export default function LandingPage() {
         </Link>
         <span className="text-xs tracking-widest text-gray-300 uppercase">or</span>
         <Link
+          href="/globe"
+          className="text-2xl tracking-widest uppercase font-light text-black hover:opacity-50 transition-opacity"
+        >
+          Globe
+        </Link>
+        <span className="text-xs tracking-widest text-gray-300 uppercase">or</span>
+        <Link
           href="/feed"
           className="text-2xl tracking-widest uppercase font-light text-black hover:opacity-50 transition-opacity"
         >
