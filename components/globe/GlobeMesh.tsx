@@ -4,6 +4,7 @@ import { useMemo } from 'react'
 import * as THREE from 'three'
 import { Line } from '@react-three/drei'
 import * as topojson from 'topojson-client'
+import { useGlobe } from './GlobeContext'
 
 const GLOBE_RADIUS = 2
 const GRID_SEGMENTS_W = 36
@@ -81,12 +82,17 @@ function GlobeShadow() {
 }
 
 export default function GlobeMesh() {
+  const { isDark } = useGlobe()
   const borderLines = useMemo(() => parseCountryBorders(), [])
 
   const wireframeGeo = useMemo(() => {
     const sphere = new THREE.SphereGeometry(GLOBE_RADIUS, GRID_SEGMENTS_W, GRID_SEGMENTS_H)
     return new THREE.WireframeGeometry(sphere)
   }, [])
+
+  const innerColor = isDark ? '#000000' : '#ffffff'
+  const lineColor = isDark ? 'white' : 'black'
+  const wireframeHex = isDark ? 0xffffff : 0x000000
 
   return (
     <group>
@@ -95,12 +101,12 @@ export default function GlobeMesh() {
           Sits just below GLOBE_RADIUS so the wireframe still appears on top. */}
       <mesh>
         <sphereGeometry args={[GLOBE_RADIUS * 0.995, 64, 32]} />
-        <meshBasicMaterial color="#ffffff" />
+        <meshBasicMaterial color={innerColor} />
       </mesh>
 
       {/* Wireframe grid */}
       <lineSegments geometry={wireframeGeo}>
-        <lineBasicMaterial color={0x000000} opacity={0.12} transparent />
+        <lineBasicMaterial color={wireframeHex} opacity={isDark ? 0.18 : 0.12} transparent />
       </lineSegments>
 
       {/* Country borders */}
@@ -108,15 +114,15 @@ export default function GlobeMesh() {
         <Line
           key={i}
           points={points}
-          color="black"
+          color={lineColor}
           lineWidth={1.5}
-          opacity={0.45}
+          opacity={isDark ? 0.55 : 0.45}
           transparent
         />
       ))}
 
-      {/* Shadow plane */}
-      <GlobeShadow />
+      {/* Shadow plane — only in light mode; a dark shadow on dark bg is noise */}
+      {!isDark && <GlobeShadow />}
     </group>
   )
 }

@@ -36,12 +36,12 @@ export default function GlobeTooltip() {
       className="absolute top-0 left-0 pointer-events-none z-30"
       style={{ opacity: 0, transition: 'opacity 150ms' }}
     >
-      <div className="bg-white border border-gray-200 px-3 py-1.5 shadow-sm">
-        <span className="text-[10px] tracking-widest uppercase font-light text-black">
+      <div className="bg-white dark:bg-black border border-gray-200 dark:border-gray-800 px-3 py-1.5 shadow-sm dark:shadow-none">
+        <span className="text-[10px] tracking-widest uppercase font-light text-black dark:text-white">
           {pinData.group}
         </span>
         {itemCount > 1 && (
-          <span className="text-[10px] tracking-widest uppercase text-gray-400 ml-2">
+          <span className="text-[10px] tracking-widest uppercase text-gray-400 dark:text-gray-500 ml-2">
             {itemCount} items
           </span>
         )}

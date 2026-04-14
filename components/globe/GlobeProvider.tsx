@@ -20,6 +20,18 @@ function useViewportTier(): ViewportTier {
   return tier
 }
 
+function useIsDark(): boolean {
+  const [isDark, setIsDark] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    setIsDark(mq.matches)
+    const handler = (e: MediaQueryListEvent) => setIsDark(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+  return isDark
+}
+
 // Total delay before the connector re-draws. Covers both the initial
 // panel-slide (300ms) and the pin-switch rotate-in-place (up to ~300ms)
 // with a small buffer.
@@ -38,6 +50,7 @@ export default function GlobeProvider({
   const [selectedPinScreenY, setSelectedPinScreenY] = useState<number | null>(null)
   const pinPositionRef = useRef<Record<string, ScreenPosition>>({})
   const tier = useViewportTier()
+  const isDark = useIsDark()
 
   const selectPin = useCallback((group: string | null) => {
     if (group === null) {
@@ -90,6 +103,7 @@ export default function GlobeProvider({
         isMobile,
         showHover: !isMobile,
         showConnectors: isDesktop,
+        isDark,
       }}
     >
       {children}

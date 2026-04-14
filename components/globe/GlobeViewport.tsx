@@ -116,10 +116,12 @@ export default function GlobeViewport() {
     )
   }
 
-  // Tablet + desktop: side-by-side layout. Globe shrinks from the left,
-  // panel slides in from the right. Both use an IDENTICAL tween so they
-  // finish on the same frame — previously independent springs drifted and
-  // produced the jitter the user saw.
+  // Tablet + desktop: side-by-side layout. The globe container stays at
+  // full viewport width and shifts left via a GPU transform when the panel
+  // opens; the panel slides in from the right with a matched transform.
+  // Animating transform (not `right` / `width`) keeps the Three.js canvas
+  // from resizing mid-animation — ResizeObserver batches asynchronously,
+  // which was the cause of the prior snap on desktop.
   const SLIDE_TRANSITION = { duration: 0.4, ease: [0.22, 1, 0.36, 1] as const }
 
   // Panel width as a *number* so framer-motion actually interpolates it
@@ -129,19 +131,19 @@ export default function GlobeViewport() {
       ? Math.min(Math.max(viewportW * 0.4, 320), 420)
       : viewportW * 0.45
     : 0
-  const globeRightInsetPx = selectedPin ? panelWidthPx : 0
+  const globeShiftPx = selectedPin ? -panelWidthPx / 2 : 0
 
   return (
     <div
-      className="fixed inset-0 w-screen h-screen overflow-hidden"
+      className="fixed inset-0 w-screen h-screen overflow-hidden bg-white dark:bg-black"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
     >
       <motion.div
         key={tier}
-        className="absolute top-0 left-0 bottom-0"
+        className="absolute inset-0"
         initial={false}
-        animate={{ right: globeRightInsetPx }}
+        animate={{ x: globeShiftPx }}
         transition={SLIDE_TRANSITION}
       >
         <GlobeCanvas dragDistanceRef={dragDistance} />

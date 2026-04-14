@@ -40,11 +40,11 @@ export default function GlobeNavbar() {
     >
       <Link
         href="/"
-        className="text-xs tracking-widest uppercase text-black hover:opacity-50 transition-opacity pointer-events-auto"
+        className="text-xs tracking-widest uppercase text-black dark:text-white hover:opacity-50 transition-opacity pointer-events-auto"
       >
         Home
       </Link>
-      <span className="text-xs tracking-widest uppercase text-gray-400">
+      <span className="text-xs tracking-widest uppercase text-gray-400 dark:text-gray-500">
         Globe
       </span>
       <div className="w-10" />

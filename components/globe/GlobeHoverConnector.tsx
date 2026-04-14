@@ -8,9 +8,7 @@ export default function GlobeHoverConnector() {
     hoveredPin,
     pinPositionRef,
     showConnectors,
-    selectedPin,
-    isDesktop,
-    isTablet,
+    isDark,
   } = useGlobe()
   const svgRef = useRef<SVGSVGElement>(null)
   const lineRef = useRef<SVGLineElement>(null)
@@ -22,15 +20,6 @@ export default function GlobeHoverConnector() {
     window.addEventListener('resize', read)
     return () => window.removeEventListener('resize', read)
   }, [])
-
-  const panelWidthPx = viewport.w && selectedPin
-    ? isDesktop
-      ? Math.min(Math.max(viewport.w * 0.4, 320), 420)
-      : isTablet
-        ? viewport.w * 0.45
-        : 0
-    : 0
-  const globeAreaW = viewport.w - panelWidthPx
 
   // RAF loop for line position
   useEffect(() => {
@@ -58,12 +47,12 @@ export default function GlobeHoverConnector() {
     <svg
       ref={svgRef}
       className="absolute inset-0 pointer-events-none z-20"
-      width={globeAreaW}
+      width={viewport.w}
       height={viewport.h}
     >
       <line
         ref={lineRef}
-        stroke="black"
+        stroke={isDark ? 'white' : 'black'}
         strokeWidth="1"
         style={{
           transition: 'opacity 150ms',

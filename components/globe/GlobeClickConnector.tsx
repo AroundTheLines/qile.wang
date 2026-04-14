@@ -18,6 +18,7 @@ export default function GlobeClickConnector() {
     selectedPinScreenY,
     isDesktop,
     isTablet,
+    isDark,
   } = useGlobe()
   const lineRef = useRef<SVGLineElement>(null)
   const [viewport, setViewport] = useState({ w: 0, h: 0 })
@@ -44,7 +45,12 @@ export default function GlobeClickConnector() {
         ? viewport.w * 0.45
         : 0
     : 0
-  const globeAreaW = viewport.w - panelWidthPx
+  // The connector SVG lives inside the globe container, which is translated
+  // left by panelWidthPx/2 when a pin is selected. Pin positions are in
+  // container-local coords, so the panel's left edge (viewport x =
+  // viewport.w - panelWidthPx) maps to container-local x = viewport.w -
+  // panelWidthPx/2.
+  const panelLeftInContainer = viewport.w - panelWidthPx / 2
 
   // Fade-out controller — triggered when selectedPin diverges from drawPin
   // (includes closing the panel AND switching to a different pin).
@@ -107,8 +113,8 @@ export default function GlobeClickConnector() {
     const update = () => {
       const pos = pinPositionRef.current[drawPin]
       if (pos && lineRef.current) {
-        // End point: panel's left edge (= globe-area right edge) at header Y
-        const panelLeftX = globeAreaW
+        // End point: panel's left edge (in container-local coords) at header Y
+        const panelLeftX = panelLeftInContainer
         const panelTop = clampPanelTop(selectedPinScreenY, viewport.h)
         const targetY = panelTop + PANEL_HEADER_CENTER_OFFSET
 
@@ -129,7 +135,7 @@ export default function GlobeClickConnector() {
     drawPin,
     pinPositionRef,
     showConnectors,
-    globeAreaW,
+    panelLeftInContainer,
     viewport.h,
     drawProgress,
     selectedPinScreenY,
@@ -140,10 +146,10 @@ export default function GlobeClickConnector() {
   return (
     <svg
       className="absolute inset-0 pointer-events-none z-20"
-      width={globeAreaW}
+      width={viewport.w}
       height={viewport.h}
     >
-      <line ref={lineRef} stroke="black" strokeWidth="1" />
+      <line ref={lineRef} stroke={isDark ? 'white' : 'black'} strokeWidth="1" />
     </svg>
   )
 }

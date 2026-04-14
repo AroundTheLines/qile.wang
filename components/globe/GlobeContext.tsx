@@ -31,6 +31,8 @@ export interface GlobeContextValue {
   showHover: boolean
   /** Connector lines are shown on desktop only */
   showConnectors: boolean
+  /** System dark-mode preference */
+  isDark: boolean
 }
 
 export const GlobeContext = createContext<GlobeContextValue | null>(null)
