@@ -49,3 +49,23 @@ export const wardrobeContentQuery = groq`
     "acquired_at": locations | order(sort_date asc)[0].sort_date,
   }
 `
+
+export const globeContentQuery = groq`
+  *[_type == "content" && count(locations[defined(globe_group)]) > 0] {
+    _id,
+    title,
+    slug,
+    content_type,
+    cover_image,
+    tags,
+    "acquired_at": locations | order(sort_date asc)[0].sort_date,
+    "latest_location_date": locations | order(sort_date desc)[0].sort_date,
+    locations[] | order(sort_date asc) {
+      label,
+      coordinates,
+      sort_date,
+      date_label,
+      globe_group,
+    },
+  }
+`

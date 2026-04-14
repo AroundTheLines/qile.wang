@@ -46,5 +46,14 @@ export const location = defineType({
       type: 'array',
       of: [{ type: 'image', options: { hotspot: true } }],
     }),
+    defineField({
+      name: 'globe_group',
+      title: 'Globe Group',
+      type: 'string',
+      description:
+        'Editorial label for globe pin grouping (e.g., "Tokyo, Japan"). ' +
+        'All locations sharing the same globe_group string cluster under one pin. ' +
+        'Leave empty to exclude this location from the globe.',
+    }),
   ],
 })
