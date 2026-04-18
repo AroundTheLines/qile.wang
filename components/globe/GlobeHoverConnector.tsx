@@ -2,11 +2,14 @@
 
 import { useRef, useEffect, useState } from 'react'
 import { useGlobe } from './GlobeContext'
+import { clipLineByGlobe } from '@/lib/globe'
 
 export default function GlobeHoverConnector() {
   const {
     hoveredPin,
     pinPositionRef,
+    globeScreenRef,
+    frameSubscribersRef,
     showConnectors,
     isDark,
   } = useGlobe()
@@ -21,25 +24,33 @@ export default function GlobeHoverConnector() {
     return () => window.removeEventListener('resize', read)
   }, [])
 
-  // RAF loop for line position
+  // Subscribe to the bridge's frame tick — updates SVG attributes inline
+  // with the canvas render so the line cannot lag the pin.
   useEffect(() => {
     if (!hoveredPin || !showConnectors) return
-
-    let raf: number
+    const subscribers = frameSubscribersRef.current
     const update = () => {
       const pos = pinPositionRef.current[hoveredPin]
-      if (pos && lineRef.current) {
-        lineRef.current.setAttribute('x1', String(pos.x))
-        lineRef.current.setAttribute('y1', String(pos.y))
-        lineRef.current.setAttribute('x2', String(pos.x + 12))
-        lineRef.current.setAttribute('y2', String(pos.y - 24))
-        lineRef.current.style.opacity = pos.visible ? '1' : '0'
-      }
-      raf = requestAnimationFrame(update)
+      if (!pos || !lineRef.current) return
+      const clipped = clipLineByGlobe(
+        pos.x,
+        pos.y,
+        pos.x + 12,
+        pos.y - 24,
+        pos.behind,
+        globeScreenRef.current,
+      )
+      lineRef.current.setAttribute('x1', String(clipped.x1))
+      lineRef.current.setAttribute('y1', String(clipped.y1))
+      lineRef.current.setAttribute('x2', String(clipped.x2))
+      lineRef.current.setAttribute('y2', String(clipped.y2))
+      lineRef.current.style.opacity = pos.visible && clipped.visible ? '1' : '0'
     }
-    raf = requestAnimationFrame(update)
-    return () => cancelAnimationFrame(raf)
-  }, [hoveredPin, pinPositionRef, showConnectors])
+    subscribers.add(update)
+    return () => {
+      subscribers.delete(update)
+    }
+  }, [hoveredPin, pinPositionRef, globeScreenRef, frameSubscribersRef, showConnectors])
 
   if (!hoveredPin || !showConnectors) return null
 

@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useState } from 'react'
 import { useGlobe } from './GlobeContext'
-import { clampPanelTop } from '@/lib/globe'
+import { clampPanelTop, clipLineByGlobe } from '@/lib/globe'
 
 // Header band ~64px tall; aim line at its vertical center
 const PANEL_HEADER_CENTER_OFFSET = 32
@@ -14,6 +14,8 @@ export default function GlobeClickConnector() {
     selectedPin,
     slideComplete,
     pinPositionRef,
+    globeScreenRef,
+    frameSubscribersRef,
     showConnectors,
     selectedPinScreenY,
     isDesktop,
@@ -106,36 +108,48 @@ export default function GlobeClickConnector() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drawPin, selectedPin, slideComplete])
 
-  // RAF loop for line position — render against `drawPin`, not selectedPin,
-  // so the exit animation uses the previous pin's coordinates.
+  // Subscribe to the bridge's frame tick — render against `drawPin`, not
+  // selectedPin, so the exit animation uses the previous pin's coordinates.
+  // Updating inline with the canvas frame keeps the line glued to the pin
+  // during rotation (no separate rAF loop that could trail by one frame).
   useEffect(() => {
     if (!drawPin || !showConnectors || drawProgress === 0) return
-
-    let raf: number
+    const subscribers = frameSubscribersRef.current
     const update = () => {
       const pos = pinPositionRef.current[drawPin]
-      if (pos && lineRef.current) {
-        // End point: panel's left edge (in container-local coords) at header Y
-        const panelLeftX = panelLeftInContainer
-        const panelTop = clampPanelTop(selectedPinScreenY, viewport.h)
-        const targetY = panelTop + PANEL_HEADER_CENTER_OFFSET
+      if (!pos || !lineRef.current) return
+      // End point: panel's left edge (in container-local coords) at header Y
+      const panelLeftX = panelLeftInContainer
+      const panelTop = clampPanelTop(selectedPinScreenY, viewport.h)
+      const targetY = panelTop + PANEL_HEADER_CENTER_OFFSET
 
-        const endX = pos.x + (panelLeftX - pos.x) * drawProgress
-        const endY = pos.y + (targetY - pos.y) * drawProgress
+      const endX = pos.x + (panelLeftX - pos.x) * drawProgress
+      const endY = pos.y + (targetY - pos.y) * drawProgress
 
-        lineRef.current.setAttribute('x1', String(pos.x))
-        lineRef.current.setAttribute('y1', String(pos.y))
-        lineRef.current.setAttribute('x2', String(endX))
-        lineRef.current.setAttribute('y2', String(endY))
-        lineRef.current.style.opacity = pos.visible ? '1' : '0'
-      }
-      raf = requestAnimationFrame(update)
+      const clipped = clipLineByGlobe(
+        pos.x,
+        pos.y,
+        endX,
+        endY,
+        pos.behind,
+        globeScreenRef.current,
+      )
+
+      lineRef.current.setAttribute('x1', String(clipped.x1))
+      lineRef.current.setAttribute('y1', String(clipped.y1))
+      lineRef.current.setAttribute('x2', String(clipped.x2))
+      lineRef.current.setAttribute('y2', String(clipped.y2))
+      lineRef.current.style.opacity = pos.visible && clipped.visible ? '1' : '0'
     }
-    raf = requestAnimationFrame(update)
-    return () => cancelAnimationFrame(raf)
+    subscribers.add(update)
+    return () => {
+      subscribers.delete(update)
+    }
   }, [
     drawPin,
     pinPositionRef,
+    globeScreenRef,
+    frameSubscribersRef,
     showConnectors,
     panelLeftInContainer,
     viewport.h,

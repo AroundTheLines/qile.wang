@@ -64,6 +64,62 @@ export function sphericalToCartesian(
   ]
 }
 
+export interface GlobeScreenCircle {
+  cx: number
+  cy: number
+  r: number
+}
+
+/**
+ * Treat the globe as a circular occluder in screen space and trim the
+ * pin→endpoint line so the segment inside the silhouette is hidden whenever
+ * the pin sits on the far hemisphere. When the pin is on the near hemisphere
+ * (or we have no globe geometry yet), the original line is returned unchanged.
+ *
+ * Returns `visible: false` when the entire line is hidden (e.g., both the pin
+ * and the endpoint sit inside the disc).
+ */
+export function clipLineByGlobe(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  pinBehind: boolean,
+  globe: GlobeScreenCircle | null,
+): { x1: number; y1: number; x2: number; y2: number; visible: boolean } {
+  if (!pinBehind || !globe) {
+    return { x1, y1, x2, y2, visible: true }
+  }
+  const dx = x2 - x1
+  const dy = y2 - y1
+  const a = dx * dx + dy * dy
+  if (a === 0) return { x1, y1, x2, y2, visible: false }
+  const fx = x1 - globe.cx
+  const fy = y1 - globe.cy
+  const b = 2 * (fx * dx + fy * dy)
+  const c = fx * fx + fy * fy - globe.r * globe.r
+  const disc = b * b - 4 * a * c
+  if (disc < 0) {
+    // Pin is flagged behind but the line never crosses the disc — fall back
+    // to drawing the full line so we never silently lose the connector.
+    return { x1, y1, x2, y2, visible: true }
+  }
+  const sqrtDisc = Math.sqrt(disc)
+  const tExit = (-b + sqrtDisc) / (2 * a)
+  if (tExit >= 1) {
+    // Line exits the disc beyond the endpoint → fully occluded.
+    return { x1, y1, x2, y2, visible: false }
+  }
+  const t = Math.max(0, tExit)
+  return {
+    x1: x1 + t * dx,
+    y1: y1 + t * dy,
+    x2,
+    y2,
+    visible: true,
+  }
+}
+
 export function groupPins(content: GlobeContentItem[]): GlobePin[] {
   const groups = new Map<
     string,

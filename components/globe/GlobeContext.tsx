@@ -1,12 +1,16 @@
 'use client'
 
 import { createContext, useContext, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
-import type { GlobePin } from '@/lib/globe'
+import type { GlobePin, GlobeScreenCircle } from '@/lib/globe'
 
 export interface ScreenPosition {
   x: number
   y: number
+  /** Inside the camera frustum (z < 1 in NDC). */
   visible: boolean
+  /** Pin sits on the far hemisphere of the globe — the dot is occluded
+      and any line attached to it should be clipped at the silhouette. */
+  behind: boolean
 }
 
 export type ViewportTier = 'desktop' | 'tablet' | 'mobile'
@@ -24,6 +28,17 @@ export interface GlobeContextValue {
   slideComplete: boolean
   selectedPinScreenY: number | null
   pinPositionRef: MutableRefObject<Record<string, ScreenPosition>>
+  /** Globe silhouette in screen-space (canvas-local pixels). Null until
+      the first frame is projected. Connectors read this to occlude the
+      back-of-globe segment of their line. */
+  globeScreenRef: MutableRefObject<GlobeScreenCircle | null>
+  /** Callbacks invoked by GlobePositionBridge at the end of every R3F
+      frame, after pin positions and the globe silhouette are written.
+      Connector components register here instead of running their own
+      requestAnimationFrame loops — that way the SVG line is updated in
+      the same browser tick the canvas paints, eliminating the one-frame
+      lag that lets the line lag behind the pin during rotation. */
+  frameSubscribersRef: MutableRefObject<Set<() => void>>
   /** Slug of the article currently open in article-open state, or null */
   activeArticleSlug: string | null
   /** Ref to the article's <h1>, set by ArticleContent when globe={true} */
