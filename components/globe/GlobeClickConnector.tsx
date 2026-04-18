@@ -39,6 +39,18 @@ export default function GlobeClickConnector() {
   const drawProgressRef = useRef(0)
   const [drawing, setDrawing] = useState(false)
 
+  // Last known panel-anchored pin Y. Kept in a ref so the fade-out keeps
+  // aiming at the panel header position it had at the moment the close
+  // started — selectPin(null) clears selectedPinScreenY to null in the
+  // same tick, and without this cache `clampPanelTop(null, ...)` would
+  // jump the endpoint to its default (top of the viewport) mid-retract.
+  const lastPanelYRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (drawPin && drawPin === selectedPin && selectedPinScreenY != null) {
+      lastPanelYRef.current = selectedPinScreenY
+    }
+  }, [drawPin, selectedPin, selectedPinScreenY])
+
   useEffect(() => {
     const read = () => setViewport({ w: window.innerWidth, h: window.innerHeight })
     read()
@@ -132,7 +144,17 @@ export default function GlobeClickConnector() {
       const progress = drawProgressRef.current
       // End point: panel's left edge (in container-local coords) at header Y
       const panelLeftX = panelLeftInContainer
-      const panelTop = clampPanelTop(selectedPinScreenY, viewport.h)
+      // Pick the anchor Y by whether we're drawing the currently-selected
+      // pin or fading out a previous one:
+      //   - Active (drawPin === selectedPin): use the live selected pin Y.
+      //   - Fading out (drawPin !== selectedPin, which covers both panel
+      //     close *and* a switch to a different pin): use the cached Y so
+      //     the retract stays glued to the old panel position instead of
+      //     jumping to the new pin's Y (pin-switch) or snapping to the
+      //     clamp fallback (close, where selectedPinScreenY is null).
+      const anchorY =
+        drawPin === selectedPin ? selectedPinScreenY : lastPanelYRef.current
+      const panelTop = clampPanelTop(anchorY, viewport.h)
       const targetY = panelTop + PANEL_HEADER_CENTER_OFFSET
 
       const endX = pos.x + (panelLeftX - pos.x) * progress

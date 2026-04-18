@@ -41,8 +41,6 @@ export interface GlobeContextValue {
   frameSubscribersRef: MutableRefObject<Set<() => void>>
   /** Slug of the article currently open in article-open state, or null */
   activeArticleSlug: string | null
-  /** Ref to the article's <h1>, set by ArticleContent when globe={true} */
-  articleTitleRef: MutableRefObject<HTMLHeadingElement | null>
   /** Exit article-open back to panel-open (desktop only) */
   closeArticle: () => void
   /** 'desktop' ≥1024, 'tablet' 768–1023, 'mobile' <768 */

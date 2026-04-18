@@ -11,7 +11,6 @@ import GlobeDetailPanel from './GlobeDetailPanel'
 import GlobeTooltip from './GlobeTooltip'
 import GlobeHoverConnector from './GlobeHoverConnector'
 import GlobeClickConnector from './GlobeClickConnector'
-import GlobeArticleConnector from './GlobeArticleConnector'
 
 const GlobeCanvas = dynamic(() => import('./GlobeCanvas'), {
   ssr: false,
@@ -235,6 +234,19 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
         <GlobeTooltip />
         <GlobeHoverConnector />
         <GlobeClickConnector />
+        {/* When the article is open, the whole globe sliver acts as a back
+            button: clicking anywhere on it collapses back to panel-open with
+            the active pin still selected. The overlay sits above the canvas
+            so neither OrbitControls nor pin onClick handlers receive the
+            event. */}
+        {isArticle && (
+          <button
+            type="button"
+            onClick={closeArticle}
+            aria-label="Close article and return to pin"
+            className="absolute inset-0 z-10 cursor-pointer bg-transparent"
+          />
+        )}
       </motion.div>
 
       {/* Article area (desktop/tablet) */}
@@ -250,8 +262,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
             transition={{ duration: 0.3, ease: 'easeOut' }}
           >
             {/* Close button — sits inside the sidecar as a regular design
-                element (not anchored to the connector line). Stays put as
-                the article body scrolls underneath. */}
+                element. Stays put as the article body scrolls underneath. */}
             <button
               onClick={closeArticle}
               className="sticky top-0 float-right mr-6 -mt-12 z-10 w-10 h-10 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-black dark:hover:text-white transition-colors text-2xl leading-none cursor-pointer"
@@ -263,9 +274,6 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Article connector: pin → article title */}
-      {isArticle && <GlobeArticleConnector />}
 
       <AnimatePresence>
         {selectedPin && selectedPinData && layoutState === 'panel-open' && (

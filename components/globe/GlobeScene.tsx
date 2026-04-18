@@ -18,10 +18,6 @@ const PIN_ROTATE_DURATION = 0.3
 const ARTICLE_ZOOM_DURATION = 0.4
 // When zoomed for article-open, pull camera closer than resting.
 const ARTICLE_CAMERA_DISTANCE = 4.2
-// Rotate the view direction west of the pin so the pin sits near the right
-// edge of the visible globe sliver rather than dead-center. Narrow slivers
-// have a small horizontal FOV, so this offset must stay under ~20°.
-const ARTICLE_PIN_OFFSET_RAD = Math.PI / 14
 
 type RotateState = {
   active: boolean
@@ -101,24 +97,13 @@ export default function GlobeScene() {
         pin.coordinates.lng,
         1,
       )
-      const pinNormal = new THREE.Vector3(x, y, z).normalize()
-      // Mobile uses a translate-only sidecar (no sliver shrink), so the
-      // pin should land dead-center on the canvas — which the wrapper
-      // translate then places at the center of the visible globe area.
-      // Desktop has a narrow sliver on the left and rotates the view west
-      // of the pin so the dot sits near the sliver's right edge.
-      const viewDir = isMobile
-        ? pinNormal.clone()
-        : pinNormal
-            .clone()
-            .applyQuaternion(
-              new THREE.Quaternion().setFromAxisAngle(
-                new THREE.Vector3(0, 1, 0),
-                -ARTICLE_PIN_OFFSET_RAD,
-              ),
-            )
+      // Camera sits along the pin's outward normal and looks at the globe
+      // origin, so the pin projects to the canvas center on both axes.
+      // Mobile: the wrapper translates that canvas-center into the visible
+      // sliver. Desktop: the wrapper shrinks to the left sliver, so the
+      // canvas center IS the sliver center — pin is centered horizontally.
       const distance = isMobile ? RESTING_DISTANCE : ARTICLE_CAMERA_DISTANCE
-      const endPos = viewDir.multiplyScalar(distance)
+      const endPos = new THREE.Vector3(x, y, z).setLength(distance)
 
       articleZoomRef.current = {
         active: true,
