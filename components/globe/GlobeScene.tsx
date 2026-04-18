@@ -301,8 +301,14 @@ export default function GlobeScene() {
         enableDamping={true}
         dampingFactor={0.05}
         rotateSpeed={0.5}
+        // Auto-rotate only in the default (no-panel) state. If a pin is
+        // selected, auto-rotation would drift the pin across the globe and
+        // eventually to the back face — where the connector line fades to
+        // opacity 0 along with the dot, making the "line to the panel"
+        // silently disappear while the panel itself stays open. Keep the
+        // view anchored while any panel is open.
         autoRotate={
-          layoutState !== 'article-open' && autoRotate && controlsEnabled
+          layoutState === 'default' && autoRotate && controlsEnabled
         }
         autoRotateSpeed={0.3}
       />
