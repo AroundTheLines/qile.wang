@@ -104,12 +104,28 @@ export default function GlobeProvider({
   // *not* depend on `selectedPin` — otherwise clearing selectedPin (e.g. a
   // mobile "close panel" action) while still on /globe/[slug] would cause
   // this effect to immediately re-set it before the URL has a chance to
-  // transition back to /globe.
+  // transition back to /globe. We read the current selection via a ref so
+  // the effect can *prefer* it when the article exists on multiple pins
+  // (e.g. an item cross-listed under Paris, Tokyo, and Marrakech) — without
+  // this, `pins.find` picks the first match and clobbers the user's Paris
+  // selection with Tokyo, which also causes the article-zoom to fight a
+  // spurious pin-switch rotation and manifests as a "sudden jump".
+  const selectedPinRef = useRef(selectedPin)
+  useEffect(() => {
+    selectedPinRef.current = selectedPin
+  }, [selectedPin])
   useEffect(() => {
     if (!activeArticleSlug) return
-    const match = pins.find((p) =>
-      p.items.some((i) => i.slug.current === activeArticleSlug),
-    )
+    const current = selectedPinRef.current
+    const currentPin = current ? pins.find((p) => p.group === current) : null
+    const keepCurrent =
+      currentPin?.items.some((i) => i.slug.current === activeArticleSlug) ??
+      false
+    const match = keepCurrent
+      ? currentPin
+      : pins.find((p) =>
+          p.items.some((i) => i.slug.current === activeArticleSlug),
+        )
     if (!match) return
     const pos = pinPositionRef.current[match.group]
     if (pos) setSelectedPinScreenY(pos.y)
