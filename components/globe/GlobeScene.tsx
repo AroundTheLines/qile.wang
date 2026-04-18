@@ -97,14 +97,13 @@ export default function GlobeScene() {
         pin.coordinates.lng,
         1,
       )
-      const pinNormal = new THREE.Vector3(x, y, z).normalize()
       // Camera sits along the pin's outward normal and looks at the globe
       // origin, so the pin projects to the canvas center on both axes.
       // Mobile: the wrapper translates that canvas-center into the visible
       // sliver. Desktop: the wrapper shrinks to the left sliver, so the
       // canvas center IS the sliver center — pin is centered horizontally.
       const distance = isMobile ? RESTING_DISTANCE : ARTICLE_CAMERA_DISTANCE
-      const endPos = pinNormal.clone().multiplyScalar(distance)
+      const endPos = new THREE.Vector3(x, y, z).setLength(distance)
 
       articleZoomRef.current = {
         active: true,

@@ -104,32 +104,34 @@ export default function GlobeProvider({
   // *not* depend on `selectedPin` — otherwise clearing selectedPin (e.g. a
   // mobile "close panel" action) while still on /globe/[slug] would cause
   // this effect to immediately re-set it before the URL has a chance to
-  // transition back to /globe. We read the current selection via a ref so
-  // the effect can *prefer* it when the article exists on multiple pins
-  // (e.g. an item cross-listed under Paris, Tokyo, and Marrakech) — without
-  // this, `pins.find` picks the first match and clobbers the user's Paris
-  // selection with Tokyo, which also causes the article-zoom to fight a
-  // spurious pin-switch rotation and manifests as a "sudden jump".
-  const selectedPinRef = useRef(selectedPin)
-  useEffect(() => {
-    selectedPinRef.current = selectedPin
-  }, [selectedPin])
+  // transition back to /globe.
+  //
+  // We read the current selection via the functional updater's `prev`
+  // argument so we can *prefer* it when the article exists under multiple
+  // pins (items are cross-listed — e.g. silk-scarf-navy appears under
+  // Marrakech, Paris, and Tokyo). Without this, `pins.find` picks the first
+  // match by array ordering and overwrites the user's Paris selection with
+  // Tokyo — which also kicks off a spurious pin-switch rotation that fights
+  // the article-zoom and manifests as a "sudden jump". Using `prev` is the
+  // robust form: no ref sync, no effect-ordering assumptions, and returning
+  // `prev` from the updater lets React bail out so the effect doesn't churn
+  // downstream state. Screen Y for the chosen pin is handled by the
+  // null-Y polling effect below, which fires when selectedPin changes to a
+  // pin whose Y hasn't been captured yet.
   useEffect(() => {
     if (!activeArticleSlug) return
-    const current = selectedPinRef.current
-    const currentPin = current ? pins.find((p) => p.group === current) : null
-    const keepCurrent =
-      currentPin?.items.some((i) => i.slug.current === activeArticleSlug) ??
-      false
-    const match = keepCurrent
-      ? currentPin
-      : pins.find((p) =>
-          p.items.some((i) => i.slug.current === activeArticleSlug),
-        )
-    if (!match) return
-    const pos = pinPositionRef.current[match.group]
-    if (pos) setSelectedPinScreenY(pos.y)
-    setSelectedPin((prev) => (prev === match.group ? prev : match.group))
+    setSelectedPin((prev) => {
+      const currentPin = prev ? pins.find((p) => p.group === prev) : null
+      const keepCurrent =
+        currentPin?.items.some((i) => i.slug.current === activeArticleSlug) ??
+        false
+      const match = keepCurrent
+        ? currentPin
+        : pins.find((p) =>
+            p.items.some((i) => i.slug.current === activeArticleSlug),
+          )
+      return match ? match.group : prev
+    })
   }, [activeArticleSlug, pins])
 
   // If selectedPinScreenY is null (deep-link case), poll the pin's screen

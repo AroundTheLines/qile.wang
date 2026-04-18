@@ -144,10 +144,16 @@ export default function GlobeClickConnector() {
       const progress = drawProgressRef.current
       // End point: panel's left edge (in container-local coords) at header Y
       const panelLeftX = panelLeftInContainer
-      // Prefer the live selected pin Y, but fall back to the cached one so
-      // the close-fade retracts from the real panel position instead of
-      // snapping to the clamp fallback when selectedPinScreenY goes null.
-      const anchorY = selectedPinScreenY ?? lastPanelYRef.current
+      // Pick the anchor Y by whether we're drawing the currently-selected
+      // pin or fading out a previous one:
+      //   - Active (drawPin === selectedPin): use the live selected pin Y.
+      //   - Fading out (drawPin !== selectedPin, which covers both panel
+      //     close *and* a switch to a different pin): use the cached Y so
+      //     the retract stays glued to the old panel position instead of
+      //     jumping to the new pin's Y (pin-switch) or snapping to the
+      //     clamp fallback (close, where selectedPinScreenY is null).
+      const anchorY =
+        drawPin === selectedPin ? selectedPinScreenY : lastPanelYRef.current
       const panelTop = clampPanelTop(anchorY, viewport.h)
       const targetY = panelTop + PANEL_HEADER_CENTER_OFFSET
 
