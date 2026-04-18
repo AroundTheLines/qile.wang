@@ -15,17 +15,22 @@ export default function GlobeCanvas({
 }: {
   dragDistanceRef: React.MutableRefObject<number>
 }) {
-  const { selectPin, selectedPin } = useGlobe()
+  const { selectPin, selectedPin, layoutState, closeArticle } = useGlobe()
 
   const handleMissed = useCallback(() => {
-    if (!selectedPin) return
     // Cumulative drag distance since pointerdown; accumulated by the parent
     // viewport's onPointerMove. If the user dragged the globe at all, treat
     // the pointerup as part of that gesture rather than a click-to-close.
-    if (dragDistanceRef.current < DRAG_THRESHOLD) {
+    if (dragDistanceRef.current >= DRAG_THRESHOLD) return
+    // Collapse one overlay step per empty-globe click: article-open → panel-open,
+    // panel-open → default. Pin clicks never reach here because the pin mesh
+    // claims the raycast hit.
+    if (layoutState === 'article-open') {
+      closeArticle()
+    } else if (selectedPin) {
       selectPin(null)
     }
-  }, [selectedPin, selectPin, dragDistanceRef])
+  }, [selectedPin, selectPin, layoutState, closeArticle, dragDistanceRef])
 
   return (
     <div className="w-full h-full" style={{ touchAction: 'none' }}>

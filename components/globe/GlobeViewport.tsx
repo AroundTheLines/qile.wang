@@ -32,6 +32,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
     pins,
     layoutState,
     activeArticleSlug,
+    closeArticle,
   } = useGlobe()
   const router = useRouter()
 
@@ -81,6 +82,28 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
         : undefined)
     const showPanel = Boolean(resolvedPin) && (!!selectedPin || isArticle)
 
+    // Mobile panel width — must match the motion.div style below
+    // (`width: 85vw, maxWidth: 380`). Translating the globe wrapper by half
+    // the panel width puts the canvas center (where the camera-centered pin
+    // lands) at the center of the visible globe sliver.
+    //
+    // We deliberately translate but do NOT scale the wrapper: R3F measures
+    // its container's getBoundingClientRect (which is post-transform), so a
+    // CSS scale shrinks the canvas itself and the pin no longer lands at
+    // the predictable canvas-center pixel. The dim scrim already does the
+    // visual job of de-emphasizing the globe; scaling is unnecessary.
+    const mobilePanelWidth = viewportW
+      ? Math.min(viewportW * 0.85, 380)
+      : 0
+    const mobileGlobeShiftPx = showPanel ? -mobilePanelWidth / 2 : 0
+    // The fixed top navbar consumes the upper ~72px of the viewport. The
+    // pin renders at the canvas vertical center (h/2), but the visible
+    // globe area is below the navbar, so its center sits at (navbar+h)/2.
+    // Shifting the wrapper down by half the navbar height re-centers the
+    // pin in the area that's actually visible to the user.
+    const NAVBAR_HEIGHT = 72
+    const mobileGlobeShiftYPx = showPanel ? NAVBAR_HEIGHT / 2 : 0
+
     const closeAll = () => {
       if (isArticle) router.push('/globe', { scroll: false })
       selectPin(null)
@@ -96,8 +119,8 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
           <motion.div
             className="relative w-full h-full"
             animate={{
-              scale: showPanel ? 0.85 : 1,
-              x: showPanel ? '-10%' : '0%',
+              x: mobileGlobeShiftPx,
+              y: mobileGlobeShiftYPx,
             }}
             transition={{ type: 'spring', stiffness: 200, damping: 30 }}
           >
@@ -112,7 +135,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
           {showPanel && (
             <motion.div
               className="fixed inset-0 z-50"
-              style={{ backgroundColor: 'rgba(0,0,0,0.3)' }}
+              style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -169,7 +192,11 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
   }
 
   // Tablet + desktop: side-by-side layout.
-  const SLIDE_TRANSITION = { duration: 0.4, ease: [0.22, 1, 0.36, 1] as const }
+  // Easing matches GlobeScene's article-zoom easing (cubic ease-out, 1-(1-t)^3)
+  // so the wrapper width/translate animation and the camera animation stay
+  // in lockstep — without this the pin appears to first slide to canvas
+  // center, then snap to its panel-open spot when the wrapper finishes.
+  const SLIDE_TRANSITION = { duration: 0.4, ease: [0.33, 1, 0.68, 1] as const }
 
   const panelWidthPx = viewportW
     ? isDesktop
@@ -203,9 +230,6 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
         initial={false}
         animate={viewportW === 0 ? {} : { width: globeWidth, x: globeX }}
         transition={SLIDE_TRANSITION}
-        style={{
-          pointerEvents: isArticle ? 'none' : undefined,
-        }}
       >
         <GlobeCanvas dragDistanceRef={dragDistance} />
         <GlobeTooltip />
@@ -218,13 +242,23 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
         {isArticle && (
           <motion.div
             key="globe-article-area"
-            className="absolute top-0 right-0 bottom-0 overflow-y-auto pt-20"
+            className="absolute top-0 right-0 bottom-0 overflow-y-auto pt-20 border-l border-gray-200 dark:border-gray-800 bg-white dark:bg-black"
             style={{ width: `${(1 - ARTICLE_GLOBE_WIDTH_FRAC) * 100}vw` }}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.3, ease: 'easeOut' }}
           >
+            {/* Close button — sits inside the sidecar as a regular design
+                element (not anchored to the connector line). Stays put as
+                the article body scrolls underneath. */}
+            <button
+              onClick={closeArticle}
+              className="sticky top-0 float-right mr-6 -mt-12 z-10 w-10 h-10 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-black dark:hover:text-white transition-colors text-2xl leading-none cursor-pointer"
+              aria-label="Close article"
+            >
+              &times;
+            </button>
             {children}
           </motion.div>
         )}

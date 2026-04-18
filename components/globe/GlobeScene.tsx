@@ -32,7 +32,7 @@ type RotateState = {
 
 export default function GlobeScene() {
   const controlsRef = useRef<OrbitControlsImpl>(null)
-  const { pins, selectedPin, pinPositionRef, layoutState } = useGlobe()
+  const { pins, selectedPin, layoutState, isMobile } = useGlobe()
   const { camera } = useThree()
 
   // Reactive enabled state — avoids the "React re-renders and reapplies
@@ -102,12 +102,23 @@ export default function GlobeScene() {
         1,
       )
       const pinNormal = new THREE.Vector3(x, y, z).normalize()
-      const quat = new THREE.Quaternion().setFromAxisAngle(
-        new THREE.Vector3(0, 1, 0),
-        -ARTICLE_PIN_OFFSET_RAD,
-      )
-      const viewDir = pinNormal.clone().applyQuaternion(quat)
-      const endPos = viewDir.multiplyScalar(ARTICLE_CAMERA_DISTANCE)
+      // Mobile uses a translate-only sidecar (no sliver shrink), so the
+      // pin should land dead-center on the canvas — which the wrapper
+      // translate then places at the center of the visible globe area.
+      // Desktop has a narrow sliver on the left and rotates the view west
+      // of the pin so the dot sits near the sliver's right edge.
+      const viewDir = isMobile
+        ? pinNormal.clone()
+        : pinNormal
+            .clone()
+            .applyQuaternion(
+              new THREE.Quaternion().setFromAxisAngle(
+                new THREE.Vector3(0, 1, 0),
+                -ARTICLE_PIN_OFFSET_RAD,
+              ),
+            )
+      const distance = isMobile ? RESTING_DISTANCE : ARTICLE_CAMERA_DISTANCE
+      const endPos = viewDir.multiplyScalar(distance)
 
       articleZoomRef.current = {
         active: true,
@@ -119,7 +130,7 @@ export default function GlobeScene() {
       setAutoRotate(false)
       setControlsEnabled(false)
     },
-    [pins, camera],
+    [pins, camera, isMobile],
   )
 
   const pendingArticleZoom = useRef(false)
@@ -162,17 +173,18 @@ export default function GlobeScene() {
     startArticleZoom(selectedPin)
   }, [selectedPin, layoutState, startArticleZoom])
 
-  // Detect pin switch to a back-face pin → programmatic rotation
+  // On any pin selection (initial click OR switch between pins), rotate
+  // the camera so the pin sits at the center of the canvas. With the
+  // panel-open transform shifting the globe wrapper, "centered in canvas"
+  // == "centered in the visible globe region next to the panel/sidecar."
+  // This applies on both desktop and mobile: the panel reduces visible
+  // real estate, so centering the pin is what makes the connection legible.
   useEffect(() => {
     const prev = prevSelectedPin.current
     prevSelectedPin.current = selectedPin
 
-    if (!selectedPin || !prev || prev === selectedPin) return
+    if (!selectedPin || prev === selectedPin) return
     if (!entranceDone.current) return
-
-    const pos = pinPositionRef.current[selectedPin]
-    // If pin is currently visible on front face, no rotation needed
-    if (pos?.visible) return
 
     const pin = pins.find((p) => p.group === selectedPin)
     if (!pin) return
@@ -193,7 +205,7 @@ export default function GlobeScene() {
     }
     // Disable controls during programmatic rotation
     setControlsEnabled(false)
-  }, [selectedPin, pins, pinPositionRef, camera])
+  }, [selectedPin, pins, camera])
 
   // Single useFrame driving entrance + programmatic rotation
   useFrame((_, delta) => {
