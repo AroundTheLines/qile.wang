@@ -10,21 +10,26 @@ const DRAW_IN_DELAY_MS = 500
 const DRAW_IN_MS = 200
 const RETRACT_MS = 150
 
+// Article area starts at this fraction of viewport width — keep in sync
+// with ARTICLE_GLOBE_WIDTH_FRAC in GlobeViewport.
+const ARTICLE_AREA_LEFT_FRAC = 0.3
+// Fixed Y for the line endpoint, roughly aligned with the article header
+// area (pt-20 ~= 80px + a little extra for the title baseline). The line
+// stays anchored here so scrolling the article body never drags it.
+const ARTICLE_LINE_END_Y = 110
+
 export default function GlobeArticleConnector() {
   const {
     selectedPin,
     pinPositionRef,
     globeScreenRef,
     frameSubscribersRef,
-    articleTitleRef,
-    closeArticle,
     isDark,
     showConnectors,
     layoutState,
   } = useGlobe()
 
   const lineRef = useRef<SVGLineElement>(null)
-  const closeButtonRef = useRef<HTMLDivElement>(null)
   const [viewport, setViewport] = useState({ w: 0, h: 0 })
   // Animated 0..1 draw progress lives in a ref — same reasoning as
   // GlobeClickConnector: per-frame setState would re-run the subscribe
@@ -99,24 +104,15 @@ export default function GlobeArticleConnector() {
     const subscribers = frameSubscribersRef.current
     const update = () => {
       const pos = pinPositionRef.current[selectedPin]
-      const titleEl = articleTitleRef.current
       if (!pos || !lineRef.current) return
       const progress = progressRef.current
-      // End point: left edge of article title (or clamp to top of article
-      // area if title has scrolled off-screen).
-      let endX: number
-      let endY: number
-      if (titleEl) {
-        const rect = titleEl.getBoundingClientRect()
-        endX = rect.left
-        endY = rect.top + rect.height / 2
-        // Clamp: if title is above the article viewport, clamp to top.
-        if (endY < 80) endY = 80
-      } else {
-        // Title not yet mounted — fall back to midpoint of viewport height.
-        endX = viewport.w * 0.35
-        endY = viewport.h * 0.5
-      }
+      // Static endpoint anchored to the article area's top-left region.
+      // We deliberately do NOT track the article <h1> here: the title
+      // scrolls with the article body, and a line that follows the title
+      // would slide up/down in lock-step with the user's scroll, which is
+      // jarring. The line points to where the title sits at rest.
+      const endX = viewport.w * ARTICLE_AREA_LEFT_FRAC
+      const endY = ARTICLE_LINE_END_Y
 
       const drawnEndX = pos.x + (endX - pos.x) * progress
       const drawnEndY = pos.y + (endY - pos.y) * progress
@@ -135,48 +131,22 @@ export default function GlobeArticleConnector() {
       lineRef.current.setAttribute('x2', String(clipped.x2))
       lineRef.current.setAttribute('y2', String(clipped.y2))
       lineRef.current.style.opacity = pos.visible && clipped.visible ? '1' : '0'
-
-      if (closeButtonRef.current) {
-        // Anchor the × at the midpoint of the *visible* segment so it never
-        // sits inside the globe disc when the pin is on the back face.
-        const midX = (clipped.x1 + clipped.x2) / 2
-        const midY = (clipped.y1 + clipped.y2) / 2
-        closeButtonRef.current.style.left = `${midX}px`
-        closeButtonRef.current.style.top = `${midY}px`
-        closeButtonRef.current.style.opacity =
-          progress >= 1 && pos.visible && clipped.visible ? '1' : '0'
-      }
     }
     subscribers.add(update)
     return () => {
       subscribers.delete(update)
     }
-  }, [drawing, selectedPin, pinPositionRef, globeScreenRef, frameSubscribersRef, articleTitleRef, viewport.w, viewport.h])
+  }, [drawing, selectedPin, pinPositionRef, globeScreenRef, frameSubscribersRef, viewport.w, viewport.h])
 
   if (!drawing || !showConnectors || !selectedPin) return null
 
   return (
-    <>
-      <svg
-        className="fixed inset-0 pointer-events-none z-30"
-        width={viewport.w}
-        height={viewport.h}
-      >
-        <line ref={lineRef} stroke={isDark ? 'white' : 'black'} strokeWidth="1.5" />
-      </svg>
-      <div
-        ref={closeButtonRef}
-        className="fixed z-40 -translate-x-1/2 -translate-y-1/2 transition-opacity"
-        style={{ opacity: 0 }}
-      >
-        <button
-          onClick={closeArticle}
-          className="w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-black border border-black dark:border-white text-black dark:text-white text-xs leading-none cursor-pointer hover:opacity-70 transition-opacity"
-          aria-label="Close article"
-        >
-          &times;
-        </button>
-      </div>
-    </>
+    <svg
+      className="fixed inset-0 pointer-events-none z-30"
+      width={viewport.w}
+      height={viewport.h}
+    >
+      <line ref={lineRef} stroke={isDark ? 'white' : 'black'} strokeWidth="1.5" />
+    </svg>
   )
 }
