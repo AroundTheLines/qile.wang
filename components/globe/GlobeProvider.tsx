@@ -52,7 +52,6 @@ export default function GlobeProvider({
   const pinPositionRef = useRef<Record<string, ScreenPosition>>({})
   const globeScreenRef = useRef<GlobeScreenCircle | null>(null)
   const frameSubscribersRef = useRef<Set<() => void>>(new Set())
-  const articleTitleRef = useRef<HTMLHeadingElement | null>(null)
   const tier = useViewportTier()
   const isDark = useIsDark()
 
@@ -170,7 +169,6 @@ export default function GlobeProvider({
         globeScreenRef,
         frameSubscribersRef,
         activeArticleSlug,
-        articleTitleRef,
         closeArticle,
         tier,
         isDesktop,

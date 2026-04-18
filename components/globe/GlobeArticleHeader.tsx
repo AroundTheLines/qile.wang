@@ -1,20 +1,6 @@
-'use client'
-
-import { useEffect, useRef } from 'react'
-import { useGlobe } from './GlobeContext'
 import type { ContentFull } from '@/lib/types'
 
 export default function GlobeArticleHeader({ item }: { item: ContentFull }) {
-  const h1Ref = useRef<HTMLHeadingElement>(null)
-  const { articleTitleRef } = useGlobe()
-
-  useEffect(() => {
-    articleTitleRef.current = h1Ref.current
-    return () => {
-      articleTitleRef.current = null
-    }
-  }, [articleTitleRef])
-
   return (
     <>
       <span className="text-xs tracking-widest uppercase text-gray-300 dark:text-gray-600">
@@ -30,10 +16,7 @@ export default function GlobeArticleHeader({ item }: { item: ContentFull }) {
           ? ` · acquired ${new Date(item.acquired_at).getFullYear()}`
           : ''}
       </span>
-      <h1
-        ref={h1Ref}
-        className="text-3xl font-light text-black dark:text-white mt-2 mb-6"
-      >
+      <h1 className="text-3xl font-light text-black dark:text-white mt-2 mb-6">
         {item.title}
       </h1>
     </>
