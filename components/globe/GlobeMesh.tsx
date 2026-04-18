@@ -98,8 +98,15 @@ export default function GlobeMesh() {
       {/* Depth-only occluder — writes to the depth buffer so back-face
           wireframe + borders get culled, but writes no color. The page
           background shows through, making the globe read as spinning
-          line art rather than a solid sphere. */}
-      <mesh renderOrder={-1}>
+          line art rather than a solid sphere.
+
+          Render-order bands (see also GlobePins.tsx):
+            -2: this occluder            (opaque, depth-only)
+            -1: pin dots + selection rings (transparent, no depth write)
+             0: wireframe + country borders (transparent, default band)
+          Keeping the occluder in its own band means adding new overlays
+          to the pin band won't accidentally sort around it. */}
+      <mesh renderOrder={-2}>
         <sphereGeometry args={[GLOBE_RADIUS * 0.995, 64, 32]} />
         <meshBasicMaterial colorWrite={false} depthWrite={true} />
       </mesh>

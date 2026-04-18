@@ -1,12 +1,18 @@
 'use client'
 
 import { useRef, useCallback, useMemo } from 'react'
-import { useFrame, useThree } from '@react-three/fiber'
+import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useGlobe } from './GlobeContext'
 import { sphericalToCartesian } from '@/lib/globe'
 
 const PIN_RADIUS = 0.042
+// The dot is a full sphere sitting on the globe surface, so half of it
+// is embedded inside the globe. We don't need any explicit hiding for
+// that inner hemisphere: the depth-only occluder in GlobeMesh (radius
+// GLOBE_RADIUS * 0.995) writes depth without color, and the pin's
+// MeshBasicMaterial still runs depthTest (only depthWrite is off), so
+// the embedded triangles fail the depth test and are culled for free.
 // Tiny outward offset so the ring sits just above the surface without
 // z-fighting against the depth-only occluder or the wireframe.
 const SURFACE_OFFSET = 0.006
@@ -15,6 +21,21 @@ const SURFACE_OFFSET = 0.006
 const HIT_RADIUS = 0.075
 const PIN_COLOR = '#EF4444'
 const GLOBE_RADIUS = 2
+
+// Render-order bands — explicit so the transparent-sort order is
+// deterministic and doesn't flip per-frame based on camera depth.
+//   -2: depth-only occluder (opaque, writes depth, no color)
+//   -1: pin dot + selection ring  (transparent, no depth write)
+//    0: wireframe grid + country borders (transparent, default bucket)
+// Lines always paint after pins, so map detail reads through every dot.
+const RENDER_ORDER_PIN = -1
+
+// Back-face fade — the pin opacity ramps from 0 → 1 as the dot's normal
+// rotates from "just behind the camera-facing hemisphere" to "comfortably
+// in front." FADE_START is slightly negative so the dot is already
+// invisible a hair before it crosses the silhouette, avoiding a hard pop.
+const FADE_START = -0.1
+const FADE_END = 0.2
 
 function Pin({
   group,
@@ -59,7 +80,7 @@ function Pin({
       .subVectors(camera.position, new THREE.Vector3(...pos))
       .normalize()
     const dot = pinNormal.dot(cameraDir)
-    const tRange = Math.max(0, Math.min(1, (dot - (-0.1)) / (0.2 - (-0.1))))
+    const tRange = Math.max(0, Math.min(1, (dot - FADE_START) / (FADE_END - FADE_START)))
     const opacity = tRange * tRange * (3 - 2 * tRange)
     pinMaterialRef.current.opacity = opacity
 
@@ -101,12 +122,12 @@ function Pin({
   })
 
   const handlePointerOver = useCallback(
-    (e: THREE.Event) => {
+    (e: ThreeEvent<PointerEvent>) => {
       // Stop propagation so only the nearest hit sphere claims the hover.
       // Without this, every overlapping pin in the ray fires pointer-over
       // and the last-fired one wins — causing Amsterdam to highlight when
       // you aim at London in a tight cluster.
-      ;(e as unknown as { stopPropagation: () => void }).stopPropagation()
+      e.stopPropagation()
       if (!showHover) return
       if (selectedPin === group) return // don't show tooltip when panel is open for this pin
       setHoveredPin(group)
@@ -115,8 +136,8 @@ function Pin({
   )
 
   const handlePointerOut = useCallback(
-    (e: THREE.Event) => {
-      ;(e as unknown as { stopPropagation: () => void }).stopPropagation()
+    (e: ThreeEvent<PointerEvent>) => {
+      e.stopPropagation()
       if (!showHover) return
       // Only clear if *this* pin is the currently hovered one. When moving
       // between close pins, the new pin's pointer-over can fire before the
@@ -127,8 +148,8 @@ function Pin({
   )
 
   const handleClick = useCallback(
-    (e: THREE.Event) => {
-      (e as unknown as { stopPropagation: () => void }).stopPropagation()
+    (e: ThreeEvent<MouseEvent>) => {
+      e.stopPropagation()
       selectPin(group)
       setHoveredPin(null)
     },
@@ -140,12 +161,12 @@ function Pin({
       {/* Dot — half-embedded sphere with basic (unlit) material. Reads as a
           perfect flat-color circle from any viewing angle, unlike a flat
           disc which foreshortens to a line near the globe's silhouette.
-          renderOrder is set below the default so the wireframe grid and
-          country borders (both transparent, renderOrder 0) always paint
+          renderOrder sits in the pin band (RENDER_ORDER_PIN = -1) so the
+          wireframe grid and country borders (default band, 0) always paint
           on top — otherwise depth-based transparent sorting flips the
           order per frame and map lines sometimes show through the dot
           and sometimes don't. */}
-      <mesh ref={meshRef} renderOrder={-1}>
+      <mesh ref={meshRef} renderOrder={RENDER_ORDER_PIN}>
         <sphereGeometry args={[PIN_RADIUS, 24, 24]} />
         <meshBasicMaterial
           ref={pinMaterialRef}
@@ -156,12 +177,15 @@ function Pin({
       </mesh>
 
       {/* Selected ring — flat annulus tangent to the surface, offset
-          outward enough to stay above the dot's embedded hemisphere. */}
+          outward enough to stay above the dot's embedded hemisphere.
+          Shares the pin band so map lines read through it too (same
+          "line art on top of pin art" invariant as the dot). */}
       <mesh
         ref={ringRef}
         visible={false}
         position={[0, SURFACE_OFFSET, 0]}
         rotation={[-Math.PI / 2, 0, 0]}
+        renderOrder={RENDER_ORDER_PIN}
       >
         <ringGeometry args={[PIN_RADIUS * 1.6, PIN_RADIUS * 2.2, 40]} />
         <meshBasicMaterial

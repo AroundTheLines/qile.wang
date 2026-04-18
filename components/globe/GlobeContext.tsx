@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, type MutableRefObject } from 'react'
+import { createContext, useContext, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
 import type { GlobePin } from '@/lib/globe'
 
 export interface ScreenPosition {
@@ -16,7 +16,10 @@ export interface GlobeContextValue {
   selectedPin: string | null
   selectPin: (group: string | null) => void
   hoveredPin: string | null
-  setHoveredPin: (group: string | null) => void
+  /** React setter — supports functional updates so callers can compare
+      against the current value without racing context reads (e.g. the
+      "only clear if I'm the hovered pin" guard in GlobePins). */
+  setHoveredPin: Dispatch<SetStateAction<string | null>>
   layoutState: 'default' | 'panel-open' | 'article-open'
   slideComplete: boolean
   selectedPinScreenY: number | null
