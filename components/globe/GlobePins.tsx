@@ -6,11 +6,13 @@ import * as THREE from 'three'
 import { useGlobe } from './GlobeContext'
 import { sphericalToCartesian } from '@/lib/globe'
 
-const PIN_RADIUS = 0.06
-const STEM_LENGTH = 0.12
-const STEM_RADIUS = 0.012
-// Tuned so diameter ≈ 48px at RESTING_DISTANCE=6.5, FOV=45°.
-const HIT_RADIUS = 0.17
+const PIN_RADIUS = 0.042
+// Tiny outward offset so the ring sits just above the surface without
+// z-fighting against the depth-only occluder or the wireframe.
+const SURFACE_OFFSET = 0.006
+// ~1.8× the visible dot. Keeps a forgiving tap target without stealing
+// hover/click from neighbors when the globe is zoomed in.
+const HIT_RADIUS = 0.075
 const PIN_COLOR = '#EF4444'
 const GLOBE_RADIUS = 2
 
@@ -27,7 +29,7 @@ function Pin({
   const meshRef = useRef<THREE.Mesh>(null)
   const hitRef = useRef<THREE.Mesh>(null)
   const ringRef = useRef<THREE.Mesh>(null)
-  const pinMaterialRef = useRef<THREE.MeshStandardMaterial>(null)
+  const pinMaterialRef = useRef<THREE.MeshBasicMaterial>(null)
   const ringMaterialRef = useRef<THREE.MeshBasicMaterial>(null)
   const { camera } = useThree()
 
@@ -48,8 +50,6 @@ function Pin({
     return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal)
   }, [pos])
 
-  const stemMaterialRef = useRef<THREE.MeshStandardMaterial>(null)
-
   useFrame(({ clock }, delta) => {
     if (!meshRef.current || !pinMaterialRef.current) return
 
@@ -62,7 +62,6 @@ function Pin({
     const tRange = Math.max(0, Math.min(1, (dot - (-0.1)) / (0.2 - (-0.1))))
     const opacity = tRange * tRange * (3 - 2 * tRange)
     pinMaterialRef.current.opacity = opacity
-    if (stemMaterialRef.current) stemMaterialRef.current.opacity = opacity
 
     if (hitRef.current) {
       hitRef.current.visible = opacity > 0.1
@@ -75,43 +74,57 @@ function Pin({
     hoveredT.current += ((isHovered ? 1 : 0) - hoveredT.current) * k
 
     // --- Target scale ---
-    // Selected adds a pulse on top of a 1.0 baseline; hover pushes to 1.3.
-    // We blend them via the tweened intensities so a switch between pins
-    // gracefully unwinds the old ring + pulse instead of snapping.
-    const pulse = 0.15 * Math.sin(clock.elapsedTime * 3)
+    // Selected adds a gentle pulse on top of a 1.0 baseline; hover pushes
+    // up modestly. Both are intentionally small so the active dot stays
+    // close in size to its neighbors.
+    const pulse = 0.1 * Math.sin(clock.elapsedTime * 3)
     const selectedScale = 1 + pulse
-    const hoverScale = 1.3
+    const hoverScale = 1.15
     const targetScale =
       1 + (selectedScale - 1) * selectedT.current + (hoverScale - 1) * hoveredT.current
     scaleT.current += (targetScale - scaleT.current) * k
     meshRef.current.scale.setScalar(scaleT.current)
 
     // --- Ring ---
+    // Ring stays tangent to the surface (painted alongside the dot), so no
+    // camera-facing counter-rotation — the static rotation on the mesh wins.
+    // Ring scale is decoupled from the dot's pulse so the outline doesn't
+    // pulsate with the dot; only the selection tween drives its growth.
     if (ringRef.current && ringMaterialRef.current) {
       const sel = selectedT.current
       ringRef.current.visible = sel > 0.01 && opacity > 0.1
       if (ringRef.current.visible) {
-        ringRef.current.scale.setScalar(scaleT.current * 1.8)
-        // Ring lives inside a rotated group; counter-rotate so it still faces camera.
-        ringRef.current.quaternion
-          .copy(quat)
-          .invert()
-          .multiply(camera.quaternion)
+        ringRef.current.scale.setScalar(1 + 0.4 * sel)
         ringMaterialRef.current.opacity = 0.4 * sel * opacity
       }
     }
   })
 
-  const handlePointerOver = useCallback(() => {
-    if (!showHover) return
-    if (selectedPin === group) return // don't show tooltip when panel is open for this pin
-    setHoveredPin(group)
-  }, [showHover, selectedPin, group, setHoveredPin])
+  const handlePointerOver = useCallback(
+    (e: THREE.Event) => {
+      // Stop propagation so only the nearest hit sphere claims the hover.
+      // Without this, every overlapping pin in the ray fires pointer-over
+      // and the last-fired one wins — causing Amsterdam to highlight when
+      // you aim at London in a tight cluster.
+      ;(e as unknown as { stopPropagation: () => void }).stopPropagation()
+      if (!showHover) return
+      if (selectedPin === group) return // don't show tooltip when panel is open for this pin
+      setHoveredPin(group)
+    },
+    [showHover, selectedPin, group, setHoveredPin],
+  )
 
-  const handlePointerOut = useCallback(() => {
-    if (!showHover) return
-    setHoveredPin(null)
-  }, [showHover, setHoveredPin])
+  const handlePointerOut = useCallback(
+    (e: THREE.Event) => {
+      ;(e as unknown as { stopPropagation: () => void }).stopPropagation()
+      if (!showHover) return
+      // Only clear if *this* pin is the currently hovered one. When moving
+      // between close pins, the new pin's pointer-over can fire before the
+      // old pin's pointer-out — guarding prevents wiping out the new hover.
+      setHoveredPin((prev) => (prev === group ? null : prev))
+    },
+    [showHover, group, setHoveredPin],
+  )
 
   const handleClick = useCallback(
     (e: THREE.Event) => {
@@ -122,50 +135,47 @@ function Pin({
     [group, selectPin, setHoveredPin],
   )
 
-  const headY = STEM_LENGTH + PIN_RADIUS * 0.8
-
   return (
     <group position={pos} quaternion={quat}>
-      {/* Stem */}
-      <mesh position={[0, STEM_LENGTH / 2, 0]}>
-        <cylinderGeometry args={[STEM_RADIUS, STEM_RADIUS, STEM_LENGTH, 10]} />
-        <meshStandardMaterial
-          ref={stemMaterialRef}
-          color={PIN_COLOR}
-          transparent
-          roughness={0.35}
-          metalness={0.1}
-        />
-      </mesh>
-
-      {/* Pin head — shaded sphere for depth */}
-      <mesh ref={meshRef} position={[0, headY, 0]}>
+      {/* Dot — half-embedded sphere with basic (unlit) material. Reads as a
+          perfect flat-color circle from any viewing angle, unlike a flat
+          disc which foreshortens to a line near the globe's silhouette.
+          renderOrder is set below the default so the wireframe grid and
+          country borders (both transparent, renderOrder 0) always paint
+          on top — otherwise depth-based transparent sorting flips the
+          order per frame and map lines sometimes show through the dot
+          and sometimes don't. */}
+      <mesh ref={meshRef} renderOrder={-1}>
         <sphereGeometry args={[PIN_RADIUS, 24, 24]} />
-        <meshStandardMaterial
+        <meshBasicMaterial
           ref={pinMaterialRef}
           color={PIN_COLOR}
           transparent
-          roughness={0.3}
-          metalness={0.15}
+          depthWrite={false}
         />
       </mesh>
 
-      {/* Selected ring — sits around the pin head */}
-      <mesh ref={ringRef} visible={false} position={[0, headY, 0]}>
-        <ringGeometry args={[PIN_RADIUS * 1.5, PIN_RADIUS * 2, 32]} />
+      {/* Selected ring — flat annulus tangent to the surface, offset
+          outward enough to stay above the dot's embedded hemisphere. */}
+      <mesh
+        ref={ringRef}
+        visible={false}
+        position={[0, SURFACE_OFFSET, 0]}
+        rotation={[-Math.PI / 2, 0, 0]}
+      >
+        <ringGeometry args={[PIN_RADIUS * 1.6, PIN_RADIUS * 2.2, 40]} />
         <meshBasicMaterial
           ref={ringMaterialRef}
           color={PIN_COLOR}
           transparent
           opacity={0}
-          side={THREE.DoubleSide}
+          depthWrite={false}
         />
       </mesh>
 
       {/* Invisible hit target for tap/click */}
       <mesh
         ref={hitRef}
-        position={[0, headY, 0]}
         onPointerOver={handlePointerOver}
         onPointerOut={handlePointerOut}
         onClick={handleClick}

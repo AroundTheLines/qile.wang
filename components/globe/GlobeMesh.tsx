@@ -90,18 +90,18 @@ export default function GlobeMesh() {
     return new THREE.WireframeGeometry(sphere)
   }, [])
 
-  const innerColor = isDark ? '#000000' : '#ffffff'
   const lineColor = isDark ? 'white' : 'black'
   const wireframeHex = isDark ? 0xffffff : 0x000000
 
   return (
     <group>
-      {/* Solid inner sphere — occludes back-face wireframe + borders so
-          the globe reads as a solid object, not a see-through wireframe.
-          Sits just below GLOBE_RADIUS so the wireframe still appears on top. */}
-      <mesh>
+      {/* Depth-only occluder — writes to the depth buffer so back-face
+          wireframe + borders get culled, but writes no color. The page
+          background shows through, making the globe read as spinning
+          line art rather than a solid sphere. */}
+      <mesh renderOrder={-1}>
         <sphereGeometry args={[GLOBE_RADIUS * 0.995, 64, 32]} />
-        <meshBasicMaterial color={innerColor} />
+        <meshBasicMaterial colorWrite={false} depthWrite={true} />
       </mesh>
 
       {/* Wireframe grid */}
