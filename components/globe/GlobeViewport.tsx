@@ -2,6 +2,7 @@
 
 import dynamic from 'next/dynamic'
 import { useRef, useCallback, useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useGlobe } from './GlobeContext'
 import { clampPanelTop } from '@/lib/globe'
@@ -30,7 +31,9 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
     isDesktop,
     pins,
     layoutState,
+    activeArticleSlug,
   } = useGlobe()
+  const router = useRouter()
 
   // Drag-vs-click discriminator — accumulate total travel between
   // pointerdown and pointerup so any wiggle beyond 5px cancels the close.
@@ -64,46 +67,62 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
   const selectedPinData = pins.find((p) => p.group === selectedPin)
 
   if (isMobile) {
-    // Mobile navigates away to /[slug] on item tap, so article-open doesn't
-    // render the globe here. If we're somehow on /globe/[slug] at mobile size
-    // (e.g. resize from desktop), fall through to render the article plainly.
-    if (layoutState === 'article-open') {
-      return (
-        <div className="fixed inset-0 w-screen h-screen overflow-y-auto bg-white dark:bg-black pt-20">
-          {children}
-        </div>
-      )
-    }
-    return (
-      <div className="fixed inset-0 w-screen h-screen" style={{ touchAction: 'none' }}>
-        <motion.div
-          className="relative w-full h-full"
-          animate={{
-            scale: selectedPin ? 0.85 : 1,
-            x: selectedPin ? '-10%' : '0%',
-          }}
-          transition={{ type: 'spring', stiffness: 200, damping: 30 }}
-        >
-          <GlobeCanvas dragDistanceRef={dragDistance} />
-        </motion.div>
+    // On mobile, article content opens *inside* the sidecar panel — no separate
+    // full-screen article page. The panel shows either the pin's item list or
+    // the inline article (with a back-to-list button), keeping the globe
+    // visible behind the scrim so the user can always tap back to the globe.
+    const isArticle = layoutState === 'article-open'
+    const resolvedPin =
+      selectedPinData ||
+      (activeArticleSlug
+        ? pins.find((p) =>
+            p.items.some((i) => i.slug.current === activeArticleSlug),
+          )
+        : undefined)
+    const showPanel = Boolean(resolvedPin) && (!!selectedPin || isArticle)
 
-        {/* Scrim */}
+    const closeAll = () => {
+      if (isArticle) router.push('/globe', { scroll: false })
+      selectPin(null)
+    }
+
+    const backToList = () => {
+      router.push('/globe', { scroll: false })
+    }
+
+    return (
+      <>
+        <div className="fixed inset-0 w-screen h-screen" style={{ touchAction: 'none' }}>
+          <motion.div
+            className="relative w-full h-full"
+            animate={{
+              scale: showPanel ? 0.85 : 1,
+              x: showPanel ? '-10%' : '0%',
+            }}
+            transition={{ type: 'spring', stiffness: 200, damping: 30 }}
+          >
+            <GlobeCanvas dragDistanceRef={dragDistance} />
+          </motion.div>
+        </div>
+
+        {/* Scrim + panel are siblings of the globe wrapper (not nested inside)
+            so they share the root stacking context with GlobeNavbar and, being
+            later in DOM at z-50, paint above it. */}
         <AnimatePresence>
-          {selectedPin && (
+          {showPanel && (
             <motion.div
-              className="fixed inset-0 z-40"
+              className="fixed inset-0 z-50"
               style={{ backgroundColor: 'rgba(0,0,0,0.3)' }}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => selectPin(null)}
+              onClick={closeAll}
             />
           )}
         </AnimatePresence>
 
-        {/* Mobile panel overlay */}
         <AnimatePresence>
-          {selectedPin && selectedPinData && (
+          {showPanel && resolvedPin && (
             <motion.div
               className="fixed top-0 right-0 z-50 h-full"
               style={{ width: '85vw', maxWidth: 380 }}
@@ -115,14 +134,37 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
               dragConstraints={{ left: 0, right: 0 }}
               dragElastic={0.2}
               onDragEnd={(_, info) => {
-                if (info.offset.x > 100) selectPin(null)
+                if (info.offset.x > 100) closeAll()
               }}
             >
-              <GlobeDetailPanel pin={selectedPinData} />
+              {isArticle ? (
+                <div className="bg-white dark:bg-black border border-gray-200 dark:border-gray-800 h-full flex flex-col">
+                  <div className="flex items-center justify-between p-4 pb-2 border-b border-gray-100 dark:border-gray-900">
+                    <button
+                      onClick={backToList}
+                      className="flex items-center gap-2 text-xs tracking-widest uppercase font-light text-black dark:text-white hover:opacity-50 transition-opacity cursor-pointer"
+                      aria-label={`Back to ${resolvedPin.group} list`}
+                    >
+                      <span aria-hidden>&larr;</span>
+                      {resolvedPin.group}
+                    </button>
+                    <button
+                      onClick={closeAll}
+                      className="w-12 h-12 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-black dark:hover:text-white transition-colors text-lg cursor-pointer"
+                      aria-label="Close panel"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                  <div className="flex-1 min-h-0">{children}</div>
+                </div>
+              ) : (
+                <GlobeDetailPanel pin={resolvedPin} />
+              )}
             </motion.div>
           )}
         </AnimatePresence>
-      </div>
+      </>
     )
   }
 

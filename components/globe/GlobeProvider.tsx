@@ -101,18 +101,21 @@ export default function GlobeProvider({
   }, [router])
 
   // Deep-link / refresh on /globe/[slug]: resolve the article's pin so the
-  // selected state is consistent with the open article.
+  // selected state is consistent with the open article. We deliberately do
+  // *not* depend on `selectedPin` — otherwise clearing selectedPin (e.g. a
+  // mobile "close panel" action) while still on /globe/[slug] would cause
+  // this effect to immediately re-set it before the URL has a chance to
+  // transition back to /globe.
   useEffect(() => {
     if (!activeArticleSlug) return
     const match = pins.find((p) =>
       p.items.some((i) => i.slug.current === activeArticleSlug),
     )
-    if (match && match.group !== selectedPin) {
-      const pos = pinPositionRef.current[match.group]
-      if (pos) setSelectedPinScreenY(pos.y)
-      setSelectedPin(match.group)
-    }
-  }, [activeArticleSlug, pins, selectedPin])
+    if (!match) return
+    const pos = pinPositionRef.current[match.group]
+    if (pos) setSelectedPinScreenY(pos.y)
+    setSelectedPin((prev) => (prev === match.group ? prev : match.group))
+  }, [activeArticleSlug, pins])
 
   // If selectedPinScreenY is null (deep-link case), poll the pin's screen
   // position via RAF until it's available, then capture it so the panel and
