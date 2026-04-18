@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { GlobeContext, type ScreenPosition, type ViewportTier } from './GlobeContext'
-import type { GlobePin } from '@/lib/globe'
+import type { GlobePin, GlobeScreenCircle } from '@/lib/globe'
 
 function useViewportTier(): ViewportTier {
   const [tier, setTier] = useState<ViewportTier>('desktop')
@@ -50,6 +50,8 @@ export default function GlobeProvider({
   const [slideComplete, setSlideComplete] = useState(false)
   const [selectedPinScreenY, setSelectedPinScreenY] = useState<number | null>(null)
   const pinPositionRef = useRef<Record<string, ScreenPosition>>({})
+  const globeScreenRef = useRef<GlobeScreenCircle | null>(null)
+  const frameSubscribersRef = useRef<Set<() => void>>(new Set())
   const articleTitleRef = useRef<HTMLHeadingElement | null>(null)
   const tier = useViewportTier()
   const isDark = useIsDark()
@@ -162,6 +164,8 @@ export default function GlobeProvider({
         slideComplete,
         selectedPinScreenY,
         pinPositionRef,
+        globeScreenRef,
+        frameSubscribersRef,
         activeArticleSlug,
         articleTitleRef,
         closeArticle,
