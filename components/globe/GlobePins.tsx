@@ -1,12 +1,14 @@
 'use client'
 
-import { useRef, useCallback } from 'react'
+import { useRef, useCallback, useMemo } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useGlobe } from './GlobeContext'
 import { sphericalToCartesian } from '@/lib/globe'
 
-const PIN_RADIUS = 0.05
+const PIN_RADIUS = 0.06
+const STEM_LENGTH = 0.12
+const STEM_RADIUS = 0.012
 // Tuned so diameter ≈ 48px at RESTING_DISTANCE=6.5, FOV=45°.
 const HIT_RADIUS = 0.17
 const PIN_COLOR = '#EF4444'
@@ -25,7 +27,7 @@ function Pin({
   const meshRef = useRef<THREE.Mesh>(null)
   const hitRef = useRef<THREE.Mesh>(null)
   const ringRef = useRef<THREE.Mesh>(null)
-  const pinMaterialRef = useRef<THREE.MeshBasicMaterial>(null)
+  const pinMaterialRef = useRef<THREE.MeshStandardMaterial>(null)
   const ringMaterialRef = useRef<THREE.MeshBasicMaterial>(null)
   const { camera } = useThree()
 
@@ -36,9 +38,17 @@ function Pin({
   const hoveredT = useRef(0)
   const scaleT = useRef(1)
 
-  const pos = sphericalToCartesian(lat, lng, GLOBE_RADIUS * 1.01)
+  const pos = sphericalToCartesian(lat, lng, GLOBE_RADIUS)
   const isSelected = selectedPin === group
   const isHovered = hoveredPin === group
+
+  // Orient the pin stem so its +Y axis points outward from the globe center.
+  const quat = useMemo(() => {
+    const normal = new THREE.Vector3(...pos).normalize()
+    return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal)
+  }, [pos])
+
+  const stemMaterialRef = useRef<THREE.MeshStandardMaterial>(null)
 
   useFrame(({ clock }, delta) => {
     if (!meshRef.current || !pinMaterialRef.current) return
@@ -52,6 +62,7 @@ function Pin({
     const tRange = Math.max(0, Math.min(1, (dot - (-0.1)) / (0.2 - (-0.1))))
     const opacity = tRange * tRange * (3 - 2 * tRange)
     pinMaterialRef.current.opacity = opacity
+    if (stemMaterialRef.current) stemMaterialRef.current.opacity = opacity
 
     if (hitRef.current) {
       hitRef.current.visible = opacity > 0.1
@@ -81,7 +92,11 @@ function Pin({
       ringRef.current.visible = sel > 0.01 && opacity > 0.1
       if (ringRef.current.visible) {
         ringRef.current.scale.setScalar(scaleT.current * 1.8)
-        ringRef.current.quaternion.copy(camera.quaternion)
+        // Ring lives inside a rotated group; counter-rotate so it still faces camera.
+        ringRef.current.quaternion
+          .copy(quat)
+          .invert()
+          .multiply(camera.quaternion)
         ringMaterialRef.current.opacity = 0.4 * sel * opacity
       }
     }
@@ -107,21 +122,36 @@ function Pin({
     [group, selectPin, setHoveredPin],
   )
 
+  const headY = STEM_LENGTH + PIN_RADIUS * 0.8
+
   return (
-    <group position={pos}>
-      {/* Visible pin */}
-      <mesh ref={meshRef}>
-        <sphereGeometry args={[PIN_RADIUS, 16, 16]} />
-        <meshBasicMaterial
-          ref={pinMaterialRef}
+    <group position={pos} quaternion={quat}>
+      {/* Stem */}
+      <mesh position={[0, STEM_LENGTH / 2, 0]}>
+        <cylinderGeometry args={[STEM_RADIUS, STEM_RADIUS, STEM_LENGTH, 10]} />
+        <meshStandardMaterial
+          ref={stemMaterialRef}
           color={PIN_COLOR}
           transparent
-          depthTest={false}
+          roughness={0.35}
+          metalness={0.1}
         />
       </mesh>
 
-      {/* Selected ring */}
-      <mesh ref={ringRef} visible={false}>
+      {/* Pin head — shaded sphere for depth */}
+      <mesh ref={meshRef} position={[0, headY, 0]}>
+        <sphereGeometry args={[PIN_RADIUS, 24, 24]} />
+        <meshStandardMaterial
+          ref={pinMaterialRef}
+          color={PIN_COLOR}
+          transparent
+          roughness={0.3}
+          metalness={0.15}
+        />
+      </mesh>
+
+      {/* Selected ring — sits around the pin head */}
+      <mesh ref={ringRef} visible={false} position={[0, headY, 0]}>
         <ringGeometry args={[PIN_RADIUS * 1.5, PIN_RADIUS * 2, 32]} />
         <meshBasicMaterial
           ref={ringMaterialRef}
@@ -129,13 +159,13 @@ function Pin({
           transparent
           opacity={0}
           side={THREE.DoubleSide}
-          depthTest={false}
         />
       </mesh>
 
       {/* Invisible hit target for tap/click */}
       <mesh
         ref={hitRef}
+        position={[0, headY, 0]}
         onPointerOver={handlePointerOver}
         onPointerOut={handlePointerOut}
         onClick={handleClick}

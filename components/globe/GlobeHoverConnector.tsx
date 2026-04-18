@@ -53,7 +53,7 @@ export default function GlobeHoverConnector() {
       <line
         ref={lineRef}
         stroke={isDark ? 'white' : 'black'}
-        strokeWidth="1"
+        strokeWidth="1.5"
         style={{
           transition: 'opacity 150ms',
         }}

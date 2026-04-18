@@ -58,7 +58,7 @@ export function sphericalToCartesian(
   const latRad = (lat * Math.PI) / 180
   const lngRad = (lng * Math.PI) / 180
   return [
-    radius * Math.cos(latRad) * Math.cos(lngRad),
+    -radius * Math.cos(latRad) * Math.cos(lngRad),
     radius * Math.sin(latRad),
     radius * Math.cos(latRad) * Math.sin(lngRad),
   ]

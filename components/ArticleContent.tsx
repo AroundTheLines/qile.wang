@@ -3,15 +3,25 @@ import { PortableText } from '@portabletext/react'
 import type { ContentFull } from '@/lib/types'
 import { urlFor } from '@/lib/sanity'
 import { portableTextComponents } from '@/lib/portableTextComponents'
+import GlobeArticleHeader from './globe/GlobeArticleHeader'
 
 interface ArticleContentProps {
   item: ContentFull
   wardrobe?: boolean
+  globe?: boolean
 }
 
-export default function ArticleContent({ item, wardrobe = false }: ArticleContentProps) {
+export default function ArticleContent({
+  item,
+  wardrobe = false,
+  globe = false,
+}: ArticleContentProps) {
+  const containerClass = globe
+    ? 'w-full px-6 pt-0 pb-16 max-w-xl mx-auto'
+    : 'w-full px-6 pt-0 pb-16 max-w-2xl mx-auto'
+
   return (
-    <div className="w-full px-6 pt-0 pb-16 max-w-2xl mx-auto">
+    <div className={containerClass}>
 
       {/* Cover image — hidden in wardrobe mode (shown in carousel instead) */}
       {!wardrobe && item.cover_image && (
@@ -29,27 +39,31 @@ export default function ArticleContent({ item, wardrobe = false }: ArticleConten
 
       {/* Header metadata cluster — hidden in wardrobe mode (shown in museum label instead) */}
       {!wardrobe && (
-        <>
-          <span className="text-xs tracking-widest uppercase text-gray-300">{item.content_type}</span>
-          <span className="text-xs text-gray-300 mt-1 block">
-            {new Date(item.published_at).toLocaleDateString('en-US', {
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric',
-            })}
-            {item.acquired_at
-              ? ` · acquired ${new Date(item.acquired_at).getFullYear()}`
-              : ''}
-          </span>
-          <h1 className="text-3xl font-light text-black mt-2 mb-6">{item.title}</h1>
-        </>
+        globe ? (
+          <GlobeArticleHeader item={item} />
+        ) : (
+          <>
+            <span className="text-xs tracking-widest uppercase text-gray-300">{item.content_type}</span>
+            <span className="text-xs text-gray-300 mt-1 block">
+              {new Date(item.published_at).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+              })}
+              {item.acquired_at
+                ? ` · acquired ${new Date(item.acquired_at).getFullYear()}`
+                : ''}
+            </span>
+            <h1 className="text-3xl font-light text-black mt-2 mb-6">{item.title}</h1>
+          </>
+        )
       )}
 
       {/* Tags — hidden in wardrobe mode (shown in museum label instead) */}
       {!wardrobe && item.tags && item.tags.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-10">
           {item.tags.map((tag) => (
-            <span key={tag} className="text-xs tracking-widest uppercase text-gray-300 border border-gray-200 px-2 py-1">
+            <span key={tag} className="text-xs tracking-widest uppercase text-gray-300 dark:text-gray-600 border border-gray-200 dark:border-gray-800 px-2 py-1">
               {tag}
             </span>
           ))}

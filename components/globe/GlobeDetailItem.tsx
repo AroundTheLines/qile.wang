@@ -1,12 +1,21 @@
 'use client'
 
+import { useRouter } from 'next/navigation'
 import { urlFor } from '@/lib/sanity'
+import { useGlobe } from './GlobeContext'
 import type { GlobePinItem } from '@/lib/globe'
 
 export default function GlobeDetailItem({ item }: { item: GlobePinItem }) {
+  const router = useRouter()
+  const { isMobile } = useGlobe()
+
   const handleClick = () => {
-    // Phase 5A stub — Phase 5B implements actual navigation
-    console.log(`Navigate to: /${item.slug.current}`)
+    const slug = item.slug.current
+    if (isMobile) {
+      router.push(`/${slug}`)
+    } else {
+      router.push(`/globe/${slug}`, { scroll: false })
+    }
   }
 
   return (
