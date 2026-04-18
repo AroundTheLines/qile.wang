@@ -26,9 +26,14 @@ export default function GlobeArticleConnector() {
   const lineRef = useRef<SVGLineElement>(null)
   const closeButtonRef = useRef<HTMLDivElement>(null)
   const [viewport, setViewport] = useState({ w: 0, h: 0 })
-  const [progress, setProgress] = useState(0)
-  // Once layoutState leaves article-open, we retract then unmount.
-  const [mounted, setMounted] = useState(true)
+  // Animated 0..1 draw progress lives in a ref — same reasoning as
+  // GlobeClickConnector: per-frame setState would re-run the subscribe
+  // useEffect on every tick and churn the bridge's subscriber set 60×/sec.
+  // The subscriber reads this ref live each tick. `drawing` is a separate
+  // boolean that only flips when progress crosses 0 ↔ >0, which is the
+  // only thing the render needs to know about for mount gating.
+  const progressRef = useRef(0)
+  const [drawing, setDrawing] = useState(false)
 
   useEffect(() => {
     const read = () => setViewport({ w: window.innerWidth, h: window.innerHeight })
@@ -40,14 +45,15 @@ export default function GlobeArticleConnector() {
   // Draw-in when entering article-open
   useEffect(() => {
     if (layoutState !== 'article-open') return
-    setMounted(true)
+    setDrawing(true)
     let raf = 0
     const delay = setTimeout(() => {
       let start: number | null = null
+      const from = progressRef.current
       const step = (t: number) => {
         if (start === null) start = t
         const p = Math.min((t - start) / DRAW_IN_MS, 1)
-        setProgress(p)
+        progressRef.current = from + (1 - from) * p
         if (p < 1) raf = requestAnimationFrame(step)
       }
       raf = requestAnimationFrame(step)
@@ -61,37 +67,41 @@ export default function GlobeArticleConnector() {
   // Retract on exit (layoutState no longer article-open)
   useEffect(() => {
     if (layoutState === 'article-open') return
-    if (progress === 0) {
-      setMounted(false)
+    if (progressRef.current === 0) {
+      setDrawing(false)
       return
     }
     let raf = 0
     let start: number | null = null
-    const from = progress
+    const from = progressRef.current
     const step = (t: number) => {
       if (start === null) start = t
       const p = Math.min((t - start) / RETRACT_MS, 1)
-      setProgress(from * (1 - p))
+      progressRef.current = from * (1 - p)
       if (p < 1) {
         raf = requestAnimationFrame(step)
       } else {
-        setMounted(false)
+        progressRef.current = 0
+        setDrawing(false)
       }
     }
     raf = requestAnimationFrame(step)
     return () => cancelAnimationFrame(raf)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layoutState])
 
   // Subscribe to the bridge's frame tick so the line and × stay locked to
-  // the pin in the same paint as the canvas.
+  // the pin in the same paint as the canvas. Deps intentionally exclude
+  // `progressRef.current` — the subscriber reads the ref live each tick,
+  // so it stays registered across the entire fade instead of being torn
+  // down and re-added 60 times.
   useEffect(() => {
-    if (!mounted || !selectedPin || progress === 0) return
+    if (!drawing || !selectedPin) return
     const subscribers = frameSubscribersRef.current
     const update = () => {
       const pos = pinPositionRef.current[selectedPin]
       const titleEl = articleTitleRef.current
       if (!pos || !lineRef.current) return
+      const progress = progressRef.current
       // End point: left edge of article title (or clamp to top of article
       // area if title has scrolled off-screen).
       let endX: number
@@ -141,9 +151,9 @@ export default function GlobeArticleConnector() {
     return () => {
       subscribers.delete(update)
     }
-  }, [mounted, selectedPin, progress, pinPositionRef, globeScreenRef, frameSubscribersRef, articleTitleRef, viewport.w, viewport.h])
+  }, [drawing, selectedPin, pinPositionRef, globeScreenRef, frameSubscribersRef, articleTitleRef, viewport.w, viewport.h])
 
-  if (!mounted || !showConnectors || !selectedPin || progress === 0) return null
+  if (!drawing || !showConnectors || !selectedPin) return null
 
   return (
     <>

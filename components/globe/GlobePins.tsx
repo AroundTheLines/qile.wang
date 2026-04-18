@@ -75,6 +75,13 @@ function Pin({
     if (!meshRef.current || !pinMaterialRef.current) return
 
     // --- Back-face fade ---
+    // INVARIANT: assumes the globe is fixed at the world origin and
+    // rotation happens by orbiting the camera (same assumption as
+    // GlobePositionBridge). `pos` is the pin's local-space surface
+    // point, so `pos.normalized()` doubles as the outward surface
+    // normal in world space. If the globe group is ever rotated in
+    // place, this dot product needs to take the world matrix into
+    // account.
     const pinNormal = new THREE.Vector3(...pos).normalize()
     const cameraDir = new THREE.Vector3()
       .subVectors(camera.position, new THREE.Vector3(...pos))

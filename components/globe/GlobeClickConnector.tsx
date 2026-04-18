@@ -30,7 +30,14 @@ export default function GlobeClickConnector() {
   // `selectedPin` so that a pin switch (A → B) animates out from A first,
   // then drawPin flips to B and we animate in.
   const [drawPin, setDrawPin] = useState<string | null>(null)
-  const [drawProgress, setDrawProgress] = useState(0)
+  // Animated 0..1 progress of the draw-in / draw-out. Stored in a ref so
+  // the per-frame animation step doesn't re-render the component (and
+  // doesn't churn the frame-subscriber set in the bridge — re-adding the
+  // subscriber 60 times per fade was wasteful). The subscriber reads the
+  // ref each tick. A separate `drawing` boolean flips only when the
+  // progress crosses 0 ↔ >0, which is the only thing the render needs.
+  const drawProgressRef = useRef(0)
+  const [drawing, setDrawing] = useState(false)
 
   useEffect(() => {
     const read = () => setViewport({ w: window.innerWidth, h: window.innerHeight })
@@ -60,26 +67,27 @@ export default function GlobeClickConnector() {
   // (includes closing the panel AND switching to a different pin).
   useEffect(() => {
     if (drawPin == null || drawPin === selectedPin) return
-    if (drawProgress === 0) {
+    if (drawProgressRef.current === 0) {
       setDrawPin(selectedPin)
       return
     }
     let raf: number
     let start: number | null = null
-    const from = drawProgress
+    const from = drawProgressRef.current
     const step = (t: number) => {
       if (start === null) start = t
       const p = Math.min((t - start) / FADE_OUT_MS, 1)
-      setDrawProgress(from * (1 - p))
+      drawProgressRef.current = from * (1 - p)
       if (p < 1) {
         raf = requestAnimationFrame(step)
       } else {
+        drawProgressRef.current = 0
+        setDrawing(false)
         setDrawPin(selectedPin)
       }
     }
     raf = requestAnimationFrame(step)
     return () => cancelAnimationFrame(raf)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPin, drawPin])
 
   // First-open sync
@@ -92,39 +100,43 @@ export default function GlobeClickConnector() {
   // Fade-in controller
   useEffect(() => {
     if (!drawPin || !slideComplete || drawPin !== selectedPin) return
-    if (drawProgress >= 1) return
+    if (drawProgressRef.current >= 1) return
 
     let raf: number
     let start: number | null = null
-    const from = drawProgress
+    const from = drawProgressRef.current
+    setDrawing(true)
     const step = (t: number) => {
       if (start === null) start = t
       const p = Math.min((t - start) / FADE_IN_MS, 1)
-      setDrawProgress(from + (1 - from) * p)
+      drawProgressRef.current = from + (1 - from) * p
       if (p < 1) raf = requestAnimationFrame(step)
     }
     raf = requestAnimationFrame(step)
     return () => cancelAnimationFrame(raf)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drawPin, selectedPin, slideComplete])
 
   // Subscribe to the bridge's frame tick — render against `drawPin`, not
   // selectedPin, so the exit animation uses the previous pin's coordinates.
   // Updating inline with the canvas frame keeps the line glued to the pin
   // during rotation (no separate rAF loop that could trail by one frame).
+  // Deps intentionally exclude `drawProgressRef.current` — the subscriber
+  // reads the ref live each tick, so it stays registered across the entire
+  // fade-in/out instead of being torn down and re-added 60 times.
   useEffect(() => {
-    if (!drawPin || !showConnectors || drawProgress === 0) return
+    if (!drawPin || !showConnectors) return
     const subscribers = frameSubscribersRef.current
     const update = () => {
       const pos = pinPositionRef.current[drawPin]
       if (!pos || !lineRef.current) return
+      const progress = drawProgressRef.current
       // End point: panel's left edge (in container-local coords) at header Y
       const panelLeftX = panelLeftInContainer
       const panelTop = clampPanelTop(selectedPinScreenY, viewport.h)
       const targetY = panelTop + PANEL_HEADER_CENTER_OFFSET
 
-      const endX = pos.x + (panelLeftX - pos.x) * drawProgress
-      const endY = pos.y + (targetY - pos.y) * drawProgress
+      const endX = pos.x + (panelLeftX - pos.x) * progress
+      const endY = pos.y + (targetY - pos.y) * progress
 
       const clipped = clipLineByGlobe(
         pos.x,
@@ -153,11 +165,10 @@ export default function GlobeClickConnector() {
     showConnectors,
     panelLeftInContainer,
     viewport.h,
-    drawProgress,
     selectedPinScreenY,
   ])
 
-  if (!drawPin || !showConnectors || drawProgress === 0) return null
+  if (!drawPin || !showConnectors || !drawing) return null
   // Hide while the article is open — the article connector replaces it.
   if (layoutState === 'article-open') return null
 

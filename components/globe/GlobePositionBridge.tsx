@@ -7,14 +7,33 @@ import { sphericalToCartesian } from '@/lib/globe'
 
 const GLOBE_RADIUS = 2
 
+// Module-scoped scratch vectors. useFrame runs at 60fps; allocating a
+// fresh THREE.Vector3 per frame per pin churns GC. Reusing these in
+// place keeps the per-frame allocation count at zero.
+const pinWorld = new THREE.Vector3()
+const ndc = new THREE.Vector3()
+const camDir = new THREE.Vector3()
+const silhouetteCenter = new THREE.Vector3()
+const camRight = new THREE.Vector3()
+const silhouettePoint = new THREE.Vector3()
+const cameraToPin = new THREE.Vector3()
+const pinNormal = new THREE.Vector3()
+const tmpProj = new THREE.Vector3()
+
+// INVARIANT: this projection (and the back-face test below) assumes the
+// globe geometry is fixed at the world origin and rotation happens by
+// orbiting the camera. Pin positions are computed from raw lat/lng with
+// no group transform applied. GlobePins.tsx makes the same assumption
+// for its back-face fade. If a future change rotates the globe group
+// instead, both this bridge and the GlobePins fade need to multiply by
+// the globe's worldMatrix.
+
 export default function GlobePositionBridge() {
   const { camera, size } = useThree()
   const { pins, pinPositionRef, globeScreenRef, frameSubscribersRef } = useGlobe()
 
   useFrame(() => {
     const positions: Record<string, { x: number; y: number; visible: boolean; behind: boolean }> = {}
-    const pinWorld = new THREE.Vector3()
-    const ndc = new THREE.Vector3()
 
     // --- Globe silhouette (small circle facing the camera) ---
     // For a sphere of radius R viewed from camera distance d (>R), the
@@ -28,27 +47,25 @@ export default function GlobePositionBridge() {
     const dist = camPos.length()
     let globeCircle: { cx: number; cy: number; r: number } | null = null
     if (dist > GLOBE_RADIUS) {
-      const camDirFromOrigin = camPos.clone().normalize()
+      camDir.copy(camPos).normalize()
       const sinA = GLOBE_RADIUS / dist
       const cosA = Math.sqrt(1 - sinA * sinA)
-      const silhouetteCenter3D = camDirFromOrigin
-        .clone()
-        .multiplyScalar(GLOBE_RADIUS * sinA)
+      silhouetteCenter.copy(camDir).multiplyScalar(GLOBE_RADIUS * sinA)
       const silhouetteRadius3D = GLOBE_RADIUS * cosA
       // Camera right vector — lies in the silhouette plane (perpendicular to
       // camera forward), so adding it picks a representative silhouette point.
-      const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion)
-      const silhouettePoint = silhouetteCenter3D
-        .clone()
-        .add(camRight.multiplyScalar(silhouetteRadius3D))
+      camRight.set(1, 0, 0).applyQuaternion(camera.quaternion)
+      silhouettePoint
+        .copy(silhouetteCenter)
+        .addScaledVector(camRight, silhouetteRadius3D)
 
-      const centerNdc = silhouetteCenter3D.clone().project(camera)
-      const cx = (centerNdc.x * 0.5 + 0.5) * size.width
-      const cy = (-centerNdc.y * 0.5 + 0.5) * size.height
+      tmpProj.copy(silhouetteCenter).project(camera)
+      const cx = (tmpProj.x * 0.5 + 0.5) * size.width
+      const cy = (-tmpProj.y * 0.5 + 0.5) * size.height
 
-      const edgeNdc = silhouettePoint.project(camera)
-      const ex = (edgeNdc.x * 0.5 + 0.5) * size.width
-      const ey = (-edgeNdc.y * 0.5 + 0.5) * size.height
+      tmpProj.copy(silhouettePoint).project(camera)
+      const ex = (tmpProj.x * 0.5 + 0.5) * size.width
+      const ey = (-tmpProj.y * 0.5 + 0.5) * size.height
 
       globeCircle = { cx, cy, r: Math.hypot(ex - cx, ey - cy) }
     }
@@ -70,8 +87,8 @@ export default function GlobePositionBridge() {
       // Pin sits on the back hemisphere when its outward normal points
       // away from the camera. Pin position normalized == outward normal
       // (sphere centered at origin).
-      const cameraToPin = pinWorld.clone().sub(camPos)
-      const pinNormal = pinWorld.clone().normalize()
+      cameraToPin.copy(pinWorld).sub(camPos)
+      pinNormal.copy(pinWorld).normalize()
       const behind = cameraToPin.dot(pinNormal) > 0
 
       positions[pin.group] = {
