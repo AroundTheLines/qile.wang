@@ -18,8 +18,7 @@ export default async function GlobeLayout({
   return (
     <GlobeProvider pins={pins}>
       <GlobeNavbar />
-      <GlobeViewport />
-      {children}
+      <GlobeViewport>{children}</GlobeViewport>
     </GlobeProvider>
   )
 }

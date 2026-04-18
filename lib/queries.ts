@@ -33,6 +33,7 @@ export const contentBySlugQuery = groq`
       date_label,
       body,
       images,
+      globe_group,
     },
   }
 `

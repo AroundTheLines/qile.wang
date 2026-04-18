@@ -19,6 +19,7 @@ export default function GlobeClickConnector() {
     isDesktop,
     isTablet,
     isDark,
+    layoutState,
   } = useGlobe()
   const lineRef = useRef<SVGLineElement>(null)
   const [viewport, setViewport] = useState({ w: 0, h: 0 })
@@ -50,7 +51,8 @@ export default function GlobeClickConnector() {
   // container-local coords, so the panel's left edge (viewport x =
   // viewport.w - panelWidthPx) maps to container-local x = viewport.w -
   // panelWidthPx/2.
-  const panelLeftInContainer = viewport.w - panelWidthPx / 2
+  // Panel is inset 16px from the right edge.
+  const panelLeftInContainer = viewport.w - panelWidthPx / 2 - 16
 
   // Fade-out controller — triggered when selectedPin diverges from drawPin
   // (includes closing the panel AND switching to a different pin).
@@ -142,6 +144,8 @@ export default function GlobeClickConnector() {
   ])
 
   if (!drawPin || !showConnectors || drawProgress === 0) return null
+  // Hide while the article is open — the article connector replaces it.
+  if (layoutState === 'article-open') return null
 
   return (
     <svg
@@ -149,7 +153,7 @@ export default function GlobeClickConnector() {
       width={viewport.w}
       height={viewport.h}
     >
-      <line ref={lineRef} stroke={isDark ? 'white' : 'black'} strokeWidth="1" />
+      <line ref={lineRef} stroke={isDark ? 'white' : 'black'} strokeWidth="1.5" />
     </svg>
   )
 }

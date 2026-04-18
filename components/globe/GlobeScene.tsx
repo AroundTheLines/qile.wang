@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useEffect, useState } from 'react'
+import { useRef, useEffect, useState, useCallback } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
@@ -15,6 +15,13 @@ const RESTING_DISTANCE = 6.5
 const FAR_DISTANCE = 15
 const AUTO_ROTATE_RESUME_DELAY = 2000
 const PIN_ROTATE_DURATION = 0.3
+const ARTICLE_ZOOM_DURATION = 0.4
+// When zoomed for article-open, pull camera closer than resting.
+const ARTICLE_CAMERA_DISTANCE = 4.2
+// Rotate the view direction west of the pin so the pin sits near the right
+// edge of the visible globe sliver rather than dead-center. Narrow slivers
+// have a small horizontal FOV, so this offset must stay under ~20°.
+const ARTICLE_PIN_OFFSET_RAD = Math.PI / 14
 
 type RotateState = {
   active: boolean
@@ -25,7 +32,7 @@ type RotateState = {
 
 export default function GlobeScene() {
   const controlsRef = useRef<OrbitControlsImpl>(null)
-  const { pins, selectedPin, pinPositionRef } = useGlobe()
+  const { pins, selectedPin, pinPositionRef, layoutState } = useGlobe()
   const { camera } = useThree()
 
   // Reactive enabled state — avoids the "React re-renders and reapplies
@@ -45,6 +52,21 @@ export default function GlobeScene() {
     startPos: new THREE.Vector3(),
     endPos: new THREE.Vector3(),
   })
+
+  // Article zoom state — animates camera into / out of the pinned sliver view.
+  const articleZoomRef = useRef<RotateState & { duration: number }>({
+    active: false,
+    elapsed: 0,
+    startPos: new THREE.Vector3(),
+    endPos: new THREE.Vector3(),
+    duration: ARTICLE_ZOOM_DURATION,
+  })
+  const preArticleCameraPos = useRef<THREE.Vector3 | null>(null)
+  // Init to 'default' so a mount directly in article-open still detects
+  // the transition and queues the zoom.
+  const prevLayoutState = useRef<'default' | 'panel-open' | 'article-open'>(
+    'default',
+  )
 
   const prevSelectedPin = useRef<string | null>(null)
   const interactionTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -66,6 +88,79 @@ export default function GlobeScene() {
     camera.position.copy(targetDir.current).multiplyScalar(FAR_DISTANCE)
     camera.lookAt(0, 0, 0)
   }, [pins, camera])
+
+  const startArticleZoom = useCallback(
+    (pinGroup: string) => {
+      const pin = pins.find((p) => p.group === pinGroup)
+      if (!pin) return
+
+      preArticleCameraPos.current = camera.position.clone()
+
+      const [x, y, z] = sphericalToCartesian(
+        pin.coordinates.lat,
+        pin.coordinates.lng,
+        1,
+      )
+      const pinNormal = new THREE.Vector3(x, y, z).normalize()
+      const quat = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0),
+        -ARTICLE_PIN_OFFSET_RAD,
+      )
+      const viewDir = pinNormal.clone().applyQuaternion(quat)
+      const endPos = viewDir.multiplyScalar(ARTICLE_CAMERA_DISTANCE)
+
+      articleZoomRef.current = {
+        active: true,
+        elapsed: 0,
+        startPos: camera.position.clone(),
+        endPos,
+        duration: ARTICLE_ZOOM_DURATION,
+      }
+      setAutoRotate(false)
+      setControlsEnabled(false)
+    },
+    [pins, camera],
+  )
+
+  const pendingArticleZoom = useRef(false)
+
+  // Article open/close → drive a camera zoom animation and disable controls.
+  useEffect(() => {
+    const prev = prevLayoutState.current
+    prevLayoutState.current = layoutState
+
+    if (layoutState === 'article-open' && prev !== 'article-open') {
+      if (!entranceDone.current || !selectedPin) {
+        pendingArticleZoom.current = true
+        return
+      }
+      startArticleZoom(selectedPin)
+      return
+    }
+
+    if (prev === 'article-open' && layoutState !== 'article-open') {
+      pendingArticleZoom.current = false
+      const saved = preArticleCameraPos.current
+      if (!saved) return
+      articleZoomRef.current = {
+        active: true,
+        elapsed: 0,
+        startPos: camera.position.clone(),
+        endPos: saved.clone(),
+        duration: ARTICLE_ZOOM_DURATION,
+      }
+      preArticleCameraPos.current = null
+    }
+  }, [layoutState, selectedPin, camera, startArticleZoom])
+
+  // When selectedPin resolves after a deep-link, trigger the pending zoom.
+  useEffect(() => {
+    if (!pendingArticleZoom.current) return
+    if (!entranceDone.current) return
+    if (layoutState !== 'article-open' || !selectedPin) return
+    pendingArticleZoom.current = false
+    startArticleZoom(selectedPin)
+  }, [selectedPin, layoutState, startArticleZoom])
 
   // Detect pin switch to a back-face pin → programmatic rotation
   useEffect(() => {
@@ -116,6 +211,10 @@ export default function GlobeScene() {
         entranceDone.current = true
         setControlsEnabled(true)
         setTimeout(() => setAutoRotate(true), 500)
+        if (pendingArticleZoom.current && layoutState === 'article-open' && selectedPin) {
+          pendingArticleZoom.current = false
+          startArticleZoom(selectedPin)
+        }
       }
       return
     }
@@ -131,10 +230,34 @@ export default function GlobeScene() {
 
       if (t >= 1) {
         rot.active = false
-        setControlsEnabled(true)
+        // Only re-enable controls if we're not in article-open.
+        if (layoutState !== 'article-open') setControlsEnabled(true)
         if (controlsRef.current) {
           controlsRef.current.target.set(0, 0, 0)
           controlsRef.current.update()
+        }
+      }
+    }
+
+    // 3) Article zoom (in / out)
+    const zoom = articleZoomRef.current
+    if (zoom.active) {
+      zoom.elapsed += delta
+      const t = Math.min(zoom.elapsed / zoom.duration, 1)
+      const eased = 1 - Math.pow(1 - t, 3)
+      camera.position.lerpVectors(zoom.startPos, zoom.endPos, eased)
+      camera.lookAt(0, 0, 0)
+
+      if (t >= 1) {
+        zoom.active = false
+        if (layoutState === 'article-open') {
+          setControlsEnabled(false)
+        } else {
+          setControlsEnabled(true)
+          if (controlsRef.current) {
+            controlsRef.current.target.set(0, 0, 0)
+            controlsRef.current.update()
+          }
         }
       }
     }
@@ -178,10 +301,13 @@ export default function GlobeScene() {
         enableDamping={true}
         dampingFactor={0.05}
         rotateSpeed={0.5}
-        autoRotate={autoRotate && !selectedPin && controlsEnabled}
+        autoRotate={
+          layoutState !== 'article-open' && autoRotate && controlsEnabled
+        }
         autoRotateSpeed={0.3}
       />
-      <ambientLight intensity={1} />
+      <ambientLight intensity={0.6} />
+      <directionalLight position={[5, 3, 5]} intensity={0.9} />
     </>
   )
 }

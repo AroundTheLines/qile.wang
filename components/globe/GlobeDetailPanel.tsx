@@ -8,7 +8,7 @@ export default function GlobeDetailPanel({ pin }: { pin: GlobePin }) {
   const { selectPin } = useGlobe()
 
   return (
-    <div className="bg-white dark:bg-black border-l border-gray-200 dark:border-gray-800 h-full flex flex-col">
+    <div className="bg-white dark:bg-black border border-gray-200 dark:border-gray-800 h-full flex flex-col">
       {/* Header */}
       <div className="flex items-start justify-between p-4 pb-2">
         <div>

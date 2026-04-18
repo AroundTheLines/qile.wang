@@ -17,10 +17,16 @@ export interface GlobeContextValue {
   selectPin: (group: string | null) => void
   hoveredPin: string | null
   setHoveredPin: (group: string | null) => void
-  layoutState: 'default' | 'panel-open'
+  layoutState: 'default' | 'panel-open' | 'article-open'
   slideComplete: boolean
   selectedPinScreenY: number | null
   pinPositionRef: MutableRefObject<Record<string, ScreenPosition>>
+  /** Slug of the article currently open in article-open state, or null */
+  activeArticleSlug: string | null
+  /** Ref to the article's <h1>, set by ArticleContent when globe={true} */
+  articleTitleRef: MutableRefObject<HTMLHeadingElement | null>
+  /** Exit article-open back to panel-open (desktop only) */
+  closeArticle: () => void
   /** 'desktop' ≥1024, 'tablet' 768–1023, 'mobile' <768 */
   tier: ViewportTier
   /** Derived conveniences */

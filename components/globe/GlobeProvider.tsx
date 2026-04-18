@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { usePathname, useRouter } from 'next/navigation'
 import { GlobeContext, type ScreenPosition, type ViewportTier } from './GlobeContext'
 import type { GlobePin } from '@/lib/globe'
 
@@ -49,8 +50,16 @@ export default function GlobeProvider({
   const [slideComplete, setSlideComplete] = useState(false)
   const [selectedPinScreenY, setSelectedPinScreenY] = useState<number | null>(null)
   const pinPositionRef = useRef<Record<string, ScreenPosition>>({})
+  const articleTitleRef = useRef<HTMLHeadingElement | null>(null)
   const tier = useViewportTier()
   const isDark = useIsDark()
+
+  const pathname = usePathname()
+  const router = useRouter()
+  const activeArticleSlug =
+    pathname && pathname.startsWith('/globe/') && pathname !== '/globe'
+      ? pathname.slice('/globe/'.length).split('/')[0] || null
+      : null
 
   const selectPin = useCallback((group: string | null) => {
     if (group === null) {
@@ -79,7 +88,63 @@ export default function GlobeProvider({
     return () => clearTimeout(t)
   }, [selectedPin])
 
-  const layoutState = selectedPin ? 'panel-open' : 'default'
+  const layoutState: 'default' | 'panel-open' | 'article-open' = activeArticleSlug
+    ? 'article-open'
+    : selectedPin
+      ? 'panel-open'
+      : 'default'
+
+  const closeArticle = useCallback(() => {
+    router.push('/globe', { scroll: false })
+  }, [router])
+
+  // Deep-link / refresh on /globe/[slug]: resolve the article's pin so the
+  // selected state is consistent with the open article.
+  useEffect(() => {
+    if (!activeArticleSlug) return
+    const match = pins.find((p) =>
+      p.items.some((i) => i.slug.current === activeArticleSlug),
+    )
+    if (match && match.group !== selectedPin) {
+      const pos = pinPositionRef.current[match.group]
+      if (pos) setSelectedPinScreenY(pos.y)
+      setSelectedPin(match.group)
+    }
+  }, [activeArticleSlug, pins, selectedPin])
+
+  // If selectedPinScreenY is null (deep-link case), poll the pin's screen
+  // position via RAF until it's available, then capture it so the panel and
+  // click-connector align with the pin.
+  useEffect(() => {
+    if (!selectedPin || selectedPinScreenY != null) return
+    let raf = 0
+    const tick = () => {
+      const pos = pinPositionRef.current[selectedPin]
+      if (pos) {
+        setSelectedPinScreenY(pos.y)
+        return
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [selectedPin, selectedPinScreenY])
+
+  // On transition from article-open back to panel-open, the pin may have
+  // moved on screen during zoom-in/out. Re-capture its Y once the zoom-out
+  // animation settles so the panel re-aligns with the pin.
+  const prevLayoutRef = useRef(layoutState)
+  useEffect(() => {
+    const prev = prevLayoutRef.current
+    prevLayoutRef.current = layoutState
+    if (prev !== 'article-open' || layoutState === 'article-open') return
+    if (!selectedPin) return
+    const t = setTimeout(() => {
+      const pos = pinPositionRef.current[selectedPin]
+      if (pos) setSelectedPinScreenY(pos.y)
+    }, 450)
+    return () => clearTimeout(t)
+  }, [layoutState, selectedPin])
 
   const isDesktop = tier === 'desktop'
   const isTablet = tier === 'tablet'
@@ -97,6 +162,9 @@ export default function GlobeProvider({
         slideComplete,
         selectedPinScreenY,
         pinPositionRef,
+        activeArticleSlug,
+        articleTitleRef,
+        closeArticle,
         tier,
         isDesktop,
         isTablet,

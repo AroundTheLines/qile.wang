@@ -22,7 +22,7 @@ function parseCountryBorders(): [number, number, number][][] {
     const lng = (coord[0] * Math.PI) / 180
     const lat = (coord[1] * Math.PI) / 180
     return [
-      GLOBE_RADIUS * Math.cos(lat) * Math.cos(lng),
+      -GLOBE_RADIUS * Math.cos(lat) * Math.cos(lng),
       GLOBE_RADIUS * Math.sin(lat),
       GLOBE_RADIUS * Math.cos(lat) * Math.sin(lng),
     ]
