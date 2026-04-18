@@ -2,20 +2,16 @@
 
 import { useRouter } from 'next/navigation'
 import { urlFor } from '@/lib/sanity'
-import { useGlobe } from './GlobeContext'
 import type { GlobePinItem } from '@/lib/globe'
 
 export default function GlobeDetailItem({ item }: { item: GlobePinItem }) {
   const router = useRouter()
-  const { isMobile } = useGlobe()
 
   const handleClick = () => {
-    const slug = item.slug.current
-    if (isMobile) {
-      router.push(`/${slug}`)
-    } else {
-      router.push(`/globe/${slug}`, { scroll: false })
-    }
+    // Always route through /globe/[slug] so the GlobeLayout stays mounted and
+    // browser back returns to the panel state the user came from. On mobile,
+    // GlobeViewport's article-open branch renders the article full-screen.
+    router.push(`/globe/${item.slug.current}`, { scroll: false })
   }
 
   return (
