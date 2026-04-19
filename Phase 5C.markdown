@@ -44,9 +44,11 @@ Introduce a new first-class concept — **Visits** and **Trips** — that lets i
 8. [Trip Article Integration](#8-trip-article-integration)
 9. [Interaction Matrix](#9-interaction-matrix)
 10. [Mobile-Specific Reframing](#10-mobile-specific-reframing)
-11. [Migration from Legacy Pin Groupings](#11-migration-from-legacy-pin-groupings)
+11. [Greenfield: No Data Migration Needed](#11-greenfield-no-data-migration-needed)
 12. [Empty States & Edge Cases](#12-empty-states--edge-cases)
 13. [Accessibility & Deferred UX](#13-accessibility--deferred-ux)
+13.5. [Performance](#135-performance)
+13.6. [Boneyard-js Integration](#136-boneyard-js-integration)
 14. [File Inventory](#14-file-inventory)
 15. [Implementation Order](#15-implementation-order)
 16. [Open Questions](#16-open-questions)
@@ -137,7 +139,7 @@ Vertical order (top to bottom), on the globe page:
 - Timeline sits **above** the globe, **full viewport width at all times** — its width does not change when the sidecar panel opens or when the article sliver opens. This keeps the timeline as a consistent top-level control surface regardless of other UI state.
 - Pin panel and trip panel slide in as the existing right-edge sidecar (Phase 5A mechanism).
 - Article sliver (Phase 5B) pushes globe to the left and renders to the right, centering on the relevant pin. Timeline remains at top of viewport, spanning full width above both the shrunken globe and the article sliver.
-- The timeline remains fully interactive while the article sliver is open: users can hover/click other trip labels to preview or switch. See [Section 8.5.1](#851-switching-trips-while-the-article-sliver-is-open).
+- The timeline remains fully interactive while the article sliver is open: users can hover/click other trip labels to preview or switch. See [Section 8.6](#86-switching-trips-while-the-article-sliver-is-open).
 
 ---
 
@@ -240,23 +242,23 @@ Default state of the timeline: a continuous playback animation sweeps present �
 - **Hides during user timeline interaction** (while panning, zooming, hovering a label, etc.). Reappears at the **right edge** (present) once interaction fully stops.
 - Shown on both desktop and mobile.
 
-### 5.1.1 Initial load behavior
+### 5.2 Initial load behavior
 
 - While trip data is loading, the globe **passively spins** (same slow rotation as the current idle state from prior phases). No playhead is shown, no timeline highlights are active.
 - Timeline itself renders with a skeleton bar via boneyard-js during the load (see [Section 12.5](#125-loading-state)).
 - Once all trip data is loaded, the passive spin **continues** — it does not stop. The playback sweep begins from the present edge as an additional highlight layer on top of the ever-spinning globe.
 - Mid-animation "pop-in" of newly-arrived trips is not acceptable — all data must be resolved before the sweep starts.
 
-### 5.2 Speed
+### 5.3 Speed
 
 - Approximately **5 seconds per half-year of trips** (configurable).
 - Compressed empty stretches still move at visible pace — the playhead represents more real time per pixel in empty regions.
 
-### 5.3 Loop
+### 5.4 Loop
 
 - When playhead reaches the earliest trip: playhead stays at that position for **5 seconds** (globe in fully neutral state — nothing highlighted, nothing dimmed), then resets to the present and resumes.
 
-### 5.4 Pause triggers
+### 5.5 Pause triggers
 
 Any of the following **pause** auto-playback:
 
@@ -272,24 +274,24 @@ The following **do not** pause playback:
 - Scrolling the page (mobile), except where the scroll involves the timeline itself.
 - Brief cursor transit over the timeline without stopping.
 
-### 5.5 Resume
+### 5.6 Resume
 
 - The resume countdown (**default: 5 seconds**) only starts once the user has **fully stopped interacting** — no active hover on a label, no touch on the timeline, no in-progress drag.
 - If a trip is currently **locked** (user clicked a label): playback stays paused indefinitely until the trip is deselected. The 5s idle timer does not run while a trip is locked.
 - When playback does resume, it picks up **from where the playhead was when interaction started** — not from the present edge.
 - **Zoom state resets on resume.** If the user zoomed the timeline during interaction, the timeline animates back to full-history max zoom when playback restarts.
 
-### 5.6 Pause UI
+### 5.7 Pause UI
 
 - No play/pause icon. No scrubber chrome. No video-player-style UI. The presence of the moving playhead is the only cue.
 
-### 5.7 Floating label
+### 5.8 Floating label
 
 - While playback is active, a small floating label near the playhead shows the name of the currently-playing trip.
 - Desktop: clicking this floating label behaves the same as clicking the trip's timeline label (locks the trip).
 - Mobile: a single tap on the floating label **previews** the trip (same behavior as single-tap on the timeline label) — it expands to show trip name, dates, and "View trip" button. The "View trip" button locks the trip.
 
-### 5.8 Camera during playback
+### 5.9 Camera during playback
 
 - The globe's **passive idle rotation continues** throughout auto-playback. Playback does not drive the camera — it only changes which pins/arcs are highlighted.
 - Passive spin and playback highlights are independent animation layers that run in parallel. They never conflict: playback adds the highlight layer on top of the ever-spinning globe.
@@ -299,7 +301,7 @@ The following **do not** pause playback:
   - An article sliver is open (camera is held centered on the target pin).
 - After any of the above ends and idle state resumes, the passive spin restarts after a short delay (matches the playback resume delay, default 5s).
 
-### 5.9 Overlapping trips
+### 5.10 Overlapping trips
 
 - If the playhead is in a region where two trips overlap in time, **both** trips are highlighted simultaneously using the single highlight color. Arcs for both thicken. Visual overlap of arcs is acceptable and not disambiguated.
 - The floating label in overlap regions displays both trip names, separated by a bullet: e.g., "Trip A · Trip B". Keep compact — truncate with ellipsis if total label width would exceed a reasonable limit (e.g., ~240px).
@@ -446,13 +448,13 @@ Trip articles reuse the **Phase 5B article sliver mechanism**.
   2. Automatically redirect to `/globe` (default state) after a short delay (~1.5s).
 - The 404 message should be simple text chrome — no elaborate illustrations needed.
 
-### 8.5.1 Switching trips while the article sliver is open
+### 8.6 Switching trips while the article sliver is open
 
 - User is on `/trip/A` with its article sliver open. They click a different trip's label (trip B) on the timeline.
 - Behavior: the article sliver for trip A **closes** (globe shifts back to center), trip B becomes the newly locked trip, camera rotates to fit trip B, trip panel opens with trip B's contents. URL updates to `/globe?trip=B`.
 - The user does **not** automatically see trip B's article sliver — they must click "View trip article" from the trip B panel to open it. This avoids stacking/replacing sliver content mid-read.
 
-### 8.6 Browser history
+### 8.7 Browser history
 
 - Each URL state change (lock trip, open sliver, deselect) pushes a new history entry. Back button reverses the last state change:
   - Back from `/trip/<slug>` → `/globe?trip=<slug>` (sliver closes, trip stays locked).
@@ -460,8 +462,9 @@ Trip articles reuse the **Phase 5B article sliver mechanism**.
   - Back from `/globe` → previous site page.
 - Forward button is symmetric.
 - Use `router.push` (not `replace`) for all state transitions except the invalid-URL redirect, which uses `replace` to avoid polluting history with the 404.
+- **Verify this flow against actual Next.js App Router behavior.** The new Next.js version used in this project has some history-API quirks (see AGENTS.md). During implementation, validate that push/replace ordering produces the expected back/forward sequence — especially the `/trip/<slug>` → `/globe?trip=<slug>` transition (which requires the initial `/trip/<slug>` load to establish the `/globe?trip=<slug>` state as a history predecessor, not a sibling).
 
-### 8.7 SEO considerations
+### 8.8 SEO considerations
 
 - The `/trip/<slug>` route must render the trip's article body server-side so search engines index the content (not only the sliver overlay). The sliver is a client-side presentation layer on top of the globe; the underlying HTML should include the article markup regardless of whether the sliver is visually open.
 - This aligns with the existing Phase 5B item article treatment.
@@ -500,7 +503,7 @@ Note: on mobile, the hover-label popover ("Location · N visits") still appears 
 |---|---|
 | Click (no drag) | Deselects locked trip if any. Dismisses panel. |
 | Click-drag | Rotates globe manually. Pauses playback. Stops passive spin. Does **not** deselect a locked trip. |
-| Click-drag while trip is locked | Camera moves freely where the user drags. On release, camera stays where it was dragged — the "fit to visits" framing is not restored. (Consistent with [Section 5.8](#58-camera-during-playback) deselect behavior.) |
+| Click-drag while trip is locked | Camera moves freely where the user drags. On release, camera stays where it was dragged — the "fit to visits" framing is not restored. (Consistent with [Section 5.9](#59-camera-during-playback) deselect behavior.) |
 | Click-drag while article sliver is open | Camera moves; target pin is no longer centered in the sliver until sliver is dismissed or reopened. |
 
 **Click vs drag distinction**: a pointer event is treated as a "click" if the pointer moved less than ~5px between mousedown and mouseup; otherwise it's a drag. Drag gestures do not trigger click handlers.
@@ -551,7 +554,7 @@ Unlike desktop (which instantly switches lock from trip A to trip B on label cli
 
 **Visual distinction between "preview" and "locked" states**: use two variants of the same accent — e.g., the locked label uses the full highlight color while the preview label uses a lighter/desaturated variant. Concrete color values deferred to [Section 17](#17-visual-design-defaults).
 
-**Globe behavior during preview-while-locked**: the locked trip's arc highlights stay visible (pulsing). The previewed trip's arcs additionally highlight as a second layer. Because both use the same highlight color, this presents as a superset of pins/arcs lit up — equivalent to the "overlapping trips" visual treatment from [Section 5.9](#59-overlapping-trips).
+**Globe behavior during preview-while-locked**: the locked trip's arc highlights stay visible (pulsing). The previewed trip's arcs additionally highlight as a second layer. Because both use the same highlight color, this presents as a superset of pins/arcs lit up — equivalent to the "overlapping trips" visual treatment from [Section 5.10](#510-overlapping-trips).
 
 ### 10.4 Timeline squeeze on scroll
 
@@ -563,18 +566,27 @@ Unlike desktop (which instantly switches lock from trip A to trip B on label cli
 
 ---
 
-## 11. Migration from Legacy Pin Groupings
+## 11. Greenfield: No Data Migration Needed
 
-Phase 5A/5B pins are location-based groupings of items without explicit trip/visit structure. These are **migrated, not preserved alongside**.
+This project has **no production data** to preserve. All existing content in Sanity is fixture data used for development and demo purposes. There is no migration burden.
 
-### 11.1 Migration steps
+### 11.1 Approach
 
-1. For each existing pin grouping, infer or manually assign dates.
-2. Wrap the pin's items into a single **Visit** at that location + time.
-3. Wrap that visit in an implicit single-visit **Trip** (no article body).
-4. Delete the legacy grouping structure.
+- **Wipe and reload.** Delete the existing Sanity content (or retire the old document types entirely) and populate fresh fixtures built on the new `location`/`trip`/`visit` schema.
+- No dual-model period. No back-compat shims. No inference logic for date-assigning legacy pin groupings.
+- The old pin-grouping schema can be deleted once the new schema is in place and fixtures are authored.
 
-Migration happens in Sanity (via script or manual content authoring). No dual-model period in code — cut over cleanly.
+### 11.2 Fixture authoring
+
+- Author a representative set of fixtures that exercises the full spec surface:
+  - Single-visit trips (most common case)
+  - Multi-visit trips across multiple locations (arcs, ordering)
+  - Multiple visits at the same location across different trips (pin panel multi-section)
+  - Trips with article bodies + trips without (grayed-out view-trip-article state)
+  - Overlapping trips in time (timeline stacking, dual-highlight playback)
+  - Single-day trips (dot rendering)
+  - Items with no associated visits (wardrobe-only items)
+- These fixtures double as the manual test plan for the phase.
 
 ---
 
@@ -641,38 +653,124 @@ The following are **explicitly deferred** from this phase:
 
 ---
 
+## 13.5 Performance
+
+The globe page is a 3D-visualization-heavy surface. It's extremely easy to balloon per-frame compute with additional pins, arcs, playback animations, panel transitions, and React re-renders stacked on top. Performance must be kept in mind throughout development, even though detailed optimization is deferred to the end of the implementation phase after all core features land.
+
+### 13.5.1 Guiding principles
+
+- **Minimize per-frame work.** Anything running inside the globe's render loop (pin positions, arc geometry, camera transforms) should be computed once and cached where possible. Avoid recomputing arc curves every frame unless they've actually changed.
+- **Stable React references.** Panel content, timeline segments, and pin lists should memoize aggressively. A pin hover should not cause the entire globe scene graph to reconcile.
+- **GPU-side animation where available.** Arc pulsing, playhead movement, and segment highlight transitions should use CSS/transform animations or shader uniforms rather than per-frame React state updates whenever possible.
+- **Avoid animation thrash on playback.** The playback sweep runs continuously. Every non-essential state update during playback (e.g., redundant panel reflows, re-queries to Sanity, re-layout of the timeline) is a compounding cost.
+- **Lazy-init expensive subsystems.** Sliver article rendering, trip article route prefetching, and item-detail components should be lazy-loaded and torn down when not in use.
+
+### 13.5.2 Expected scale ceiling
+
+Target capacity for this phase:
+- Up to ~50 trips
+- Up to ~200 visits
+- Up to ~500 unique pins on the globe
+- Up to ~1000 items in the wardrobe (existing from prior phases)
+
+Beyond these numbers, additional optimization work (clustering pins by zoom level, virtualization of the default trip list, partial-arc rendering) will be needed. That work is **out of scope for this phase** but should not be foreclosed by early architecture choices.
+
+### 13.5.3 Optimization ordering
+
+- Ship core features first. Do not pre-optimize.
+- During core implementation, keep obvious performance traps in mind (the principles in 13.5.1).
+- Once all features land, run a dedicated optimization pass as a final ticket before closing out the phase.
+
+---
+
+## 13.6 Boneyard-js Integration
+
+Skeleton loading is handled via `boneyard-js` (see AGENTS.md and the project's existing `<Skeleton>` usage from prior phases). This phase adds new surfaces that need boneyard coverage.
+
+### 13.6.1 New boneyard targets
+
+- **Timeline component**: wrap the timeline strip in a named `<Skeleton name="timeline-strip">` with a `fixture` prop that renders a representative bar (a few labeled segments at plausible positions) so the CLI can snapshot bones across all breakpoints.
+- **Default trip list (mobile)**: wrap the scrollable trip list in `<Skeleton name="trip-list-default">` with a fixture of ~5 sample rows.
+- **Trip panel**: wrap the trip panel in `<Skeleton name="trip-panel">` with a fixture containing 2–3 visit sections.
+- **Pin panel (multi-visit)**: wrap in `<Skeleton name="pin-panel-multi">` with a fixture of 2 visit sections from different trips.
+
+### 13.6.2 Exclusions via `data-no-skeleton`
+
+Certain chrome elements should not generate bones (they're functional controls, not content):
+- **Playhead** on the timeline — functional position marker, not a bone.
+- **Today marker** — likewise.
+- **Floating playhead label** — transient, not part of the skeletonized layout.
+- **Close X / back arrow buttons** — icons, not content bones.
+- **Visit tick marks** — only appear during highlight; not part of idle layout.
+
+Apply `data-no-skeleton` to these elements, or use `snapshotConfig.excludeSelectors` on the parent `<Skeleton>` wrapper.
+
+### 13.6.3 Dark-mode bones
+
+All skeletons inherit `darkColor` from the project's existing boneyard config (auto-detects `.dark` class). No per-component dark-mode bone work needed beyond using existing project defaults.
+
+### 13.6.4 Build integration
+
+Per AGENTS.md: `import './bones/registry'` must already be in the app entry from prior phases. New skeletons registered here will automatically resolve via that registry once `npx boneyard-js build` is re-run after the new components are built.
+
+---
+
 ## 14. File Inventory
 
 _(To be filled in during implementation planning. Expected areas of change:)_
 
-- `sanity/schemaTypes/` — new `trip.ts` and `visit.ts`; update `item.ts`.
-- `app/` — globe page layout changes for timeline placement (desktop + mobile).
+- `sanity/schemaTypes/` — new `location.ts`, `trip.ts`, and `visit.ts`; update `item.ts`.
+- `app/globe/` — globe page layout changes for timeline placement (desktop + mobile).
 - `components/globe/` — new `Timeline.tsx`, `TimelinePlayback.ts`, `TripArcs.tsx`, updates to existing pin/panel components.
 - `components/globe/panels/` — split or refactor existing panel into PinPanel + TripPanel variants.
-- `lib/` — data-fetching helpers for Sanity trip/visit queries; playback state management.
+- `lib/` — data-fetching helpers for Sanity trip/visit queries; playback state management; timeline compression utility (pure function).
 - `app/trip/[slug]/` — new route for trip article pages.
 
 ---
 
 ## 15. Implementation Order
 
-_(Proposed — to be refined once open questions are resolved.)_
+_(High-level ordering only. This list is **intentionally coarse** — decomposition into individual tickets happens in a separate planning session.)_
 
-1. Sanity schema: `trip`, `visit`. Update `item` with visit references. Author a small migration script for existing pin groupings.
-2. Data-fetching utilities: `getTrips()`, `getVisitsForPin()`, `getTripBySlug()`.
-3. Static (non-playback) timeline: render trip segments, labels, basic zoom/pan.
-4. Pin behavior: update to be per-location with multi-visit support. Hover label with visit list.
-5. Pin panel: multi-visit variant with sticky headers.
-6. Trip panel: ascending-order variant with global "View trip article" button.
-7. Panel cross-interactions: pin-click-highlight-timeline, pin-click-while-trip-locked.
-8. Arcs: always-visible thin arcs.
-9. Camera: rotate-to-fit on trip click.
-10. Trip article route and sliver integration.
-11. Playback animation: playhead, loop, pause/resume, floating label.
-12. Arc playback states: thickening, pulsing, in/out on playhead entry/exit.
-13. Mobile layout: timeline-below-globe, content region, default trip list.
-14. Mobile preview label with "View trip" button.
-15. Polish: label rotation, zoom bounds, segment clipping cue, loading skeleton.
+### Recommended ordering principles
+
+- **Timeline prototype first.** Before integrating with Sanity or the globe, build the timeline in isolation using mock data. The timeline involves UX-visible decisions (compression algorithm, zoom/pan feel, label collision handling, playback pacing) that are hard to evaluate without seeing them in motion. A standalone prototype de-risks all of Section 4 and Section 5. See Section 15.1 below.
+- **Playback animation last.** The playback system (Section 5) coordinates with camera state, pan/zoom state, pin highlights, arc animations, URL state, lock/preview state, passive spin, and mobile gesture conflicts. It is the **riskiest subsystem in the phase** and should not be implemented until every other subsystem it touches already exists. Attempting playback earlier forces premature wiring of incomplete components.
+- **Performance pass at the end.** Per Section 13.5.3 — build features first, optimize last.
+
+### Coarse step sequence
+
+1. Sanity schema: `location`, `trip`, `visit`. Decide item↔visit reference direction. Wipe existing fixtures and author fresh ones (per Section 11).
+2. Data-fetching utilities: `getTrips()`, `getVisitsForPin()`, `getTripBySlug()`, `getLocations()`.
+3. **Timeline prototype** (isolated, mock data): segments, labels, zoom/pan, compression algorithm, today marker, axis ticks.
+4. Timeline integration with Sanity data.
+5. Pin behavior: per-location with multi-visit support. Hover label with visit list.
+6. Pin panel: multi-visit variant with sticky headers.
+7. Trip panel: ascending-order variant with global "View trip article" button.
+8. Panel cross-interactions: pin-click-highlight-timeline, pin-click-while-trip-locked.
+9. Arcs: always-visible thin arcs.
+10. Camera: rotate-to-fit on trip click.
+11. Trip article route and sliver integration.
+12. Mobile layout: timeline-below-globe, content region, default trip list.
+13. Mobile preview label with "View trip" button + preview-while-locked switching.
+14. **Playback animation** (last major feature): playhead, loop, pause/resume, floating label, arc playback states, timeline zoom reset on resume.
+15. Boneyard integration: register skeletons, run `npx boneyard-js build`, verify dark-mode bones.
+16. Performance optimization pass (per Section 13.5).
+17. Polish: label rotation, zoom bounds, segment clipping cue, 404 redirect, edge-case verification against fixture set.
+
+### 15.1 Timeline compression algorithm — suggested separate ticket
+
+The timeline's compression of empty time stretches (Section 4.2) is a UX-visible decision, not a pure implementation detail. Its quality determines whether the timeline feels legible at full-history zoom. Recommend treating it as a **dedicated early ticket** rather than bundling it into "build the timeline":
+
+- Input: sorted list of trip date ranges.
+- Output: a mapping from real dates → x-coordinate positions on the timeline.
+- Requirements:
+  - Active (trip-occupied) time gets a larger share of horizontal space.
+  - Empty stretches collapse to a minimum visual width (not zero — users should still see the gap).
+  - Year/month axis labels remain at their real-time positions after compression.
+  - The mapping is stable under zoom (zooming rescales the mapping rather than recomputing it).
+- Validate with fixture data that covers: dense months, sparse years, and a 10-year span.
+- Ship as a pure function with unit tests before wiring it into the timeline component.
 
 ---
 
