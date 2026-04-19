@@ -103,7 +103,7 @@ These two angles are intentionally decoupled so each can be tuned independently.
 - Tap/click the centered item → URL updates shallowly, full article content fades and rises up from below the wardrobe
 - No page reload, wardrobe stays mounted
 
-### 2. Globe View `/globe` *(Phase 5a/5b — next)*
+### 2. Globe View `/globe` *(Phase 5a/5b — ✅ complete)*
 
 A visual storytelling interface — not a dashboard. The globe is an alternative lens on the same collection, organized by geography instead of wardrobe order. Editorial, minimal, intentional. Same clinical-luxury aesthetic as the rest of the site.
 
@@ -192,8 +192,9 @@ No hover state exists on mobile.
 - Scroll does not affect the globe in any way
 
 **Item tap behavior:**
-- **Phase 5a/5b:** Desktop: globe shifts to left sliver, article fills right 70%. Mobile: navigates to `/[slug]`
-- **Phase 5c (future):** Camera zooms in closely onto that pin's location on the globe, then the article page fades in over the zoomed view — cinematic transition
+- Desktop: globe shifts to left sliver, article fills right 70%. The selected pin stays centered within the sliver as the user reads.
+- Mobile: navigates to `/[slug]` as a standalone article page.
+- _(The original Phase 5c idea of a cinematic camera-zoom article transition has been superseded by this sliver-based approach, which is now the established pattern for both item and trip articles.)_
 
 #### Globe Layout States
 
@@ -224,20 +225,46 @@ All animation is subtle and purposeful:
 
 Pin grouping is manual. A `globe_group` string field on the Location embedded type declares which globe pin a location belongs to (e.g., `"Tokyo, Japan"`). All locations sharing the same `globe_group` string cluster under one pin. Locations without `globe_group` are excluded from the globe. Pin coordinates are the centroid of grouped locations. See `Phase 5A.markdown` for full implementation details.
 
-#### Future Extensions (Out of Scope — Phase 5c and beyond)
+_(This ad-hoc grouping approach is replaced in Phase 5c by first-class `location`/`trip`/`visit` document types. See the Phase 5c upgrade below.)_
 
-- **Travel traces:** Animated lines on the globe showing where an item has traveled over time (item A: Seoul → Tokyo → New York). Belongs to the Timeline view, not the globe MVP.
-- **Camera-zoom article transition:** Tapping an item in the panel triggers a cinematic zoom into the pin location before the article fades in (Phase 5c).
+#### Phase 5c Upgrade — Trips, Visits, and Timeline *(Next)*
+
+Phase 5c is a major data-model + UI upgrade to the globe view. The globe itself remains the primary feature; a new timeline becomes its control surface. **Full spec: [Phase 5C.markdown](Phase%205C.markdown).**
+
+**New first-class concepts:**
+- **Visit** — a single location at a single time period, containing items. Has no article body. Not user-navigable.
+- **Trip** — a chronological container of one or more visits. Optionally has long-form article content. User-navigable at `/trip/<slug>`.
+- **Location** — a shared Sanity doc with lat/lng, referenced by multiple visits. Enables "one pin per unique location" even when multiple visits happened there.
+
+**Key UX additions:**
+- **Timeline strip** sits above the globe on desktop and below on mobile. Trip segments render as labeled bars with year/month axis ticks and a "today" marker. Zoom and pan supported.
+- **Playback animation** — by default, a playhead sweeps past → present continuously, highlighting trips as it crosses them. The globe is never truly static. Any user interaction pauses it; it resumes after a brief idle.
+- **Multi-visit pins** — a location visited multiple times across different trips (e.g., Berlin 2022 + Berlin 2024) shows as one pin. Clicking opens a scrollable panel with a section per visit.
+- **Arcs** — trips with multiple visits draw thin muted gray arcs between their locations. Arcs thicken and pulse when that trip is highlighted (by playback, hover, or lock).
+- **Trip articles** — opened from "View trip article" links in the panel, rendered in the same sliver overlay used for item articles. Pin stays centered in the sliver as the user reads.
+
+**Mobile reframing:**
+- The sidecar panel pattern is replaced with a fully scrollable page on mobile. Globe at top, timeline below it, content region below that (default: scrollable list of all trips; panel state: current trip/pin content; article state: the sliver).
+- Timeline is sticky once the globe scrolls off-screen, so locked-trip context is always at hand.
+
+**Greenfield migration:** Existing fixture pins are wiped and re-authored on the new schema. No dual-model period.
+
+#### Further Future Extensions (Out of Scope — Phase 5d and beyond)
+
 - **Pin color encoding** by item category (clothing vs. artifact vs. souvenir)
-- **Time-based filtering** — slider or timeline integration to show pins from a specific era
+- **Per-trip color distinction** on the timeline (Phase 5c uses a single highlight color for all trips)
 - **Cluster expansion** — zooming into a dense region auto-expands grouped pins into individual sub-locations
+- **Item detail page cross-references** — showing "worn on these trips" on the item's article page
+- **Search / filtering** within the timeline or trip list
+- **Accessibility polish** — keyboard navigation of the timeline, screen-reader announcements for playback state
 
-#### Non-Goals (Phase 5a/5b)
+#### Non-Goals (Globe view, all phases)
 
 - No 3D realism, satellite imagery, or terrain
 - No glowing sci-fi effects — the wireframe aesthetic is editorial, not cyberpunk
 - No cluttered legends, filters, or search (v1)
 - No complex zoom system beyond continent-level constraint
+- No video-player-style playback chrome — the moving playhead is the only cue
 
 ### 3. Feed View *(Phase 6 — future)*
 
@@ -298,7 +325,7 @@ On return (tap navbar icon):
 | Animation | Framer Motion | Gesture handling, scroll-driven transforms, spring-wrapped transit animation |
 | Text measurement | `@chenglou/pretext` | DOM-free text layout for animation — measures line count, height, and per-line ranges without triggering reflow |
 | Wardrobe 3D | CSS 3D transforms | No canvas required; GPU-composited; performant on mobile |
-| Globe (next) | Three.js / R3F | Phase 5a/5b |
+| Globe | Three.js / R3F | Wireframe sphere, pins, drag/zoom, article sliver. Phase 5c adds arcs and playback highlights. |
 | CMS | Sanity | MCP-driven updates, image CDN, GROQ queries, hosted Studio at `/studio` |
 | Hosting | Vercel | Zero-config Next.js, edge CDN |
 
@@ -342,9 +369,9 @@ Sanity's MCP server allows AI-driven content updates. The intended workflow:
 | 3 | ✅ Done | Article detail — PortableText body, photo gallery, location timeline |
 | 3b | ✅ Done | Wardrobe → article content reveal (scroll down to read) |
 | 4 | ✅ Done | Hero-to-navbar transition — scroll-driven transit element, WardrobeProvider/Context, WardrobeNavbar |
-| 5a | 🔲 Next | Globe scene & interaction — wireframe globe, country borders, pins, detail panel, drag/zoom, hover/click connectors |
-| 5b | 🔲 Next | Globe article integration — desktop split-view (globe sliver + article), mobile navigation, pin-to-title connector, globe persistence |
-| 5c | 🔲 Future | Globe polish — panel position tracking during rotation, camera-zoom article transition, travel traces |
+| 5a | ✅ Done | Globe scene & interaction — wireframe globe, country borders, pins, detail panel, drag/zoom, hover/click connectors |
+| 5b | ✅ Done | Globe article integration — desktop split-view (globe sliver + article), mobile navigation, pin-to-title connector, globe persistence |
+| 5c | 🔲 Next | Globe: Trips, Visits, and Timeline — new data model (Location/Trip/Visit), timeline control surface above globe with playback animation, multi-visit pins, arcs between trip visits, trip articles via existing sliver, mobile layout reframing. See [Phase 5C.markdown](Phase%205C.markdown). |
 | 6 | 🔲 Future | Feed view polish — filtering, sorting, tag UI |
 | — | 🔲 Ongoing | Deploy to Vercel |
 | — | 🔲 Ongoing | Real product images with transparent backgrounds |
