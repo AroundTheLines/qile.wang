@@ -129,6 +129,11 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
   const zoomWindowRef = useRef(zoomWindow)
   zoomWindowRef.current = zoomWindow
 
+  // Latest intended zoom window — prefers an in-flight rAF update over React
+  // state. Used by gesture starts so a pointerdown/wheel mid-flight picks up
+  // the staged window rather than the pre-rAF state.
+  const currentZoom = () => pendingZoomRef.current ?? zoomWindowRef.current
+
   // Coalesce high-frequency gesture updates (pointermove, wheel) onto a single
   // rAF. Without this, each event triggers a full re-projection of every label
   // and segment. Fine at 9 trips, matters at realistic dataset sizes.
@@ -173,7 +178,7 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
       e.preventDefault()
       const rect = el.getBoundingClientRect()
       if (rect.width === 0) return
-      const cur = pendingZoomRef.current ?? zoomWindowRef.current
+      const cur = currentZoom()
 
       // Trackpad two-finger horizontal swipe → pan. Browsers report this as a
       // wheel event with deltaX dominant and no ctrlKey (pinch is ctrlKey+deltaY).
@@ -257,7 +262,7 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
       gestureRef.current = {
         kind: 'pan',
         startClientX: remaining.x,
-        startZoom: zoomWindowRef.current,
+        startZoom: currentZoom(),
       }
       panMovedRef.current = false
     }
@@ -278,9 +283,9 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
     panMovedRef.current = false
     rectRef.current = e.currentTarget.getBoundingClientRect()
-    // Read from the ref so gesture start doesn't capture a stale zoomWindow
-    // if a pending rAF update hasn't yet flushed to state.
-    const startZoom = zoomWindowRef.current
+    // Read the latest intended window (including any in-flight rAF update)
+    // so gesture start doesn't capture a stale zoomWindow.
+    const startZoom = currentZoom()
 
     const size = pointersRef.current.size
     if (size === 1) {
