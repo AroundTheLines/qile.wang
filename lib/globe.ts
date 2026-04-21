@@ -1,7 +1,12 @@
-import type { ContentType, Coordinates, SanityImage } from './types'
+import type { ContentType, PinWithVisits, SanityImage, VisitSummary } from './types'
 
 // --- Types ---
 
+/**
+ * Lightweight item shape rendered inside the pin detail panel. Kept here
+ * (not replaced by ContentSummary) because `GlobeDetailItem.tsx` expects
+ * `locationLabel` + `year` derived fields that the raw content summary lacks.
+ */
 export interface GlobePinItem {
   _id: string
   title: string
@@ -10,31 +15,6 @@ export interface GlobePinItem {
   cover_image?: SanityImage
   locationLabel: string
   year?: string
-}
-
-export interface GlobePin {
-  group: string
-  coordinates: Coordinates
-  items: GlobePinItem[]
-  latestDate?: string
-}
-
-export interface GlobeContentItem {
-  _id: string
-  title: string
-  slug: { current: string }
-  content_type: ContentType
-  cover_image?: SanityImage
-  tags?: string[]
-  acquired_at?: string
-  latest_location_date?: string
-  locations: {
-    label: string
-    coordinates: Coordinates
-    sort_date?: string
-    date_label?: string
-    globe_group?: string
-  }[]
 }
 
 // --- Utilities ---
@@ -120,77 +100,95 @@ export function clipLineByGlobe(
   }
 }
 
-export function groupPins(content: GlobeContentItem[]): GlobePin[] {
-  const groups = new Map<
-    string,
-    {
-      lats: number[]
-      lngs: number[]
-      items: Map<string, { item: GlobePinItem; sortDate?: string }>
-      latestDate?: string
+/**
+ * Aggregate visits into pins (one pin per unique location document).
+ * - Each pin's `visits` are sorted startDate desc (most recent first) — matches §7.1.
+ * - Pins are sorted by each pin's most-recent visit, descending — preserves
+ *   the entrance-target contract GlobeScene relies on (`pins[0]` = freshest).
+ */
+export function aggregatePins(visits: VisitSummary[]): PinWithVisits[] {
+  const byLocation = new Map<string, PinWithVisits>()
+  for (const v of visits) {
+    const key = v.location._id
+    let pin = byLocation.get(key)
+    if (!pin) {
+      pin = {
+        location: v.location,
+        visits: [],
+        coordinates: v.location.coordinates,
+        visitCount: 0,
+        tripIds: [],
+      }
+      byLocation.set(key, pin)
     }
-  >()
+    pin.visits.push(v)
+    pin.visitCount++
+    if (!pin.tripIds.includes(v.trip._id)) pin.tripIds.push(v.trip._id)
+  }
+  for (const pin of byLocation.values()) {
+    pin.visits.sort((a, b) => b.startDate.localeCompare(a.startDate))
+  }
+  return Array.from(byLocation.values()).sort((a, b) =>
+    b.visits[0].startDate.localeCompare(a.visits[0].startDate),
+  )
+}
 
-  for (const c of content) {
-    for (const loc of c.locations) {
-      if (!loc.globe_group) continue
+// --- Self-check (run: `npx tsx lib/globe.ts`) ---
 
-      let group = groups.get(loc.globe_group)
-      if (!group) {
-        group = { lats: [], lngs: [], items: new Map() }
-        groups.set(loc.globe_group, group)
-      }
-
-      group.lats.push(loc.coordinates.lat)
-      group.lngs.push(loc.coordinates.lng)
-
-      // Track latest date across all locations in group
-      if (loc.sort_date) {
-        if (!group.latestDate || loc.sort_date > group.latestDate) {
-          group.latestDate = loc.sort_date
-        }
-      }
-
-      // Deduplicate content: if item already in group, keep most recent location label
-      const existing = group.items.get(c._id)
-      if (!existing || (loc.sort_date && (!existing.sortDate || loc.sort_date > existing.sortDate))) {
-        group.items.set(c._id, {
-          item: {
-            _id: c._id,
-            title: c.title,
-            slug: c.slug,
-            content_type: c.content_type,
-            cover_image: c.cover_image,
-            locationLabel: loc.label,
-            year: loc.sort_date ? loc.sort_date.slice(0, 4) : undefined,
-          },
-          sortDate: loc.sort_date,
-        })
-      }
+if (typeof process !== 'undefined' && process.argv[1]?.endsWith('globe.ts')) {
+  const assert = (cond: unknown, msg: string) => {
+    if (!cond) {
+      console.error('FAIL:', msg)
+      process.exit(1)
     }
+    console.log('ok  -', msg)
   }
 
-  const pins: GlobePin[] = []
-
-  for (const [groupName, group] of groups) {
-    const avgLat = group.lats.reduce((a, b) => a + b, 0) / group.lats.length
-    const avgLng = group.lngs.reduce((a, b) => a + b, 0) / group.lngs.length
-
-    pins.push({
-      group: groupName,
-      coordinates: { lat: avgLat, lng: avgLng },
-      items: Array.from(group.items.values()).map((v) => v.item),
-      latestDate: group.latestDate,
-    })
-  }
-
-  // Sort by latestDate descending (most recent first)
-  pins.sort((a, b) => {
-    if (!a.latestDate && !b.latestDate) return 0
-    if (!a.latestDate) return 1
-    if (!b.latestDate) return -1
-    return b.latestDate.localeCompare(a.latestDate)
+  const loc = (id: string, lat = 0, lng = 0) => ({
+    _id: id,
+    name: id,
+    coordinates: { lat, lng },
+  })
+  const trip = (id: string) => ({ _id: id, title: id, slug: { current: id } })
+  const visit = (id: string, locId: string, tripId: string, startDate: string): VisitSummary => ({
+    _id: id,
+    startDate,
+    endDate: startDate,
+    location: loc(locId),
+    trip: trip(tripId),
+    items: [],
   })
 
-  return pins
+  // Empty
+  assert(aggregatePins([]).length === 0, 'empty visits → empty pins')
+
+  // Single visit
+  const single = aggregatePins([visit('v1', 'tokyo', 't1', '2024-01-01')])
+  assert(single.length === 1, 'single visit → one pin')
+  assert(single[0].visitCount === 1, 'single visit → visitCount 1')
+  assert(single[0].tripIds.length === 1 && single[0].tripIds[0] === 't1', 'single visit → one tripId')
+
+  // Two visits, same location, different trips
+  const same = aggregatePins([
+    visit('v1', 'tokyo', 't1', '2024-01-01'),
+    visit('v2', 'tokyo', 't2', '2025-06-01'),
+  ])
+  assert(same.length === 1, 'same location → one pin')
+  assert(same[0].visitCount === 2, 'same location → visitCount 2')
+  assert(same[0].tripIds.length === 2, 'same location → two tripIds')
+  assert(same[0].visits[0]._id === 'v2', 'visits sorted desc by startDate')
+  assert(same[0].visits[1]._id === 'v1', 'visits sorted desc: older second')
+
+  // Three visits, two locations
+  const two = aggregatePins([
+    visit('v1', 'tokyo', 't1', '2024-01-01'),
+    visit('v2', 'tokyo', 't1', '2024-03-01'),
+    visit('v3', 'paris', 't2', '2025-07-01'),
+  ])
+  assert(two.length === 2, 'two locations → two pins')
+  assert(two[0].location._id === 'paris', 'pins sorted by most-recent visit desc')
+  assert(two[1].visitCount === 2, 'tokyo pin has two visits')
+  assert(two[1].tripIds.length === 1, 'tokyo pin has one unique tripId')
+
+  console.log('\nall self-checks passed')
 }

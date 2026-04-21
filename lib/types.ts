@@ -20,7 +20,6 @@ export interface Location {
   date_label?: string
   body?: PortableTextBlock[]
   images?: SanityImage[]
-  globe_group?: string
 }
 
 export interface ContentSummary {
@@ -39,4 +38,60 @@ export interface ContentFull extends ContentSummary {
   gallery?: SanityImage[]
   locations?: Location[]
   acquisition?: { location_index?: number }
+}
+
+// --- Phase 5C: trips / visits / locations ---
+
+export interface LocationDoc {
+  _id: string
+  name: string
+  coordinates: Coordinates
+  slug?: { current: string }
+}
+
+export interface TripSummary {
+  _id: string
+  title: string
+  slug: { current: string }
+  startDate: string
+  endDate: string
+  visitCount: number
+  hasArticle: boolean
+}
+
+export interface Trip extends TripSummary {
+  articleBody?: PortableTextBlock[]
+}
+
+export interface VisitSummary {
+  _id: string
+  startDate: string
+  endDate: string
+  location: LocationDoc
+  trip: { _id: string; title: string; slug: { current: string } }
+  items: ContentSummary[]
+}
+
+/** Alias for the canonical visit shape returned by `allVisitsQuery`. */
+export type Visit = VisitSummary
+
+/** Visits returned embedded inside TripWithVisits do not repeat the trip ref. */
+export interface VisitInTrip {
+  _id: string
+  startDate: string
+  endDate: string
+  location: LocationDoc
+  items: ContentSummary[]
+}
+
+export interface TripWithVisits extends Trip {
+  visits: VisitInTrip[]
+}
+
+export interface PinWithVisits {
+  location: LocationDoc
+  visits: VisitSummary[]
+  coordinates: Coordinates
+  visitCount: number
+  tripIds: string[]
 }

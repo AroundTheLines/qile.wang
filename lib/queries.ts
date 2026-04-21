@@ -51,22 +51,52 @@ export const wardrobeContentQuery = groq`
   }
 `
 
-export const globeContentQuery = groq`
-  *[_type == "content" && count(locations[defined(globe_group)]) > 0] {
+export const allTripsQuery = groq`
+  *[_type == "trip"] {
     _id,
     title,
     slug,
-    content_type,
-    cover_image,
-    tags,
-    "acquired_at": locations | order(sort_date asc)[0].sort_date,
-    "latest_location_date": locations | order(sort_date desc)[0].sort_date,
-    locations[] | order(sort_date asc) {
-      label,
-      coordinates,
-      sort_date,
-      date_label,
-      globe_group,
-    },
+    "startDate": *[_type == "visit" && references(^._id)] | order(startDate asc)[0].startDate,
+    "endDate":   *[_type == "visit" && references(^._id)] | order(endDate desc)[0].endDate,
+    "visitCount": count(*[_type == "visit" && references(^._id)]),
+    "hasArticle": defined(articleBody) && length(articleBody) > 0,
+  } | order(startDate desc)
+`
+
+export const allVisitsQuery = groq`
+  *[_type == "visit"] {
+    _id,
+    startDate,
+    endDate,
+    "location": location->{ _id, name, coordinates, slug },
+    "trip": trip->{ _id, title, slug },
+    "items": items[]->{
+      _id,
+      title,
+      slug,
+      content_type,
+      cover_image,
+      tags
+    }
+  } | order(startDate desc)
+`
+
+export const tripBySlugQuery = groq`
+  *[_type == "trip" && slug.current == $slug][0] {
+    _id,
+    title,
+    slug,
+    articleBody,
+    "startDate": *[_type == "visit" && references(^._id)] | order(startDate asc)[0].startDate,
+    "endDate":   *[_type == "visit" && references(^._id)] | order(endDate desc)[0].endDate,
+    "visitCount": count(*[_type == "visit" && references(^._id)]),
+    "hasArticle": defined(articleBody) && length(articleBody) > 0,
+    "visits": *[_type == "visit" && references(^._id)] | order(startDate asc) {
+      _id,
+      startDate,
+      endDate,
+      "location": location->{ _id, name, coordinates },
+      "items": items[]->{ _id, title, slug, content_type, cover_image }
+    }
   }
 `
