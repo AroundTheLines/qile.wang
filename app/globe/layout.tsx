@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic'
 
-import { client } from '@/lib/sanity'
+import { readClient as client } from '@/lib/sanity'
 import { allTripsQuery, allVisitsQuery } from '@/lib/queries'
 import { aggregatePins } from '@/lib/globe'
 import type { TripSummary, VisitSummary } from '@/lib/types'
