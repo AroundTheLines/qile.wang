@@ -1,8 +1,14 @@
 'use client'
 
-import { createContext, useContext, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
-import type { GlobeScreenCircle } from '@/lib/globe'
+import {
+  createContext,
+  useContext,
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+} from 'react'
 import type { PinWithVisits, TripSummary } from '@/lib/types'
+import type { GlobeScreenCircle } from '@/lib/globe'
 
 export interface ScreenPosition {
   x: number
@@ -17,19 +23,44 @@ export interface ScreenPosition {
 export type ViewportTier = 'desktop' | 'tablet' | 'mobile'
 
 export interface GlobeContextValue {
-  pins: PinWithVisits[]
-  /** TODO(C1): consumed by timeline + provider state once the trip/visit
-      state is wired. A3 merely threads it through. */
+  // --- Server-fed data ---
   trips: TripSummary[]
-  /** TODO(C1): surfaced inline in the timeline via §12.7. */
+  pins: PinWithVisits[]
   fetchError: boolean
+
+  // --- Pin selection ---
+  /** Pin identity = locationDoc._id. Was globe_group string pre-5C. */
   selectedPin: string | null
-  selectPin: (group: string | null) => void
+  selectPin: (id: string | null) => void
   hoveredPin: string | null
   /** React setter — supports functional updates so callers can compare
-      against the current value without racing context reads (e.g. the
-      "only clear if I'm the hovered pin" guard in GlobePins). */
+      against the current value without racing context reads. */
   setHoveredPin: Dispatch<SetStateAction<string | null>>
+  /** Pin id whose visit sub-regions should light up on the timeline. Set by C2. */
+  pinSubregionHighlight: string | null
+  setPinSubregionHighlight: Dispatch<SetStateAction<string | null>>
+
+  // --- Trip selection (new in 5C) ---
+  lockedTrip: string | null
+  setLockedTrip: (id: string | null) => void
+  hoveredTrip: string | null
+  setHoveredTrip: Dispatch<SetStateAction<string | null>>
+  /** Mobile-only preview state (E3). */
+  previewTrip: string | null
+  setPreviewTrip: (id: string | null) => void
+
+  // --- Playback coordination (B6/B7) ---
+  /** Trip ids currently lit by the playback sweep. Set by B6. */
+  playbackHighlightedTripIds: string[]
+  setPlaybackHighlightedTripIds: (ids: string[]) => void
+  /** Active after 5s idle; gates the playback RAF loop. Computed. */
+  playbackActive: boolean
+  addPauseReason: (reason: string) => void
+  removePauseReason: (reason: string) => void
+  /** Computed: any pause reason set, OR a locked trip, OR an open article. */
+  isPaused: boolean
+
+  // --- Layout state ---
   layoutState: 'default' | 'panel-open' | 'article-open'
   slideComplete: boolean
   selectedPinScreenY: number | null
@@ -39,28 +70,26 @@ export interface GlobeContextValue {
       back-of-globe segment of their line. */
   globeScreenRef: MutableRefObject<GlobeScreenCircle | null>
   /** Callbacks invoked by GlobePositionBridge at the end of every R3F
-      frame, after pin positions and the globe silhouette are written.
-      Connector components register here instead of running their own
-      requestAnimationFrame loops — that way the SVG line is updated in
-      the same browser tick the canvas paints, eliminating the one-frame
-      lag that lets the line lag behind the pin during rotation. */
+      frame, after pin positions and the globe silhouette are written. */
   frameSubscribersRef: MutableRefObject<Set<() => void>>
-  /** Slug of the article currently open in article-open state, or null */
-  activeArticleSlug: string | null
-  /** Exit article-open back to panel-open (desktop only) */
+
+  // --- URL state ---
+  activeArticleSlug: string | null // /globe/<slug> item article
+  activeTripSlug: string | null // /trip/<slug> trip article
   closeArticle: () => void
-  /** 'desktop' ≥1024, 'tablet' 768–1023, 'mobile' <768 */
+
+  // --- Viewport + theme ---
   tier: ViewportTier
-  /** Derived conveniences */
   isDesktop: boolean
   isTablet: boolean
   isMobile: boolean
-  /** Hover UI is shown on desktop + tablet */
   showHover: boolean
-  /** Connector lines are shown on desktop only */
   showConnectors: boolean
-  /** System dark-mode preference */
   isDark: boolean
+
+  // --- Derived ---
+  /** Which panel to render. Null = nothing. */
+  panelVariant: 'pin' | 'trip' | null
 }
 
 export const GlobeContext = createContext<GlobeContextValue | null>(null)

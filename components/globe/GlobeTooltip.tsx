@@ -7,7 +7,7 @@ export default function GlobeTooltip() {
   const { hoveredPin, pins, pinPositionRef, showHover } = useGlobe()
   const tooltipRef = useRef<HTMLDivElement>(null)
 
-  const pinData = hoveredPin ? pins.find((p) => p.group === hoveredPin) : null
+  const pinData = hoveredPin ? pins.find((p) => p.location._id === hoveredPin) : null
 
   // RAF loop to track pin position
   useEffect(() => {
@@ -28,7 +28,7 @@ export default function GlobeTooltip() {
 
   if (!hoveredPin || !pinData || !showHover) return null
 
-  const itemCount = pinData.items.length
+  const itemCount = pinData.visits.reduce((acc, v) => acc + v.items.length, 0)
 
   return (
     <div
@@ -38,7 +38,7 @@ export default function GlobeTooltip() {
     >
       <div className="bg-white dark:bg-black border border-gray-200 dark:border-gray-800 px-3 py-1.5 shadow-sm dark:shadow-none">
         <span className="text-[10px] tracking-widest uppercase font-light text-black dark:text-white">
-          {pinData.group}
+          {pinData.location.name}
         </span>
         {itemCount > 1 && (
           <span className="text-[10px] tracking-widest uppercase text-gray-400 dark:text-gray-500 ml-2">
