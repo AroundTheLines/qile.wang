@@ -1,7 +1,12 @@
-import type { ContentType, Coordinates, SanityImage } from './types'
+import type { ContentType, PinWithVisits, SanityImage, VisitSummary } from './types'
 
 // --- Types ---
 
+/**
+ * Lightweight item shape rendered inside the pin detail panel. Kept here
+ * (not replaced by ContentSummary) because `GlobeDetailItem.tsx` expects
+ * `locationLabel` + `year` derived fields that the raw content summary lacks.
+ */
 export interface GlobePinItem {
   _id: string
   title: string
@@ -10,31 +15,6 @@ export interface GlobePinItem {
   cover_image?: SanityImage
   locationLabel: string
   year?: string
-}
-
-export interface GlobePin {
-  group: string
-  coordinates: Coordinates
-  items: GlobePinItem[]
-  latestDate?: string
-}
-
-export interface GlobeContentItem {
-  _id: string
-  title: string
-  slug: { current: string }
-  content_type: ContentType
-  cover_image?: SanityImage
-  tags?: string[]
-  acquired_at?: string
-  latest_location_date?: string
-  locations: {
-    label: string
-    coordinates: Coordinates
-    sort_date?: string
-    date_label?: string
-    globe_group?: string
-  }[]
 }
 
 // --- Utilities ---
@@ -120,77 +100,43 @@ export function clipLineByGlobe(
   }
 }
 
-export function groupPins(content: GlobeContentItem[]): GlobePin[] {
-  const groups = new Map<
-    string,
-    {
-      lats: number[]
-      lngs: number[]
-      items: Map<string, { item: GlobePinItem; sortDate?: string }>
-      latestDate?: string
+/**
+ * Aggregate visits into pins (one pin per unique location document).
+ * - Each pin's `visits` are sorted startDate desc (most recent first) — matches §7.1.
+ * - Pins are sorted by each pin's most-recent visit, descending — preserves
+ *   the entrance-target contract GlobeScene relies on (`pins[0]` = freshest).
+ */
+export function aggregatePins(visits: VisitSummary[]): PinWithVisits[] {
+  const byLocation = new Map<string, PinWithVisits>()
+  const tripIdSets = new Map<string, Set<string>>()
+  for (const v of visits) {
+    const key = v.location._id
+    let pin = byLocation.get(key)
+    let tripSet = tripIdSets.get(key)
+    if (!pin || !tripSet) {
+      pin = {
+        location: v.location,
+        visits: [],
+        coordinates: v.location.coordinates,
+        visitCount: 0,
+        tripIds: [],
+      }
+      tripSet = new Set<string>()
+      byLocation.set(key, pin)
+      tripIdSets.set(key, tripSet)
     }
-  >()
-
-  for (const c of content) {
-    for (const loc of c.locations) {
-      if (!loc.globe_group) continue
-
-      let group = groups.get(loc.globe_group)
-      if (!group) {
-        group = { lats: [], lngs: [], items: new Map() }
-        groups.set(loc.globe_group, group)
-      }
-
-      group.lats.push(loc.coordinates.lat)
-      group.lngs.push(loc.coordinates.lng)
-
-      // Track latest date across all locations in group
-      if (loc.sort_date) {
-        if (!group.latestDate || loc.sort_date > group.latestDate) {
-          group.latestDate = loc.sort_date
-        }
-      }
-
-      // Deduplicate content: if item already in group, keep most recent location label
-      const existing = group.items.get(c._id)
-      if (!existing || (loc.sort_date && (!existing.sortDate || loc.sort_date > existing.sortDate))) {
-        group.items.set(c._id, {
-          item: {
-            _id: c._id,
-            title: c.title,
-            slug: c.slug,
-            content_type: c.content_type,
-            cover_image: c.cover_image,
-            locationLabel: loc.label,
-            year: loc.sort_date ? loc.sort_date.slice(0, 4) : undefined,
-          },
-          sortDate: loc.sort_date,
-        })
-      }
+    pin.visits.push(v)
+    pin.visitCount++
+    if (!tripSet.has(v.trip._id)) {
+      tripSet.add(v.trip._id)
+      pin.tripIds.push(v.trip._id)
     }
   }
-
-  const pins: GlobePin[] = []
-
-  for (const [groupName, group] of groups) {
-    const avgLat = group.lats.reduce((a, b) => a + b, 0) / group.lats.length
-    const avgLng = group.lngs.reduce((a, b) => a + b, 0) / group.lngs.length
-
-    pins.push({
-      group: groupName,
-      coordinates: { lat: avgLat, lng: avgLng },
-      items: Array.from(group.items.values()).map((v) => v.item),
-      latestDate: group.latestDate,
-    })
+  for (const pin of byLocation.values()) {
+    pin.visits.sort((a, b) => b.startDate.localeCompare(a.startDate))
   }
-
-  // Sort by latestDate descending (most recent first)
-  pins.sort((a, b) => {
-    if (!a.latestDate && !b.latestDate) return 0
-    if (!a.latestDate) return 1
-    if (!b.latestDate) return -1
-    return b.latestDate.localeCompare(a.latestDate)
-  })
-
-  return pins
+  return Array.from(byLocation.values()).sort((a, b) =>
+    b.visits[0].startDate.localeCompare(a.visits[0].startDate),
+  )
 }
+
