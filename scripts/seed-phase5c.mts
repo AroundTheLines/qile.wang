@@ -4,10 +4,15 @@
  * Usage:
  *   npx tsx scripts/seed-phase5c.mts --wipe-first          (deletes existing locationDoc, trip, visit docs first)
  *   npx tsx scripts/seed-phase5c.mts --dry-run             (logs plan, writes nothing)
- *   npx tsx scripts/seed-phase5c.mts                        (additive — may conflict with existing docs)
+ *   npx tsx scripts/seed-phase5c.mts                        (idempotent re-run — createIfNotExists on stable IDs)
  *
- * SAFETY: script refuses to run unless NEXT_PUBLIC_SANITY_DATASET starts with "dev"
- *         or --force-any-dataset is passed. This prevents accidental production wipes.
+ * Doc IDs are derived deterministically from slugs/names (see stableId helpers),
+ * so re-running without --wipe-first is a no-op rather than a duplicate seed.
+ * To apply edits to an existing fixture, use --wipe-first.
+ *
+ * SAFETY: script refuses to run unless NEXT_PUBLIC_SANITY_DATASET matches
+ *         /^dev(elopment)?([-_].*)?$/ or --force-any-dataset is passed.
+ *         This prevents accidental production wipes.
  *
  * NOTE: Visits reference `content` docs with content_type == "item" by slug. If the
  * dataset has no such content docs, run `npx tsx scripts/seed.mts` first and re-run.
@@ -39,7 +44,8 @@ const dryRun = args.has('--dry-run')
 const wipeFirst = args.has('--wipe-first')
 const forceAny = args.has('--force-any-dataset')
 
-if (!dataset.startsWith('dev') && !forceAny) {
+const DEV_DATASET_RE = /^dev(elopment)?([-_].*)?$/
+if (!DEV_DATASET_RE.test(dataset) && !forceAny) {
   console.error(`Refusing to run on dataset '${dataset}'. Pass --force-any-dataset to override.`)
   process.exit(1)
 }
@@ -54,11 +60,23 @@ const client = createClient({
 
 type SanityDoc = Record<string, unknown> & { _id: string; _type: string }
 
-const doc = <T extends Record<string, unknown>>(t: T & { _type: string }): SanityDoc =>
-  ({ _id: randomUUID(), ...t }) as SanityDoc
+const doc = <T extends Record<string, unknown>>(_id: string, t: T & { _type: string }): SanityDoc =>
+  ({ _id, ...t }) as SanityDoc
 const slug = (s: string) => ({ _type: 'slug' as const, current: s })
 const ref = (_ref: string) => ({ _type: 'reference' as const, _ref })
 const key = () => randomUUID()
+
+// Stable kebab — used to derive deterministic _id values so re-runs are idempotent.
+const kebab = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+
+const locationId = (name: string) => `seed.location.${kebab(name)}`
+const tripId = (tripSlug: string) => `seed.trip.${tripSlug}`
+const visitId = (tripSlug: string, locName: string, startDate: string) =>
+  `seed.visit.${tripSlug}.${kebab(locName)}.${startDate}`
 
 function simpleBody(text: string) {
   if (!text) return undefined
@@ -77,47 +95,67 @@ function simpleBody(text: string) {
 // Fixture definitions
 // ------------------------------
 
-const locations: SanityDoc[] = [
-  doc({ _type: 'locationDoc', name: 'Marrakech, Morocco', coordinates: { lat: 31.63, lng: -7.99 } }),
-  doc({ _type: 'locationDoc', name: 'Tokyo, Japan', coordinates: { lat: 35.68, lng: 139.65 } }),
-  doc({ _type: 'locationDoc', name: 'Kyoto, Japan', coordinates: { lat: 35.01, lng: 135.77 } }),
-  doc({ _type: 'locationDoc', name: 'Osaka, Japan', coordinates: { lat: 34.69, lng: 135.5 } }),
-  doc({ _type: 'locationDoc', name: 'Berlin, Germany', coordinates: { lat: 52.52, lng: 13.4 } }),
-  doc({ _type: 'locationDoc', name: 'Lisbon, Portugal', coordinates: { lat: 38.72, lng: -9.14 } }),
-  doc({ _type: 'locationDoc', name: 'San Francisco, USA', coordinates: { lat: 37.77, lng: -122.42 } }),
-  doc({ _type: 'locationDoc', name: 'Seattle, USA', coordinates: { lat: 47.61, lng: -122.33 } }),
-  doc({ _type: 'locationDoc', name: 'Sydney, Australia', coordinates: { lat: -33.87, lng: 151.21 } }),
-  doc({ _type: 'locationDoc', name: 'New York, USA', coordinates: { lat: 40.71, lng: -74.01 } }),
+const locationDefs: Array<{ name: string; lat: number; lng: number }> = [
+  { name: 'Marrakech, Morocco', lat: 31.63, lng: -7.99 },
+  { name: 'Tokyo, Japan', lat: 35.68, lng: 139.65 },
+  { name: 'Kyoto, Japan', lat: 35.01, lng: 135.77 },
+  { name: 'Osaka, Japan', lat: 34.69, lng: 135.5 },
+  { name: 'Berlin, Germany', lat: 52.52, lng: 13.4 },
+  { name: 'Lisbon, Portugal', lat: 38.72, lng: -9.14 },
+  { name: 'San Francisco, USA', lat: 37.77, lng: -122.42 },
+  { name: 'Seattle, USA', lat: 47.61, lng: -122.33 },
+  { name: 'Sydney, Australia', lat: -33.87, lng: 151.21 },
+  { name: 'New York, USA', lat: 40.71, lng: -74.01 },
 ]
 
-const L = Object.fromEntries(locations.map((l) => [l.name as string, l._id])) as Record<string, string>
+const locations: SanityDoc[] = locationDefs.map(({ name, lat, lng }) =>
+  doc(locationId(name), { _type: 'locationDoc', name, coordinates: { lat, lng } }),
+)
 
-const trips: SanityDoc[] = [
-  doc({ _type: 'trip', title: "Morocco '18", slug: slug('morocco-2018'), articleBody: simpleBody('A week in Marrakech.') }),
-  doc({ _type: 'trip', title: "Japan Spring '22", slug: slug('japan-spring-2022'), articleBody: simpleBody('Three cities. Too much ramen.') }),
-  doc({ _type: 'trip', title: "Berlin '22", slug: slug('berlin-2022'), articleBody: simpleBody('First time. Kreuzberg.') }),
-  doc({ _type: 'trip', title: "Berlin '24", slug: slug('berlin-2024'), articleBody: simpleBody('Second time. Prenzlauer Berg.') }),
+const L = Object.fromEntries(locationDefs.map((l) => [l.name, locationId(l.name)])) as Record<string, string>
+
+const tripDefs: Array<{ title: string; slug: string; body?: string }> = [
+  { title: "Morocco '18", slug: 'morocco-2018', body: 'A week in Marrakech.' },
+  { title: "Japan Spring '22", slug: 'japan-spring-2022', body: 'Three cities. Too much ramen.' },
+  { title: "Berlin '22", slug: 'berlin-2022', body: 'First time. Kreuzberg.' },
+  { title: "Berlin '24", slug: 'berlin-2024', body: 'Second time. Prenzlauer Berg.' },
   // No article body — tests grayed-out link.
-  doc({ _type: 'trip', title: 'Weekend in Lisbon', slug: slug('weekend-in-lisbon') }),
-  doc({ _type: 'trip', title: "SF Q4 '23", slug: slug('sf-q4-2023'), articleBody: simpleBody('Work trip.') }),
-  doc({ _type: 'trip', title: "Seattle Q4 '23", slug: slug('seattle-q4-2023'), articleBody: simpleBody('Overlaps with SF.') }),
-  doc({ _type: 'trip', title: 'NYC Day Trip', slug: slug('nyc-day-trip'), articleBody: simpleBody('One day.') }),
-  doc({ _type: 'trip', title: 'Round-the-World', slug: slug('round-the-world'), articleBody: simpleBody('Everywhere.') }),
-  doc({ _type: 'trip', title: 'Tokyo 2019', slug: slug('tokyo-2019') }),
+  { title: 'Weekend in Lisbon', slug: 'weekend-in-lisbon' },
+  { title: "SF Q4 '23", slug: 'sf-q4-2023', body: 'Work trip.' },
+  { title: "Seattle Q4 '23", slug: 'seattle-q4-2023', body: 'Overlaps with SF.' },
+  { title: 'NYC Day Trip', slug: 'nyc-day-trip', body: 'One day.' },
+  { title: 'Round-the-World', slug: 'round-the-world', body: 'Everywhere.' },
+  { title: 'Tokyo 2019', slug: 'tokyo-2019' },
 ]
 
-const T = Object.fromEntries(trips.map((t) => [t.title as string, t._id])) as Record<string, string>
+const trips: SanityDoc[] = tripDefs.map(({ title, slug: s, body }) =>
+  doc(tripId(s), {
+    _type: 'trip',
+    title,
+    slug: slug(s),
+    ...(body ? { articleBody: simpleBody(body) } : {}),
+  }),
+)
+
+const T = Object.fromEntries(tripDefs.map((t) => [t.title, tripId(t.slug)])) as Record<string, string>
+const TRIP_SLUG = Object.fromEntries(tripDefs.map((t) => [t.title, t.slug])) as Record<string, string>
 
 const itemSlugsToUse = ['black-ma-1-bomber', 'silk-scarf-navy']
 
 function buildVisits(itemIds: Record<string, string>): SanityDoc[] {
-  const v = (startDate: string, endDate: string, locId: string, tripId: string, items: string[] = []) =>
-    doc({
+  const v = (
+    tripTitle: string,
+    locName: string,
+    startDate: string,
+    endDate: string,
+    items: string[] = [],
+  ) =>
+    doc(visitId(TRIP_SLUG[tripTitle], locName, startDate), {
       _type: 'visit',
       startDate,
       endDate,
-      location: ref(locId),
-      trip: ref(tripId),
+      location: ref(L[locName]),
+      trip: ref(T[tripTitle]),
       items: items
         .filter((id): id is string => Boolean(id))
         .map((id) => ({ _type: 'reference' as const, _ref: id, _key: key() })),
@@ -127,27 +165,27 @@ function buildVisits(itemIds: Record<string, string>): SanityDoc[] {
   const scarf = itemIds['silk-scarf-navy']
 
   return [
-    v('2018-05-10', '2018-05-17', L['Marrakech, Morocco'], T["Morocco '18"], [bomber]),
+    v("Morocco '18", 'Marrakech, Morocco', '2018-05-10', '2018-05-17', [bomber]),
 
-    v('2022-03-05', '2022-03-10', L['Tokyo, Japan'], T["Japan Spring '22"], [scarf]),
-    v('2022-03-10', '2022-03-14', L['Kyoto, Japan'], T["Japan Spring '22"]),
-    v('2022-03-14', '2022-03-18', L['Osaka, Japan'], T["Japan Spring '22"], [bomber]),
+    v("Japan Spring '22", 'Tokyo, Japan', '2022-03-05', '2022-03-10', [scarf]),
+    v("Japan Spring '22", 'Kyoto, Japan', '2022-03-10', '2022-03-14'),
+    v("Japan Spring '22", 'Osaka, Japan', '2022-03-14', '2022-03-18', [bomber]),
 
-    v('2022-09-01', '2022-09-07', L['Berlin, Germany'], T["Berlin '22"], [scarf]),
-    v('2024-06-10', '2024-06-20', L['Berlin, Germany'], T["Berlin '24"]),
+    v("Berlin '22", 'Berlin, Germany', '2022-09-01', '2022-09-07', [scarf]),
+    v("Berlin '24", 'Berlin, Germany', '2024-06-10', '2024-06-20'),
 
-    v('2023-02-17', '2023-02-19', L['Lisbon, Portugal'], T['Weekend in Lisbon']),
+    v('Weekend in Lisbon', 'Lisbon, Portugal', '2023-02-17', '2023-02-19'),
 
-    v('2023-10-15', '2023-10-22', L['San Francisco, USA'], T["SF Q4 '23"]),
-    v('2023-10-18', '2023-10-25', L['Seattle, USA'], T["Seattle Q4 '23"]),
+    v("SF Q4 '23", 'San Francisco, USA', '2023-10-15', '2023-10-22'),
+    v("Seattle Q4 '23", 'Seattle, USA', '2023-10-18', '2023-10-25'),
 
-    v('2024-01-20', '2024-01-20', L['New York, USA'], T['NYC Day Trip']),
+    v('NYC Day Trip', 'New York, USA', '2024-01-20', '2024-01-20'),
 
-    v('2023-07-01', '2023-07-10', L['Tokyo, Japan'], T['Round-the-World']),
-    v('2023-07-11', '2023-07-18', L['New York, USA'], T['Round-the-World']),
-    v('2023-07-19', '2023-07-25', L['Sydney, Australia'], T['Round-the-World']),
+    v('Round-the-World', 'Tokyo, Japan', '2023-07-01', '2023-07-10'),
+    v('Round-the-World', 'New York, USA', '2023-07-11', '2023-07-18'),
+    v('Round-the-World', 'Sydney, Australia', '2023-07-19', '2023-07-25'),
 
-    v('2019-04-01', '2019-04-10', L['Tokyo, Japan'], T['Tokyo 2019']),
+    v('Tokyo 2019', 'Tokyo, Japan', '2019-04-01', '2019-04-10'),
   ]
 }
 
