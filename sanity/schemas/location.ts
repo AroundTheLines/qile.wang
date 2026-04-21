@@ -1,8 +1,11 @@
 import { defineField, defineType } from 'sanity'
 
+// Embedded object type used inside `content.locations[]` for article travel-log
+// display. Distinct from the top-level `locationDoc` document type (Phase 5C).
+// Title is "Travel log entry" to disambiguate in the Studio UI.
 export const location = defineType({
   name: 'location',
-  title: 'Location',
+  title: 'Travel log entry',
   type: 'object',
   fields: [
     defineField({
@@ -46,14 +49,15 @@ export const location = defineType({
       type: 'array',
       of: [{ type: 'image', options: { hotspot: true } }],
     }),
+    // Deprecated — Phase 5C replaces globe_group with locationDoc references
+    // on visit documents. Kept hidden + readOnly through Phase 5C A2/A3 so
+    // existing values are preserved on round-trip edits. Remove after A3 lands.
     defineField({
       name: 'globe_group',
-      title: 'Globe Group',
+      title: 'Globe Group (deprecated)',
       type: 'string',
-      description:
-        'Editorial label for globe pin grouping (e.g., "Tokyo, Japan"). ' +
-        'All locations sharing the same globe_group string cluster under one pin. ' +
-        'Leave empty to exclude this location from the globe.',
+      readOnly: true,
+      hidden: true,
     }),
   ],
 })
