@@ -1,7 +1,8 @@
 'use client'
 
-import { useRef, useState, useEffect, useMemo, useLayoutEffect } from 'react'
+import { useRef, useState, useEffect, useMemo, useLayoutEffect, useCallback } from 'react'
 import { buildCompressedMap, type TripRange, type CompressedMap } from '@/lib/timelineCompression'
+import { dragPan, pinchZoom, wheelPan, wheelZoom, type ZoomWindow } from '@/lib/timelineZoom'
 import TimelineSegment from './TimelineSegment'
 import TimelineAxis from './TimelineAxis'
 
@@ -22,6 +23,13 @@ const TRACK_Y = YEAR_AXIS_Y + YEAR_AXIS_HEIGHT + 4
 const TRACK_TO_LABELS = 10
 const FIRST_LABEL_Y = TRACK_Y + TRACK_TO_LABELS
 const BOTTOM_PADDING = 8
+
+const DRAG_THRESHOLD_PX = 5
+const WHEEL_ZOOM_MULTIPLIER = 0.001
+// Floor on the min zoom span (fraction of compressed x). Compression's
+// activeBoost makes real-day math misleading in active-dense regions — at
+// 1/totalDays the view can land on an empty gap with zero trips visible.
+const MIN_ZOOM_SPAN_FLOOR = 0.2
 
 function shortLabelToken(full: string): string {
   const first = full.split(/\s+/)[0] ?? full
@@ -66,12 +74,31 @@ function computeDisplayLabels(
   return out
 }
 
+type GestureState =
+  | { kind: 'pan'; startClientX: number; startZoom: ZoomWindow }
+  | {
+      kind: 'pinch'
+      startDist: number
+      startSpan: number
+      startCenter: number
+      centerXFrac: number
+    }
+  | null
+
 export default function Timeline({ trips, className, now }: TimelineProps) {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   const [labelWidths, setLabelWidths] = useState<Record<string, LabelWidths>>({})
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [zoomWindow, setZoomWindow] = useState<ZoomWindow>({ start: 0, end: 1 })
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map())
+  const gestureRef = useRef<GestureState>(null)
+  const panMovedRef = useRef(false)
+  const rectRef = useRef<DOMRect | null>(null)
+  const windowListenersRef = useRef(false)
+  const rafRef = useRef<number | null>(null)
+  const pendingZoomRef = useRef<ZoomWindow | null>(null)
 
   useEffect(() => {
     const el = wrapperRef.current
@@ -88,6 +115,203 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
     () => buildCompressedMap(trips, { now }),
     [trips, now],
   )
+
+  const minZoomSpan = useMemo(() => {
+    const totalMs = Date.parse(compressed.end) - Date.parse(compressed.start)
+    const totalDays = Math.max(1, Math.round(totalMs / 86400000))
+    return Math.min(1, Math.max(MIN_ZOOM_SPAN_FLOOR, 30 / totalDays))
+  }, [compressed.start, compressed.end])
+
+  // Refs mirroring state/memo values so the stable window listeners can read
+  // the latest without being re-bound on every render.
+  const minZoomSpanRef = useRef(minZoomSpan)
+  minZoomSpanRef.current = minZoomSpan
+  const zoomWindowRef = useRef(zoomWindow)
+  zoomWindowRef.current = zoomWindow
+
+  // Latest intended zoom window — prefers an in-flight rAF update over React
+  // state. Used by gesture starts so a pointerdown/wheel mid-flight picks up
+  // the staged window rather than the pre-rAF state.
+  const currentZoom = () => pendingZoomRef.current ?? zoomWindowRef.current
+
+  // Coalesce high-frequency gesture updates (pointermove, wheel) onto a single
+  // rAF. Without this, each event triggers a full re-projection of every label
+  // and segment. Fine at 9 trips, matters at realistic dataset sizes.
+  //
+  // When the tab is hidden, rAF is throttled or paused entirely — queued
+  // updates would flush in a batch on re-focus. Commit synchronously in that
+  // case so state stays consistent even if a gesture somehow runs in the
+  // background (e.g. programmatic driver from a future playback ticket).
+  const scheduleZoom = useCallback((next: ZoomWindow) => {
+    if (typeof document !== 'undefined' && document.hidden) {
+      pendingZoomRef.current = null
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
+      }
+      setZoomWindow(next)
+      return
+    }
+    pendingZoomRef.current = next
+    if (rafRef.current !== null) return
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null
+      const z = pendingZoomRef.current
+      pendingZoomRef.current = null
+      if (z) setZoomWindow(z)
+    })
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+    },
+    [],
+  )
+
+  // Native wheel listener — React's passive SyntheticEvent can't reliably
+  // preventDefault, which would let the page scroll while the timeline zooms.
+  useEffect(() => {
+    const el = wrapperRef.current
+    if (!el) return
+    const handler = (e: WheelEvent) => {
+      e.preventDefault()
+      const rect = el.getBoundingClientRect()
+      if (rect.width === 0) return
+      const cur = currentZoom()
+
+      // Trackpad two-finger horizontal swipe → pan. Browsers report this as a
+      // wheel event with deltaX dominant and no ctrlKey (pinch is ctrlKey+deltaY).
+      // shift+wheel on a mouse also surfaces as deltaX on some browsers.
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && !e.ctrlKey) {
+        scheduleZoom(wheelPan(cur, e.deltaX, rect.width))
+        return
+      }
+
+      const cursorXFrac = (e.clientX - rect.left) / rect.width
+      const next = wheelZoom(cur, e.deltaY, cursorXFrac, minZoomSpanRef.current, WHEEL_ZOOM_MULTIPLIER)
+      if (next) scheduleZoom(next)
+    }
+    el.addEventListener('wheel', handler, { passive: false })
+    return () => el.removeEventListener('wheel', handler)
+  }, [scheduleZoom])
+
+  // Pan/pinch use window-level move/up listeners so the drag keeps tracking
+  // when the cursor leaves the timeline. React's delegated onPointerMove is
+  // unreliable once a pointer leaves the element's hit area, even with
+  // setPointerCapture.
+  const moveImplRef = useRef<(e: PointerEvent) => void>(() => {})
+  const upImplRef = useRef<(e: PointerEvent) => void>(() => {})
+
+  moveImplRef.current = (e: PointerEvent) => {
+    if (!pointersRef.current.has(e.pointerId)) return
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    const gesture = gestureRef.current
+    const rect = rectRef.current
+    if (!gesture || !rect || rect.width === 0) return
+
+    if (gesture.kind === 'pan') {
+      const dx = e.clientX - gesture.startClientX
+      if (!panMovedRef.current && Math.abs(dx) < DRAG_THRESHOLD_PX) return
+      panMovedRef.current = true
+      scheduleZoom(dragPan(gesture.startZoom, dx, rect.width))
+    } else if (gesture.kind === 'pinch') {
+      // Only the two oldest pointers drive the pinch. A 3rd finger is ignored
+      // until one of the original two releases — matches typical map UX.
+      // Iterate the Map directly instead of Array.from().slice to avoid two
+      // allocations per pointermove frame.
+      const iter = pointersRef.current.values()
+      const a = iter.next().value
+      const b = iter.next().value
+      if (!a || !b) return
+      const dist = Math.hypot(a.x - b.x, a.y - b.y)
+      scheduleZoom(
+        pinchZoom(
+          gesture.startCenter,
+          gesture.centerXFrac,
+          gesture.startSpan,
+          gesture.startDist,
+          dist,
+          minZoomSpanRef.current,
+        ),
+      )
+    }
+  }
+
+  const stableMove = useCallback((e: PointerEvent) => moveImplRef.current(e), [])
+  const stableUp = useCallback((e: PointerEvent) => upImplRef.current(e), [])
+
+  const detachWindowListeners = useCallback(() => {
+    if (!windowListenersRef.current) return
+    window.removeEventListener('pointermove', stableMove)
+    window.removeEventListener('pointerup', stableUp)
+    window.removeEventListener('pointercancel', stableUp)
+    windowListenersRef.current = false
+  }, [stableMove, stableUp])
+
+  upImplRef.current = (e: PointerEvent) => {
+    if (!pointersRef.current.has(e.pointerId)) return
+    pointersRef.current.delete(e.pointerId)
+    if (pointersRef.current.size === 0) {
+      gestureRef.current = null
+      rectRef.current = null
+      detachWindowListeners()
+    } else if (pointersRef.current.size === 1) {
+      // Dropped from pinch → pan: re-seed pan from the remaining pointer.
+      const remaining = pointersRef.current.values().next().value!
+      gestureRef.current = {
+        kind: 'pan',
+        startClientX: remaining.x,
+        startZoom: currentZoom(),
+      }
+      panMovedRef.current = false
+    }
+  }
+
+  const attachWindowListeners = useCallback(() => {
+    if (windowListenersRef.current) return
+    window.addEventListener('pointermove', stableMove)
+    window.addEventListener('pointerup', stableUp)
+    window.addEventListener('pointercancel', stableUp)
+    windowListenersRef.current = true
+  }, [stableMove, stableUp])
+
+  useEffect(() => detachWindowListeners, [detachWindowListeners])
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    panMovedRef.current = false
+    rectRef.current = e.currentTarget.getBoundingClientRect()
+    // Read the latest intended window (including any in-flight rAF update)
+    // so gesture start doesn't capture a stale zoomWindow.
+    const startZoom = currentZoom()
+
+    const size = pointersRef.current.size
+    if (size === 1) {
+      gestureRef.current = {
+        kind: 'pan',
+        startClientX: e.clientX,
+        startZoom,
+      }
+    } else if (size === 2) {
+      const iter = pointersRef.current.values()
+      const a = iter.next().value!
+      const b = iter.next().value!
+      const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1
+      const rect = rectRef.current
+      const span = startZoom.end - startZoom.start
+      const centerXFrac = rect.width > 0 ? ((a.x + b.x) / 2 - rect.left) / rect.width : 0.5
+      gestureRef.current = {
+        kind: 'pinch',
+        startDist: dist,
+        startSpan: span,
+        startCenter: startZoom.start + centerXFrac * span,
+        centerXFrac,
+      }
+    }
+    attachWindowListeners()
+  }
 
   const displayLabels = useMemo(() => computeDisplayLabels(trips), [trips])
 
@@ -128,6 +352,10 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
 
   const innerWidth = Math.max(0, width - TRACK_INSET_X * 2)
 
+  // Row assignment is computed against the full-history view, not the current
+  // zoom window. This keeps each label's row (and the wrapper's total height)
+  // stable during pan/zoom — otherwise labels shuffle vertically as others
+  // cull in and out of the visible window, which reads as jitter.
   const packed = useMemo(() => {
     if (innerWidth === 0 || trips.length === 0) {
       return {
@@ -135,8 +363,7 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
           trip: TripRange & { title?: string }
           short: string
           full: string
-          anchorX: number
-          labelX: number
+          rawX: number
           shortWidth: number
           fullWidth: number
           row: number
@@ -145,27 +372,29 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
       }
     }
 
-    const items = trips
+    const baseItems = trips
       .map((trip) => {
         const { short, full } = displayLabels[trip.id]
-        const anchor = compressed.dateToX(trip.startDate) * innerWidth
+        const rawX = compressed.dateToX(trip.startDate)
         const measured = labelWidths[trip.id]
         const shortWidth = measured?.short ?? short.length * 7
         const fullWidth = measured?.full ?? full.length * 7
-        return { trip, short, full, anchorX: anchor, shortWidth, fullWidth }
+        return { trip, short, full, rawX, shortWidth, fullWidth }
       })
-      .sort((a, b) => a.anchorX - b.anchorX)
+      .sort((a, b) => a.rawX - b.rawX)
 
     const rowEnds: number[] = []
-    const placed = items.map((item) => {
-      let labelX = item.anchorX
+    const placed = baseItems.map((item) => {
+      // Use the full-history anchor to pack. Clamp x to the right edge so the
+      // last label doesn't overflow the 100% case.
+      let labelX = item.rawX * innerWidth
       if (labelX + item.shortWidth > innerWidth) {
         labelX = Math.max(0, innerWidth - item.shortWidth)
       }
       let row = 0
       while (row < rowEnds.length && rowEnds[row] > labelX - LABEL_HORIZONTAL_GAP) row++
       rowEnds[row] = labelX + item.shortWidth
-      return { ...item, labelX, row }
+      return { ...item, row }
     })
     return { items: placed, rowCount: rowEnds.length }
   }, [trips, compressed, innerWidth, labelWidths, displayLabels])
@@ -218,11 +447,117 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
     )
   }
 
+  const zoomSpan = zoomWindow.end - zoomWindow.start
+  const todayProj = (1 - zoomWindow.start) / zoomSpan
+  const todayVisible = todayProj >= -0.01 && todayProj <= 1.01
+
+  const renderTodayMarker = () => {
+    if (!todayVisible) return null
+    return (
+      <div
+        data-no-skeleton
+        className="absolute w-px bg-black/35 dark:bg-white/40 pointer-events-none"
+        style={{
+          left: TRACK_INSET_X + todayProj * innerWidth,
+          top: YEAR_AXIS_Y,
+          height: TRACK_Y + 6 - YEAR_AXIS_Y,
+        }}
+      >
+        <span
+          className="absolute -translate-x-1/2 text-[9px] tracking-widest uppercase text-black/35 dark:text-white/40"
+          style={{ top: TODAY_LABEL_Y - YEAR_AXIS_Y }}
+        >
+          today
+        </span>
+      </div>
+    )
+  }
+
+  const renderLabels = () => {
+    if (width === 0) return null
+    return packed.items.map((item) => {
+      const projX = (item.rawX - zoomWindow.start) / zoomSpan
+      // Cull labels clearly outside the visible window. Row assignment is
+      // stable (full-history packed) so culling doesn't reshuffle rows.
+      if (projX < -0.05 || projX > 1.05) return null
+
+      const anchorX = projX * innerWidth
+      let labelX = anchorX
+      if (labelX + item.shortWidth > innerWidth) {
+        labelX = Math.max(0, innerWidth - item.shortWidth)
+      }
+      if (labelX < 0) labelX = 0
+
+      const labelTop = FIRST_LABEL_Y + item.row * LABEL_ROW_HEIGHT
+      const connectorTop = TRACK_Y + 6
+      const connectorHeight = labelTop - connectorTop
+      const isActive = activeId === item.trip.id
+      const hoverLeft = Math.max(
+        0,
+        Math.min(labelX - HOVER_HPAD, innerWidth - item.fullWidth - HOVER_HPAD * 2),
+      )
+      const restingLeft = TRACK_INSET_X + labelX
+      const leftPx = isActive ? TRACK_INSET_X + hoverLeft : restingLeft
+
+      return (
+        <div key={item.trip.id}>
+          <div
+            data-no-skeleton
+            className="absolute w-px bg-black/15 dark:bg-white/15 pointer-events-none"
+            style={{
+              // Shift the 1px line left by half a pixel so its visual center
+              // sits on anchorX — otherwise the line's center is at
+              // anchorX + 0.5, one half-pixel right of the dot's center.
+              left: TRACK_INSET_X + anchorX - 0.5,
+              top: connectorTop,
+              height: Math.max(0, connectorHeight),
+            }}
+          />
+          <div
+            onMouseEnter={() => setActiveId(item.trip.id)}
+            onMouseLeave={() => setActiveId((cur) => (cur === item.trip.id ? null : cur))}
+            onClick={(e) => {
+              e.stopPropagation()
+              setActiveId((cur) => (cur === item.trip.id ? null : item.trip.id))
+            }}
+            className={`absolute cursor-default rounded-sm ring-1 transition-[left,width,background-color,box-shadow] duration-150 ease-out ${
+              isActive
+                ? 'z-10 bg-white/95 dark:bg-black/95 shadow-sm ring-black/10 dark:ring-white/15'
+                : 'bg-transparent shadow-none ring-transparent'
+            }`}
+            style={{
+              left: leftPx,
+              top: labelTop,
+              height: LABEL_ROW_HEIGHT,
+              width:
+                (isActive ? item.fullWidth : item.shortWidth) +
+                (isActive ? HOVER_HPAD * 2 : 0),
+            }}
+          >
+            <span
+              className="absolute top-0 text-[10px] leading-[14px] tracking-widest uppercase whitespace-nowrap transition-opacity duration-150 ease-out pointer-events-none text-black/80 dark:text-white/80"
+              style={{ left: isActive ? HOVER_HPAD : 0, opacity: isActive ? 0 : 1 }}
+            >
+              {item.short}
+            </span>
+            <span
+              className="absolute top-0 text-[10px] leading-[14px] tracking-widest uppercase whitespace-nowrap transition-opacity duration-150 ease-out pointer-events-none text-black dark:text-white"
+              style={{ left: HOVER_HPAD, opacity: isActive ? 1 : 0 }}
+            >
+              {item.full}
+            </span>
+          </div>
+        </div>
+      )
+    })
+  }
+
   return (
     <div
       ref={wrapperRef}
-      className={`w-full relative overflow-hidden bg-black/5 dark:bg-white/5 ${className ?? ''}`}
-      style={{ minHeight: Math.max(72, totalHeight) }}
+      className={`w-full relative overflow-hidden bg-black/5 dark:bg-white/5 select-none ${className ?? ''}`}
+      style={{ minHeight: Math.max(72, totalHeight), touchAction: 'pan-y' }}
+      onPointerDown={handlePointerDown}
       onClick={(e) => {
         // Tapping the timeline background dismisses any sticky-active label.
         if (e.target === e.currentTarget) setActiveId(null)
@@ -238,6 +573,7 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
         >
           <TimelineAxis
             compressed={compressed}
+            zoomWindow={zoomWindow}
             containerWidth={innerWidth}
             leftOffset={TRACK_INSET_X}
           />
@@ -257,94 +593,15 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
               key={trip.id}
               trip={trip}
               compressed={compressed}
+              zoomWindow={zoomWindow}
               containerWidth={innerWidth}
+              isActive={activeId === trip.id}
             />
           ))}
       </div>
 
-      {/* Today marker */}
-      <div
-        data-no-skeleton
-        className="absolute w-px bg-black/35 dark:bg-white/40 pointer-events-none"
-        style={{
-          left: TRACK_INSET_X + innerWidth,
-          top: YEAR_AXIS_Y,
-          height: TRACK_Y + 6 - YEAR_AXIS_Y,
-        }}
-      >
-        <span
-          className="absolute -translate-x-1/2 text-[9px] tracking-widest uppercase text-black/35 dark:text-white/40"
-          style={{ top: TODAY_LABEL_Y - YEAR_AXIS_Y }}
-        >
-          today
-        </span>
-      </div>
-
-      {/* Connector lines + labels */}
-      {width > 0 &&
-        packed.items.map((item) => {
-          const labelTop = FIRST_LABEL_Y + item.row * LABEL_ROW_HEIGHT
-          const connectorTop = TRACK_Y + 6
-          const connectorHeight = labelTop - connectorTop
-          const isActive = activeId === item.trip.id
-          // When active, clamp so full label + padding stays inside innerWidth.
-          const hoverLeft = Math.max(
-            0,
-            Math.min(item.labelX - HOVER_HPAD, innerWidth - item.fullWidth - HOVER_HPAD * 2),
-          )
-          const restingLeft = TRACK_INSET_X + item.labelX
-          const leftPx = isActive ? TRACK_INSET_X + hoverLeft : restingLeft
-
-          return (
-            <div key={item.trip.id}>
-              <div
-                data-no-skeleton
-                className="absolute w-px bg-black/15 dark:bg-white/15 pointer-events-none"
-                style={{
-                  left: TRACK_INSET_X + item.anchorX,
-                  top: connectorTop,
-                  height: Math.max(0, connectorHeight),
-                }}
-              />
-              <div
-                onMouseEnter={() => setActiveId(item.trip.id)}
-                onMouseLeave={() =>
-                  setActiveId((cur) => (cur === item.trip.id ? null : cur))
-                }
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setActiveId((cur) => (cur === item.trip.id ? null : item.trip.id))
-                }}
-                className={`absolute cursor-default rounded-sm ring-1 transition-[left,width,background-color,box-shadow] duration-150 ease-out ${
-                  isActive
-                    ? 'z-10 bg-white/95 dark:bg-black/95 shadow-sm ring-black/10 dark:ring-white/15'
-                    : 'bg-transparent shadow-none ring-transparent'
-                }`}
-                style={{
-                  left: leftPx,
-                  top: labelTop,
-                  height: LABEL_ROW_HEIGHT,
-                  width:
-                    (isActive ? item.fullWidth : item.shortWidth) +
-                    (isActive ? HOVER_HPAD * 2 : 0),
-                }}
-              >
-                <span
-                  className="absolute top-0 text-[10px] leading-[14px] tracking-widest uppercase whitespace-nowrap transition-opacity duration-150 ease-out pointer-events-none text-black/80 dark:text-white/80"
-                  style={{ left: isActive ? HOVER_HPAD : 0, opacity: isActive ? 0 : 1 }}
-                >
-                  {item.short}
-                </span>
-                <span
-                  className="absolute top-0 text-[10px] leading-[14px] tracking-widest uppercase whitespace-nowrap transition-opacity duration-150 ease-out pointer-events-none text-black dark:text-white"
-                  style={{ left: HOVER_HPAD, opacity: isActive ? 1 : 0 }}
-                >
-                  {item.full}
-                </span>
-              </div>
-            </div>
-          )
-        })}
+      {renderTodayMarker()}
+      {renderLabels()}
     </div>
   )
 }
