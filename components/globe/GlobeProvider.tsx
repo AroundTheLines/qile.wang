@@ -3,7 +3,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { GlobeContext, type ScreenPosition, type ViewportTier } from './GlobeContext'
-import type { GlobePin, GlobeScreenCircle } from '@/lib/globe'
+import type { GlobeScreenCircle } from '@/lib/globe'
+import type { PinWithVisits, TripSummary } from '@/lib/types'
 
 function useViewportTier(): ViewportTier {
   const [tier, setTier] = useState<ViewportTier>('desktop')
@@ -40,9 +41,14 @@ const PANEL_SETTLE_MS = 450
 
 export default function GlobeProvider({
   pins,
+  trips,
+  fetchError,
   children,
 }: {
-  pins: GlobePin[]
+  pins: PinWithVisits[]
+  // TODO(C1): route trips + fetchError into provider state / timeline hooks.
+  trips: TripSummary[]
+  fetchError: boolean
   children: React.ReactNode
 }) {
   const [selectedPin, setSelectedPin] = useState<string | null>(null)
@@ -176,6 +182,8 @@ export default function GlobeProvider({
     <GlobeContext.Provider
       value={{
         pins,
+        trips,
+        fetchError,
         selectedPin,
         selectPin,
         hoveredPin,

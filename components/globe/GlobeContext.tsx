@@ -1,7 +1,8 @@
 'use client'
 
 import { createContext, useContext, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
-import type { GlobePin, GlobeScreenCircle } from '@/lib/globe'
+import type { GlobeScreenCircle } from '@/lib/globe'
+import type { PinWithVisits, TripSummary } from '@/lib/types'
 
 export interface ScreenPosition {
   x: number
@@ -16,7 +17,12 @@ export interface ScreenPosition {
 export type ViewportTier = 'desktop' | 'tablet' | 'mobile'
 
 export interface GlobeContextValue {
-  pins: GlobePin[]
+  pins: PinWithVisits[]
+  /** TODO(C1): consumed by timeline + provider state once the trip/visit
+      state is wired. A3 merely threads it through. */
+  trips: TripSummary[]
+  /** TODO(C1): surfaced inline in the timeline via §12.7. */
+  fetchError: boolean
   selectedPin: string | null
   selectPin: (group: string | null) => void
   hoveredPin: string | null
