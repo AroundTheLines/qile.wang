@@ -64,7 +64,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
   const viewportH = viewportSize.h
 
   const panelTop = clampPanelTop(selectedPinScreenY, viewportH || 800)
-  const selectedPinData = pins.find((p) => p.group === selectedPin)
+  const selectedPinData = pins.find((p) => p.location._id === selectedPin)
 
   if (isMobile) {
     // On mobile, article content opens *inside* the sidecar panel — no separate
@@ -76,7 +76,9 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
       selectedPinData ||
       (activeArticleSlug
         ? pins.find((p) =>
-            p.items.some((i) => i.slug.current === activeArticleSlug),
+            p.visits.some((v) =>
+              v.items.some((i) => i.slug.current === activeArticleSlug),
+            ),
           )
         : undefined)
     const showPanel = Boolean(resolvedPin) && (!!selectedPin || isArticle)
@@ -165,10 +167,10 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
                     <button
                       onClick={backToList}
                       className="flex items-center gap-2 text-xs tracking-widest uppercase font-light text-black dark:text-white hover:opacity-50 transition-opacity cursor-pointer"
-                      aria-label={`Back to ${resolvedPin.group} list`}
+                      aria-label={`Back to ${resolvedPin.location.name} list`}
                     >
                       <span aria-hidden>&larr;</span>
-                      {resolvedPin.group}
+                      {resolvedPin.location.name}
                     </button>
                     <button
                       onClick={closeAll}

@@ -158,6 +158,15 @@ export default function GlobeProvider({
     }
   }, [isPaused])
 
+  // --- Clear the pin-subregion highlight when the pin panel closes.
+  // C2 keeps the highlight set on hover-out if the pin is selected so
+  // the timeline bands stay lit while the panel is open; this effect is
+  // the other half of that contract — once selectedPin goes null (panel
+  // closed, trip locked, etc.) the bands should disappear.
+  useEffect(() => {
+    if (selectedPin === null) setPinSubregionHighlight(null)
+  }, [selectedPin, setPinSubregionHighlight])
+
   // --- Panel variant derivation ---
   const panelVariant: 'pin' | 'trip' | null =
     lockedTrip && !selectedPin ? 'trip' : selectedPin ? 'pin' : null

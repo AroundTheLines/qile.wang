@@ -91,7 +91,7 @@ export default function GlobePositionBridge() {
       pinNormal.copy(pinWorld).normalize()
       const behind = cameraToPin.dot(pinNormal) > 0
 
-      positions[pin.group] = {
+      positions[pin.location._id] = {
         x: (ndc.x * 0.5 + 0.5) * size.width,
         y: (-ndc.y * 0.5 + 0.5) * size.height,
         visible: ndc.z < 1,

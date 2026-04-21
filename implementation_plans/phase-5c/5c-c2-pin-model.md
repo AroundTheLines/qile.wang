@@ -279,6 +279,61 @@ for (const pin of pins) {
 - `pinSubregionHighlight` — set here; consumed by B5's `TimelinePinBands`.
 - Pin click sets `selectedPin = location._id` — consumed by C3 panel rendering.
 
+## Shipped implementation notes
+
+These are things the agent actually decided during implementation that the plan text above does not cover. Downstream tickets should read this section before touching anything `pin*`-adjacent.
+
+### Tooltip visibility is driven per-frame, not per-render
+
+`GlobeTooltip` writes `opacity` and `translate` inline in its RAF loop, not via React state. Two gates combine each frame:
+
+- **`visibleRef`** — mirrors the post-delay "intent" (did the user dwell long enough to earn a tooltip?). Flipped by a 120 ms `setTimeout` in the `hoveredPin` effect.
+- **`onScreen`** — `pos.visible && !pos.behind`, computed each frame from `pinPositionRef`.
+
+Both must be true to paint. This is load-bearing for the rotate-while-hovering case: without the per-frame `onScreen` read the tooltip would stay visible anchored to a pin that has rotated to the back hemisphere. Do **not** refactor `GlobeTooltip` to use a single `shown` React state — you'll either need a per-frame `setState` (re-render storm) or accept the stale-anchor regression.
+
+### `pin-hover` pause-reason wiring is C2's problem temporarily
+
+C2 inlines `addPauseReason('pin-hover')` / `removePauseReason('pin-hover')` in `GlobePins.tsx`'s pointerOver/pointerOut/click handlers (including a belt-and-suspenders remove in click to cover the pointerOut-vs-click race). **B7 will rip these out** and replace with the effect-driven provider pattern (`useEffect(() => { if (hoveredPin && isDesktop) ... }, [hoveredPin, isDesktop, ...])`). The B7 spec now contains a `⚠️ Replace the C2 inline wiring` block with a grep-verification step. When B7 lands, expect this area of `GlobePins.tsx` to shrink substantially.
+
+### `pinSubregionHighlight` clear-on-close lives in the provider
+
+Per the C2 gotchas, the highlight must persist while the pin panel is open and clear when it closes. Two cooperating pieces:
+
+1. `GlobePins.tsx` pointerOut guard: `if (selectedPin !== locationId) setPinSubregionHighlight(prev => ...)`. Keeps the highlight lit during hover-out if the pin is selected.
+2. `GlobeProvider.tsx` effect: `useEffect(() => { if (selectedPin === null) setPinSubregionHighlight(null) }, [selectedPin, setPinSubregionHighlight])`. Fires when any close path clears `selectedPin` — the panel's X button (C3), trip-lock swap (C1's `setLockedTrip` wrapper), escape (D3), etc.
+
+C3 should **not** clear `pinSubregionHighlight` itself; calling `selectPin(null)` is sufficient.
+
+### `GlobeDetailPanel.tsx` is a placeholder until C3
+
+C1 left `GlobeDetailPanel` referencing the removed `GlobePin` type with `pin.group` / `pin.items`. C2 kept it compiling by:
+
+- Accepting `PinWithVisits` instead of `GlobePin`.
+- Flattening `pin.visits.flatMap(v => v.items.map(...))` into the existing flat-list item loop, with `locationLabel = pin.location.name` and `year = visit.startDate.slice(0, 4)`.
+- Showing `pin.location.name` and an item count in the header.
+
+This is **not** the per-visit section layout the spec calls for (§7.1). C3 owns the real rebuild. Replace this file wholesale in C3; no need to preserve the flattening — it's throwaway glue.
+
+### `lib/sanity.ts` now exports two clients
+
+C2 discovered that Phase-5C doc types (`locationDoc`, `trip`, `visit`) deny anonymous reads even when the dataset's `aclMode` is `public` — without a token, `client.fetch(allVisitsQuery)` from a server component silently returns `[]`. To fix, `lib/sanity.ts` now has:
+
+- **`client`** — token-less, safe for client bundles. Used by `urlFor` and any browser-reachable import.
+- **`readClient`** — server-only, forwards `SANITY_API_TOKEN`. Used by server-rendered routes that need real data.
+
+**INVARIANT**: never import `readClient` from a `'use client'` file. `SANITY_API_TOKEN` has no `NEXT_PUBLIC_` prefix so Next.js won't bundle it, but importing `readClient` into browser code still pulls in the client construction graph unnecessarily and risks future token leaks if someone accidentally adds a `NEXT_PUBLIC_` env.
+
+Currently only `app/globe/layout.tsx` uses `readClient`. Other routes (`app/[slug]`, `app/feed`, `app/wardrobe/**`) still use the public `client`. They work today because `content` docs have different permissions — but **future tickets that tighten `content`'s permission rules will need to migrate those imports too**. When you do, grep for `import { client } from '@/lib/sanity'` in any server component (`app/**/page.tsx`, `app/**/layout.tsx`) and swap to `readClient`.
+
+### `/globe/<slug>` no longer redirects non-globe items
+
+The old `app/globe/[slug]/page.tsx` redirected items that didn't have `globe_group` to `/<slug>`. That field is gone. **C2 removed the guard entirely** — any item URL under `/globe/` now renders with the sliver. This was an intentional product decision (see C2 PR review). If a future ticket wants the guard back, it needs a visit-count lookup: `count(*[_type=="visit" && references($itemId)])` in the same fetch, redirect on zero.
+
+### `GlobePins.tsx` no longer exposes a `group` prop
+
+The `Pin` component's identity prop is named `locationId` (was `group`). Any future ticket that adds more interactions to pins should key off `locationId` and match it against `selectedPin` / `hoveredPin` — both of which are now `locationDoc._id` strings throughout the codebase.
+
 ## How to verify
 
 1. `/globe` — pins render at seeded locations.

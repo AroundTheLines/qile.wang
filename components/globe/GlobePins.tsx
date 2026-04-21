@@ -38,15 +38,25 @@ const FADE_START = -0.1
 const FADE_END = 0.2
 
 function Pin({
-  group,
+  locationId,
   lat,
   lng,
 }: {
-  group: string
+  locationId: string
   lat: number
   lng: number
 }) {
-  const { selectedPin, selectPin, hoveredPin, setHoveredPin, showHover } = useGlobe()
+  const {
+    selectedPin,
+    selectPin,
+    hoveredPin,
+    setHoveredPin,
+    setPinSubregionHighlight,
+    showHover,
+    isDesktop,
+    addPauseReason,
+    removePauseReason,
+  } = useGlobe()
   const meshRef = useRef<THREE.Mesh>(null)
   const hitRef = useRef<THREE.Mesh>(null)
   const ringRef = useRef<THREE.Mesh>(null)
@@ -62,8 +72,8 @@ function Pin({
   const scaleT = useRef(1)
 
   const pos = sphericalToCartesian(lat, lng, GLOBE_RADIUS)
-  const isSelected = selectedPin === group
-  const isHovered = hoveredPin === group
+  const isSelected = selectedPin === locationId
+  const isHovered = hoveredPin === locationId
 
   // Orient the pin stem so its +Y axis points outward from the globe center.
   const quat = useMemo(() => {
@@ -136,10 +146,23 @@ function Pin({
       // you aim at London in a tight cluster.
       e.stopPropagation()
       if (!showHover) return
-      if (selectedPin === group) return // don't show tooltip when panel is open for this pin
-      setHoveredPin(group)
+      if (selectedPin === locationId) return // don't show tooltip when panel is open for this pin
+      setHoveredPin(locationId)
+      // §7.5 / §9.2: emit sub-region highlight signal for the timeline
+      // bands (B5 consumes).
+      setPinSubregionHighlight(locationId)
+      // §5.5: desktop pin hover pauses the playback sweep.
+      if (isDesktop) addPauseReason('pin-hover')
     },
-    [showHover, selectedPin, group, setHoveredPin],
+    [
+      showHover,
+      selectedPin,
+      locationId,
+      setHoveredPin,
+      setPinSubregionHighlight,
+      isDesktop,
+      addPauseReason,
+    ],
   )
 
   const handlePointerOut = useCallback(
@@ -149,18 +172,44 @@ function Pin({
       // Only clear if *this* pin is the currently hovered one. When moving
       // between close pins, the new pin's pointer-over can fire before the
       // old pin's pointer-out — guarding prevents wiping out the new hover.
-      setHoveredPin((prev) => (prev === group ? null : prev))
+      setHoveredPin((prev) => (prev === locationId ? null : prev))
+      // Keep sub-region bands lit while the pin panel is open for this
+      // pin (spec §7.5). The provider clears the highlight when
+      // selectedPin clears.
+      if (selectedPin !== locationId) {
+        setPinSubregionHighlight((prev) => (prev === locationId ? null : prev))
+      }
+      if (isDesktop) removePauseReason('pin-hover')
     },
-    [showHover, group, setHoveredPin],
+    [
+      showHover,
+      locationId,
+      selectedPin,
+      setHoveredPin,
+      setPinSubregionHighlight,
+      isDesktop,
+      removePauseReason,
+    ],
   )
 
   const handleClick = useCallback(
     (e: ThreeEvent<MouseEvent>) => {
       e.stopPropagation()
-      selectPin(group)
+      selectPin(locationId)
       setHoveredPin(null)
+      // §7.5: click keeps sub-region bands lit while the panel is open.
+      setPinSubregionHighlight(locationId)
+      // Clear any lingering hover-pause; pointerOut may race with click.
+      if (isDesktop) removePauseReason('pin-hover')
     },
-    [group, selectPin, setHoveredPin],
+    [
+      locationId,
+      selectPin,
+      setHoveredPin,
+      setPinSubregionHighlight,
+      isDesktop,
+      removePauseReason,
+    ],
   )
 
   return (
@@ -225,8 +274,8 @@ export default function GlobePins() {
     <>
       {pins.map((pin) => (
         <Pin
-          key={pin.group}
-          group={pin.group}
+          key={pin.location._id}
+          locationId={pin.location._id}
           lat={pin.coordinates.lat}
           lng={pin.coordinates.lng}
         />

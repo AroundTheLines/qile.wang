@@ -283,6 +283,8 @@ Re-read §5.5 pause triggers: "Clicking-and-dragging the globe to rotate it manu
 
 #### Pin hover (desktop only)
 
+> **⚠️ Replace the C2 inline wiring.** C2 shipped with `addPauseReason('pin-hover')` / `removePauseReason('pin-hover')` inlined into `GlobePins.tsx`'s pointerOver/pointerOut/click handlers (including a belt-and-suspenders `removePauseReason` in the click handler to cover the pointerOut-vs-click race). That was the pragmatic choice while B7 hadn't landed — the feature stays functional in the interim. **B7 must delete those calls from `GlobePins.tsx`** and move the wiring to the effect-driven provider pattern below. Grep `GlobePins.tsx` for `pin-hover` before landing B7; there should be zero matches after.
+
 C2 already handles pin hover state. Add pause wire:
 
 ```tsx

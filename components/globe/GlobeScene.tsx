@@ -86,8 +86,8 @@ export default function GlobeScene() {
   }, [pins, camera])
 
   const startArticleZoom = useCallback(
-    (pinGroup: string) => {
-      const pin = pins.find((p) => p.group === pinGroup)
+    (pinId: string) => {
+      const pin = pins.find((p) => p.location._id === pinId)
       if (!pin) return
 
       preArticleCameraPos.current = camera.position.clone()
@@ -171,7 +171,7 @@ export default function GlobeScene() {
     if (!selectedPin || prev === selectedPin) return
     if (!entranceDone.current) return
 
-    const pin = pins.find((p) => p.group === selectedPin)
+    const pin = pins.find((p) => p.location._id === selectedPin)
     if (!pin) return
 
     const [x, y, z] = sphericalToCartesian(
