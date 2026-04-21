@@ -2,6 +2,8 @@
 
 **Epic**: B. Timeline & Playback · **Owner**: Dev B · **Can be run by agent?**: Yes · **Estimated size**: S–M
 
+> **Status**: ✅ Shipped 2026-04-20 — see [Implementation log](#implementation-log) at the bottom for what was built, deviations from this spec, and notes for downstream B-tickets.
+
 ## Dependencies
 
 ### Hard
@@ -362,3 +364,58 @@ describe('buildCompressedMap', () => {
    console.log('ticks:', m.tickMarks.length, 'marks')
    ```
    Expected: trip widths are small but visible; gap is compressed (not 99%); ticks include years 2019–2024.
+
+---
+
+## Implementation log
+
+Shipped in PR [#26](https://github.com/AroundTheLines/qile.wang/pull/26) on 2026-04-20.
+
+### Files actually shipped
+
+- `lib/timelineCompression.ts` — exports `buildCompressedMap`, `CompressedMap`, `TripRange`, `TickMark`, `BuildOptions`. ~250 lines.
+- `lib/timelineCompression.test.ts` — 12 vitest cases (the 8 spec-required cases plus monotonicity, overlap merging, endDate-clamp, leap-day).
+- `package.json` — added `vitest` devDep + `"test": "vitest run"` script (resolved ambiguity #1 with the recommended option).
+
+### Deviation from the algorithm in this spec — read before B5
+
+**Spec step 6 (literal):**
+```
+empty: max(realDays, minGapFraction * totalRealDays)
+```
+**As shipped:**
+```
+empty: max(realDays / activeBoost, minGapFraction * totalRealDays)
+```
+
+The literal formula could not satisfy this spec's own "two trips far apart" test (`gap/trip ratio < 50` at default `activeBoost=3`) — the math gives ~101. Satisfying the test with the literal formula would require `activeBoost ≥ 7`, which contradicts this spec's own gotcha ("don't go above 5 as default").
+
+The shipped formula divides empty time by `activeBoost` symmetrically, which matches the spec's stated *intent* ("Active regions take visibly more horizontal share than empty regions of similar real-time length") and passes the test (ratio ≈ 34). `minGapFraction` still acts as the floor for tiny gaps.
+
+**For B5 / future tuning:** if the rendered timeline still feels gap-heavy or trip-light, either bump `activeBoost` (default 3, soft cap 5) or revisit this empty-weight formula. Don't bump `activeBoost` past ~5 — tiny trips become invisible at full-history zoom.
+
+### Resolved ambiguities
+
+1. **Test harness**: chose option (a) — installed `vitest` and added `"test": "vitest run"` to scripts. First test harness in the repo. A2 / future tickets can now write tests cheaply.
+2. **`activeBoost` default**: shipped at 3 as recommended. Tunable via `BuildOptions.activeBoost`.
+3. **Tick density**: shipped static "month ticks if totalRealDays < 365×2" logic. B5 is free to recompute ticks based on zoom window if needed.
+
+### Notes for downstream tickets
+
+- **B2**: import `buildCompressedMap` and use `map.dateToX(trip.startDate)` / `map.dateToX(trip.endDate)` to position trip bands. `tickMarks` is ready to render — each tick has `{ date, x, label, kind }`.
+- **B3**: `dateToX` / `xToDate` are stable; safe to call inside zoom transforms. Both clamp out-of-range inputs silently to [0, 1] / [start, end] — they will not throw.
+- **B5**: see deviation note above. If you regenerate ticks per-zoom, the collision threshold is exposed as `TICK_COLLISION_X = 0.02` constant in the source (not exported; promote if needed).
+- **B6**: `map.dateToX(now)` is exactly `1.0` (within 1e-9). Safe to use as the playhead's right edge.
+
+### Issues fixed during review
+
+- Leap-day bug in `subtractOneYear` — original `${y-1}${iso.slice(4)}` produced phantom `2023-02-29` from `2024-02-29`. Now routes through `addDays(iso, -365)`.
+- Local-vs-UTC mismatch in `todayIso` — switched to `getUTC*` so it matches the UTC-anchored date math elsewhere.
+
+### How to run the tests
+
+```
+npm test
+# or for watch mode:
+npx vitest
+```
