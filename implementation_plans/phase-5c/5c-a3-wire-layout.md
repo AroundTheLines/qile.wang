@@ -2,6 +2,8 @@
 
 **Epic**: A. Foundation · **Owner**: Dev A · **Can be run by agent?**: Yes · **Estimated size**: S
 
+**Status**: ✅ Shipped (PR #31). See [Implementation notes (as shipped)](#implementation-notes-as-shipped) for deviations from the original sketch that downstream tickets should inherit.
+
 ## Dependencies
 
 ### Hard
@@ -45,6 +47,111 @@ Swap `app/globe/layout.tsx` from the old query/groupPins flow to the new trips-a
 ## Files to delete
 
 - None.
+
+---
+
+## Implementation notes (as shipped)
+
+The ticket shipped in PR #31 with several intentional deviations from the original sketch below. Downstream tickets (B4, C1, C3, C4, E1) should treat these as the current baseline.
+
+### Timeline is the real B2 component, not a stub
+
+B2 landed before A3 (PR #29). The original sketch here mandated overwriting `components/globe/Timeline.tsx` with a 16px gray stub; that non-goal is now obsolete. The layout imports the real Timeline and passes real trip data. **Do not reintroduce the stub.**
+
+### Real trip-data wiring is done in A3 (not B4)
+
+The original scope deferred "real trip data wiring" to B4. Since B2's Timeline already accepted a `trips` prop, A3 performs the basic mapping:
+
+```tsx
+const timelineTrips = validTrips.map((t) => ({
+  id: t.slug.current,       // ← load-bearing — see below
+  title: t.title,
+  startDate: t.startDate,
+  endDate: t.endDate,
+}))
+```
+
+B4 still owns hover/click provider wiring, URL state (`?trip=<slug>`), zoom/pan integration, and the §12.7 inline fetch-error UI. A3 only does the prop-level plumbing.
+
+**`id: slug.current` is load-bearing.** Timeline uses `id` as React key and segment identity. Once B4 maps segment click → `router.push('/globe?trip=' + id)`, the URL slug _is_ the Timeline id — don't change this mapping without coordinating with D2 (URL state).
+
+### Timeline is not yet visually above the globe
+
+`GlobeViewport` still renders its root with `fixed inset-0 w-screen h-screen` ([components/globe/GlobeViewport.tsx:117,218](../../components/globe/GlobeViewport.tsx)). The layout structure is:
+
+```tsx
+<GlobeProvider>
+  <GlobeNavbar />
+  <Timeline />       {/* normal flow — painted first */}
+  <GlobeViewport/>   {/* fixed inset-0 — paints over Timeline */}
+</GlobeProvider>
+```
+
+So the DOM order satisfies the acceptance criterion ("Timeline renders above GlobeViewport"), but the fixed viewport overpaints it visually. This was accepted as in-scope-for-C1/E1 rather than extending A3 into a layout-shell refactor:
+
+- **C1** (provider refactor) should drop `fixed inset-0` off the viewport root and introduce the desktop layout shell (flex column: navbar → timeline → globe body).
+- **E1** (mobile layout) follows with the mobile reshape (globe → timeline → content per spec §3).
+
+Until one of those lands, the only way to see Timeline with real data is `/timeline-dev` (B2's mock route). `/globe` will also render blank on a fresh dataset — see Environment setup below.
+
+### Minimal GlobeProvider adapter (not a full refactor)
+
+Per the original sketch's adapter pattern, `GlobeProvider` and `GlobeContext` were changed minimally:
+
+- `pins: PinWithVisits[]` (was `GlobePin[]`)
+- Added props/context fields: `trips: TripSummary[]`, `fetchError: boolean`
+- Both are threaded into the context value but **unused by provider state**.
+
+Internal references to the old `pin.group` / `pin.items` inside `GlobeProvider.tsx` (the deep-link resolver effect at ~line 125) remain and still fail typecheck. C1 owns the fix. Do not attempt a partial rewrite — wait for C1's full provider state model (hoveredTrip, lockedTrip, playback reasons, etc.) so the deep-link effect and the trip state land consistently.
+
+### Fetch-failure semantics
+
+`Promise.allSettled` means partial failure is survivable:
+
+| `tripsResult` | `visitsResult` | `trips` | `pins` | `fetchError` |
+|---|---|---|---|---|
+| fulfilled | fulfilled | populated | populated | `false` |
+| fulfilled | rejected | populated | `[]` | `true` |
+| rejected | fulfilled | `[]` | populated | `true` |
+| rejected | rejected | `[]` | `[]` | `true` |
+
+B4 should render §12.7's inline error when `fetchError` is true, regardless of whether the populated-but-mismatched cases (rows 2 and 3) actually happen in practice. Treat them as "data may be internally inconsistent — degrade gracefully."
+
+The **empty-but-no-error** case (both fulfilled, both return `[]`) is §12.1's "Nothing yet" state, **not** a fetch error. Do not conflate.
+
+### Zero-visit trip filter lives in the layout, not the query
+
+`TripSummary.startDate` / `.endDate` are declared as `string` (non-nullable) in [`lib/types.ts`](../../lib/types.ts), but the `allTripsQuery` GROQ aggregate returns `null` when a trip has no visits. The filter is applied client-side:
+
+```tsx
+const validTrips = trips.filter((t) => t.startDate && t.endDate)
+```
+
+TypeScript believes the guard is redundant (because of the type declaration), but at runtime the values can be null. **This is a known type-soundness gap owned by A1/A2** — don't patch it locally in A3's file; let A1/A2 tighten the type (to `string | null` or a separate `TripSummaryRaw` + narrowed `TripSummary`). The reason the filter is in the layout and not the query: other views (e.g. an admin "empty trips" report) may legitimately want zero-visit trips.
+
+### Environment setup for worktree-based development
+
+`.env.local` lives in the main repo root, not inside worktrees. A fresh worktree can't resolve `NEXT_PUBLIC_SANITY_PROJECT_ID` and throws `Configuration must contain 'projectId'` at first request. Symlink from worktree root:
+
+```
+ln -s <repo-root>/.env.local .env.local
+```
+
+Also note the dev dataset is empty by default — [`scripts/seed-phase5c.mts`](../../scripts/seed-phase5c.mts) must be run to populate trips/visits/locations/content before `/globe` shows anything.
+
+### Handoff checklist for C1
+
+When C1 lands, it should:
+
+1. Fix the `pin.group` / `pin.items` deep-link effect inside `GlobeProvider.tsx` (original lines ~121–135). The replacement uses `PinWithVisits.location._id` as the pin key and `visits[].items[]` for the article-slug lookup.
+2. Replace fields that downstream files still read as `pin.group` → use `pin.location._id` (or an equivalent derived key — C1 decides).
+3. Consume `trips` and `fetchError` from context to drive timeline hover/lock state and the §12.7 inline error banner.
+4. Drop `fixed inset-0` off `GlobeViewport` root and introduce the desktop layout shell so the Timeline is visually above the globe.
+5. Remove the `TODO(C1)` comments added in this ticket once the above is in place.
+
+### Handoff checklist for E1
+
+1. On mobile, reorder to `<GlobeViewport> <Timeline>` so Timeline sits below the globe (spec §3). The `TODO(E1)` comment in [app/globe/layout.tsx](../../app/globe/layout.tsx) marks the spot.
 
 ---
 
