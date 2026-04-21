@@ -165,7 +165,7 @@ export default function GlobeProvider({
   // closed, trip locked, etc.) the bands should disappear.
   useEffect(() => {
     if (selectedPin === null) setPinSubregionHighlight(null)
-  }, [selectedPin])
+  }, [selectedPin, setPinSubregionHighlight])
 
   // --- Panel variant derivation ---
   const panelVariant: 'pin' | 'trip' | null =

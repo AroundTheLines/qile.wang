@@ -12,7 +12,14 @@ const TOOLTIP_SHOW_DELAY_MS = 120
 export default function GlobeTooltip() {
   const { hoveredPin, pins, pinPositionRef, showHover } = useGlobe()
   const tooltipRef = useRef<HTMLDivElement>(null)
+  // `visible` is the post-delay intent: did the user dwell long enough
+  // to earn a tooltip? `visibleRef` mirrors it so the RAF loop (below)
+  // can read the latest value without re-subscribing on every flip.
   const [visible, setVisible] = useState(false)
+  const visibleRef = useRef(false)
+  useEffect(() => {
+    visibleRef.current = visible
+  }, [visible])
 
   const pinData = hoveredPin ? pins.find((p) => p.location._id === hoveredPin) : null
 
@@ -28,15 +35,30 @@ export default function GlobeTooltip() {
     return () => clearTimeout(t)
   }, [hoveredPin, showHover])
 
-  // RAF loop to track pin position
+  // Per-frame RAF loop — updates both the tooltip's pixel position AND
+  // its visibility based on whether the pin is still on the near
+  // hemisphere. Visibility lives here (not in a React-render check) so
+  // that rotating the globe with the tooltip open hides it the moment
+  // the pin crosses the silhouette, matching the pin's own back-face
+  // fade rather than leaving a "floating label" attached to a dot that
+  // isn't there.
   useEffect(() => {
     if (!hoveredPin || !showHover) return
 
     let raf: number
     const update = () => {
       const pos = pinPositionRef.current[hoveredPin]
-      if (pos && tooltipRef.current) {
-        tooltipRef.current.style.transform = `translate(${pos.x + 12}px, ${pos.y - 24}px)`
+      const el = tooltipRef.current
+      if (pos && el) {
+        el.style.transform = `translate(${pos.x + 12}px, ${pos.y - 24}px)`
+        const onScreen = pos.visible && !pos.behind
+        // `visibleRef` gates the initial show-delay; `onScreen` gates the
+        // rotation-based hide. Both must be true to paint the tooltip.
+        // Writing opacity/translate inline each frame avoids a React
+        // re-render on every silhouette crossing.
+        const show = visibleRef.current && onScreen
+        el.style.opacity = show ? '1' : '0'
+        el.style.translate = show ? '0 0' : '0 4px'
       }
       raf = requestAnimationFrame(update)
     }
@@ -45,10 +67,6 @@ export default function GlobeTooltip() {
   }, [hoveredPin, pinPositionRef, showHover])
 
   if (!hoveredPin || !pinData || !showHover) return null
-
-  const pos = pinPositionRef.current[hoveredPin]
-  const onScreen = pos ? pos.visible && !pos.behind : false
-  const shown = visible && onScreen
 
   const visitCount = pinData.visits.length
   const label =
@@ -61,10 +79,10 @@ export default function GlobeTooltip() {
       ref={tooltipRef}
       className="absolute top-0 left-0 pointer-events-none z-30"
       style={{
-        opacity: shown ? 1 : 0,
-        // Small upward travel reinforces the "rising into view" feel
-        // without drifting far from the pin anchor.
-        translate: shown ? '0 0' : '0 4px',
+        // Start hidden; the RAF loop flips to shown once the delay
+        // elapses AND the pin is on the near hemisphere.
+        opacity: 0,
+        translate: '0 4px',
         transition: 'opacity 150ms ease-out, translate 150ms ease-out',
       }}
     >
