@@ -339,13 +339,27 @@ Spec had `setZoomWindow` called directly from wheel/pointermove. At ~120Hz track
 
 **For B6/B7 (playhead)**: the playback driver should likewise write zoom updates through the same rAF queue if it ever animates zoom (e.g., a "fit-to-trip" transition).
 
-### 5. Pure `clampZoom` lives in `lib/timelineZoom.ts`
+### 5. All gesture math lives in `lib/timelineZoom.ts` as pure helpers
 
-Extracted so it's testable without pulling in React/tsx. Covered by [`lib/timelineZoom.test.ts`](../../lib/timelineZoom.test.ts). B4/B5 that programmatically set the zoom window (e.g., "zoom to this trip") should reuse `clampZoom` rather than inlining the shift-not-truncate logic.
+Exports: `clampZoom`, `wheelZoom`, `wheelPan`, `dragPan`, `pinchZoom`, plus the `ZoomWindow` type. Covered by [`lib/timelineZoom.test.ts`](../../lib/timelineZoom.test.ts) (22 cases: boundaries, over/undershoot, min/max span floors, cursor-anchor invariants, zero-width guard, divide-by-zero pinch).
+
+`Timeline.tsx` is the thin orchestration layer — it manages pointer state, window listeners, and the rAF scheduler, then delegates every window calculation to one of these helpers. B4/B5 (e.g., "zoom to this trip", "recenter on playback cursor") should compose these rather than reimplementing the shift-not-truncate clamp or cursor-anchor math.
 
 ### 6. Pinch uses the **two oldest pointers only**
 
-A 3rd finger landing mid-pinch is ignored until one of the original two releases. Map-like UX.
+A 3rd finger landing mid-pinch is ignored until one of the original two releases. Map-like UX. Implementation reads the two entries directly from `pointers.values()` via iterator `next()` — no `Array.from` allocation per pointermove frame.
+
+### 7. Trackpad horizontal swipe pans, not zooms
+
+Wheel events with `|deltaX| > |deltaY| && !ctrlKey` route to `wheelPan` instead of `wheelZoom`. This covers the Mac trackpad two-finger horizontal swipe and `shift+wheel` on some browsers. Pinch-zoom on trackpads arrives as `ctrlKey+deltaY` (browser synthesizes this) and stays on the zoom path.
+
+**For B4 (hover/click)**: a trackpad swipe never touches the pointer gesture path, so it doesn't interact with the drag-threshold logic. Segment clicks are unaffected.
+
+### 8. rAF scheduler is **hidden-tab aware**
+
+`scheduleZoom` checks `document.hidden` and commits synchronously when true — `requestAnimationFrame` is throttled (or paused) in hidden tabs, so queued updates would otherwise flush in a burst on re-focus. Live gestures can't happen in a hidden tab, but a future playback driver (B6) or programmatic zoom call could.
+
+**For B6/B7**: if you drive zoom from a `setInterval` or rAF loop that should keep advancing in background tabs (e.g., syncing with a shared timeline service), account for the same hidden-tab concern in your own loop — `scheduleZoom` will commit synchronously but your loop may not tick at all.
 
 ---
 

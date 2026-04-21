@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect, useMemo, useLayoutEffect, useCallback } from 'react'
 import { buildCompressedMap, type TripRange, type CompressedMap } from '@/lib/timelineCompression'
-import { clampZoom, type ZoomWindow } from '@/lib/timelineZoom'
+import { dragPan, pinchZoom, wheelPan, wheelZoom, type ZoomWindow } from '@/lib/timelineZoom'
 import TimelineSegment from './TimelineSegment'
 import TimelineAxis from './TimelineAxis'
 
@@ -132,7 +132,21 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
   // Coalesce high-frequency gesture updates (pointermove, wheel) onto a single
   // rAF. Without this, each event triggers a full re-projection of every label
   // and segment. Fine at 9 trips, matters at realistic dataset sizes.
+  //
+  // When the tab is hidden, rAF is throttled or paused entirely — queued
+  // updates would flush in a batch on re-focus. Commit synchronously in that
+  // case so state stays consistent even if a gesture somehow runs in the
+  // background (e.g. programmatic driver from a future playback ticket).
   const scheduleZoom = useCallback((next: ZoomWindow) => {
+    if (typeof document !== 'undefined' && document.hidden) {
+      pendingZoomRef.current = null
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
+      }
+      setZoomWindow(next)
+      return
+    }
     pendingZoomRef.current = next
     if (rafRef.current !== null) return
     rafRef.current = requestAnimationFrame(() => {
@@ -160,25 +174,18 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
       const rect = el.getBoundingClientRect()
       if (rect.width === 0) return
       const cur = pendingZoomRef.current ?? zoomWindowRef.current
-      const span = cur.end - cur.start
 
       // Trackpad two-finger horizontal swipe → pan. Browsers report this as a
       // wheel event with deltaX dominant and no ctrlKey (pinch is ctrlKey+deltaY).
-      // A shift+wheel on a mouse also surfaces as deltaX on some browsers; same
-      // pan semantics are appropriate there.
+      // shift+wheel on a mouse also surfaces as deltaX on some browsers.
       if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && !e.ctrlKey) {
-        const dxFrac = e.deltaX / rect.width
-        scheduleZoom(clampZoom(cur.start + dxFrac * span, cur.end + dxFrac * span))
+        scheduleZoom(wheelPan(cur, e.deltaX, rect.width))
         return
       }
 
       const cursorXFrac = (e.clientX - rect.left) / rect.width
-      const cursorX = cur.start + cursorXFrac * span
-      const zoomFactor = Math.exp(e.deltaY * -WHEEL_ZOOM_MULTIPLIER)
-      const newSpan = Math.min(1, Math.max(minZoomSpanRef.current, span * zoomFactor))
-      if (newSpan === span) return
-      const newStart = cursorX - cursorXFrac * newSpan
-      scheduleZoom(clampZoom(newStart, newStart + newSpan))
+      const next = wheelZoom(cur, e.deltaY, cursorXFrac, minZoomSpanRef.current, WHEEL_ZOOM_MULTIPLIER)
+      if (next) scheduleZoom(next)
     }
     el.addEventListener('wheel', handler, { passive: false })
     return () => el.removeEventListener('wheel', handler)
@@ -202,28 +209,27 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
       const dx = e.clientX - gesture.startClientX
       if (!panMovedRef.current && Math.abs(dx) < DRAG_THRESHOLD_PX) return
       panMovedRef.current = true
-      const dxFrac = dx / rect.width
-      const span = gesture.startZoom.end - gesture.startZoom.start
-      scheduleZoom(
-        clampZoom(
-          gesture.startZoom.start - dxFrac * span,
-          gesture.startZoom.end - dxFrac * span,
-        ),
-      )
+      scheduleZoom(dragPan(gesture.startZoom, dx, rect.width))
     } else if (gesture.kind === 'pinch') {
       // Only the two oldest pointers drive the pinch. A 3rd finger is ignored
       // until one of the original two releases — matches typical map UX.
-      const pts = Array.from(pointersRef.current.values()).slice(0, 2)
-      if (pts.length < 2) return
-      const [a, b] = pts
-      const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1
-      const ratio = gesture.startDist / dist
-      const newSpan = Math.min(
-        1,
-        Math.max(minZoomSpanRef.current, gesture.startSpan * ratio),
+      // Iterate the Map directly instead of Array.from().slice to avoid two
+      // allocations per pointermove frame.
+      const iter = pointersRef.current.values()
+      const a = iter.next().value
+      const b = iter.next().value
+      if (!a || !b) return
+      const dist = Math.hypot(a.x - b.x, a.y - b.y)
+      scheduleZoom(
+        pinchZoom(
+          gesture.startCenter,
+          gesture.centerXFrac,
+          gesture.startSpan,
+          gesture.startDist,
+          dist,
+          minZoomSpanRef.current,
+        ),
       )
-      const newStart = gesture.startCenter - gesture.centerXFrac * newSpan
-      scheduleZoom(clampZoom(newStart, newStart + newSpan))
     }
   }
 
@@ -247,7 +253,7 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
       detachWindowListeners()
     } else if (pointersRef.current.size === 1) {
       // Dropped from pinch → pan: re-seed pan from the remaining pointer.
-      const [remaining] = Array.from(pointersRef.current.values())
+      const remaining = pointersRef.current.values().next().value!
       gestureRef.current = {
         kind: 'pan',
         startClientX: remaining.x,
@@ -276,15 +282,17 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
     // if a pending rAF update hasn't yet flushed to state.
     const startZoom = zoomWindowRef.current
 
-    const pts = Array.from(pointersRef.current.values())
-    if (pts.length === 1) {
+    const size = pointersRef.current.size
+    if (size === 1) {
       gestureRef.current = {
         kind: 'pan',
         startClientX: e.clientX,
         startZoom,
       }
-    } else if (pts.length === 2) {
-      const [a, b] = pts
+    } else if (size === 2) {
+      const iter = pointersRef.current.values()
+      const a = iter.next().value!
+      const b = iter.next().value!
       const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1
       const rect = rectRef.current
       const span = startZoom.end - startZoom.start
