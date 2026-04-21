@@ -500,7 +500,10 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
             data-no-skeleton
             className="absolute w-px bg-black/15 dark:bg-white/15 pointer-events-none"
             style={{
-              left: TRACK_INSET_X + anchorX,
+              // Shift the 1px line left by half a pixel so its visual center
+              // sits on anchorX — otherwise the line's center is at
+              // anchorX + 0.5, one half-pixel right of the dot's center.
+              left: TRACK_INSET_X + anchorX - 0.5,
               top: connectorTop,
               height: Math.max(0, connectorHeight),
             }}
