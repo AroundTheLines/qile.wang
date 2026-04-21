@@ -23,7 +23,7 @@ const TRACK_TO_LABELS = 10
 const FIRST_LABEL_Y = TRACK_Y + TRACK_TO_LABELS
 const BOTTOM_PADDING = 8
 
-function shortLabel(full: string): string {
+function shortLabelToken(full: string): string {
   const first = full.split(/\s+/)[0] ?? full
   return first.replace(/[^\p{L}\p{N}'–-]+$/u, '')
 }
@@ -33,16 +33,50 @@ interface LabelWidths {
   full: number
 }
 
+interface DisplayLabel {
+  short: string
+  full: string
+}
+
+/**
+ * When two trips share the same short form (e.g. "Berlin '22" + "Berlin '24"
+ * both shorten to "Berlin"), fall back to the full title for those — otherwise
+ * the compact row becomes ambiguous and hover is the only disambiguator.
+ */
+function computeDisplayLabels(
+  trips: (TripRange & { title?: string })[],
+): Record<string, DisplayLabel> {
+  const fullById: Record<string, string> = {}
+  const shortById: Record<string, string> = {}
+  const shortCounts = new Map<string, number>()
+  for (const t of trips) {
+    const full = t.title ?? t.id
+    const short = shortLabelToken(full)
+    fullById[t.id] = full
+    shortById[t.id] = short
+    shortCounts.set(short, (shortCounts.get(short) ?? 0) + 1)
+  }
+  const out: Record<string, DisplayLabel> = {}
+  for (const t of trips) {
+    const full = fullById[t.id]
+    const tok = shortById[t.id]
+    const ambiguous = (shortCounts.get(tok) ?? 0) > 1
+    out[t.id] = { full, short: ambiguous ? full : tok }
+  }
+  return out
+}
+
 export default function Timeline({ trips, className, now }: TimelineProps) {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   const [labelWidths, setLabelWidths] = useState<Record<string, LabelWidths>>({})
-  const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const [activeId, setActiveId] = useState<string | null>(null)
 
   useEffect(() => {
     const el = wrapperRef.current
     if (!el) return
+    setWidth(el.getBoundingClientRect().width)
     const obs = new ResizeObserver(([entry]) => {
       setWidth(entry.contentRect.width)
     })
@@ -53,6 +87,16 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
   const compressed = useMemo<CompressedMap>(
     () => buildCompressedMap(trips, { now }),
     [trips, now],
+  )
+
+  const displayLabels = useMemo(() => computeDisplayLabels(trips), [trips])
+
+  // Stable dep: re-measure only when the id→label content actually changes,
+  // not when the parent passes a fresh trips array reference.
+  const measureKey = useMemo(
+    () =>
+      trips.map((t) => `${t.id}\u0001${displayLabels[t.id].short}\u0001${displayLabels[t.id].full}`).join('\u0002'),
+    [trips, displayLabels],
   )
 
   useLayoutEffect(() => {
@@ -80,7 +124,7 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
       }
       return next
     })
-  }, [trips])
+  }, [measureKey])
 
   const innerWidth = Math.max(0, width - TRACK_INSET_X * 2)
 
@@ -103,8 +147,7 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
 
     const items = trips
       .map((trip) => {
-        const full = trip.title ?? trip.id
-        const short = shortLabel(full)
+        const { short, full } = displayLabels[trip.id]
         const anchor = compressed.dateToX(trip.startDate) * innerWidth
         const measured = labelWidths[trip.id]
         const shortWidth = measured?.short ?? short.length * 7
@@ -125,29 +168,13 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
       return { ...item, labelX, row }
     })
     return { items: placed, rowCount: rowEnds.length }
-  }, [trips, compressed, innerWidth, labelWidths])
+  }, [trips, compressed, innerWidth, labelWidths, displayLabels])
 
   const labelsHeight = packed.rowCount * LABEL_ROW_HEIGHT
   const totalHeight = FIRST_LABEL_Y + labelsHeight + BOTTOM_PADDING
 
-  if (trips.length === 0) {
-    return (
-      <div
-        ref={wrapperRef}
-        className={`w-full h-16 md:h-20 flex items-center justify-center text-xs tracking-widest uppercase text-black/30 dark:text-white/30 ${className ?? ''}`}
-      >
-        Nothing yet
-      </div>
-    )
-  }
-
-  return (
-    <div
-      ref={wrapperRef}
-      className={`w-full relative overflow-hidden bg-black/5 dark:bg-white/5 ${className ?? ''}`}
-      style={{ minHeight: Math.max(72, totalHeight) }}
-    >
-      {/* Hidden measurement layer for both short and full labels */}
+  const measurementLayer = useMemo(
+    () => (
       <div
         ref={measureRef}
         aria-hidden
@@ -155,8 +182,7 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
         style={{ left: -9999, top: -9999 }}
       >
         {trips.flatMap((trip) => {
-          const full = trip.title ?? trip.id
-          const short = shortLabel(full)
+          const { short, full } = displayLabels[trip.id]
           return [
             <span
               key={`${trip.id}-short`}
@@ -177,6 +203,32 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
           ]
         })}
       </div>
+    ),
+    [trips, displayLabels],
+  )
+
+  if (trips.length === 0) {
+    return (
+      <div
+        ref={wrapperRef}
+        className={`w-full h-16 md:h-20 flex items-center justify-center text-xs tracking-widest uppercase text-black/30 dark:text-white/30 ${className ?? ''}`}
+      >
+        Nothing yet
+      </div>
+    )
+  }
+
+  return (
+    <div
+      ref={wrapperRef}
+      className={`w-full relative overflow-hidden bg-black/5 dark:bg-white/5 ${className ?? ''}`}
+      style={{ minHeight: Math.max(72, totalHeight) }}
+      onClick={(e) => {
+        // Tapping the timeline background dismisses any sticky-active label.
+        if (e.target === e.currentTarget) setActiveId(null)
+      }}
+    >
+      {measurementLayer}
 
       {/* Year axis (above track) */}
       {width > 0 && (
@@ -234,14 +286,14 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
           const labelTop = FIRST_LABEL_Y + item.row * LABEL_ROW_HEIGHT
           const connectorTop = TRACK_Y + 6
           const connectorHeight = labelTop - connectorTop
-          const isHovered = hoveredId === item.trip.id
-          // When hovered, clamp so full label + padding stays inside innerWidth.
+          const isActive = activeId === item.trip.id
+          // When active, clamp so full label + padding stays inside innerWidth.
           const hoverLeft = Math.max(
             0,
             Math.min(item.labelX - HOVER_HPAD, innerWidth - item.fullWidth - HOVER_HPAD * 2),
           )
           const restingLeft = TRACK_INSET_X + item.labelX
-          const leftPx = isHovered ? TRACK_INSET_X + hoverLeft : restingLeft
+          const leftPx = isActive ? TRACK_INSET_X + hoverLeft : restingLeft
 
           return (
             <div key={item.trip.id}>
@@ -255,12 +307,16 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
                 }}
               />
               <div
-                onMouseEnter={() => setHoveredId(item.trip.id)}
+                onMouseEnter={() => setActiveId(item.trip.id)}
                 onMouseLeave={() =>
-                  setHoveredId((cur) => (cur === item.trip.id ? null : cur))
+                  setActiveId((cur) => (cur === item.trip.id ? null : cur))
                 }
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setActiveId((cur) => (cur === item.trip.id ? null : item.trip.id))
+                }}
                 className={`absolute cursor-default rounded-sm ring-1 transition-[left,width,background-color,box-shadow] duration-150 ease-out ${
-                  isHovered
+                  isActive
                     ? 'z-10 bg-white/95 dark:bg-black/95 shadow-sm ring-black/10 dark:ring-white/15'
                     : 'bg-transparent shadow-none ring-transparent'
                 }`}
@@ -269,19 +325,19 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
                   top: labelTop,
                   height: LABEL_ROW_HEIGHT,
                   width:
-                    (isHovered ? item.fullWidth : item.shortWidth) +
-                    (isHovered ? HOVER_HPAD * 2 : 0),
+                    (isActive ? item.fullWidth : item.shortWidth) +
+                    (isActive ? HOVER_HPAD * 2 : 0),
                 }}
               >
                 <span
                   className="absolute top-0 text-[10px] leading-[14px] tracking-widest uppercase whitespace-nowrap transition-opacity duration-150 ease-out pointer-events-none text-black/80 dark:text-white/80"
-                  style={{ left: isHovered ? HOVER_HPAD : 0, opacity: isHovered ? 0 : 1 }}
+                  style={{ left: isActive ? HOVER_HPAD : 0, opacity: isActive ? 0 : 1 }}
                 >
                   {item.short}
                 </span>
                 <span
                   className="absolute top-0 text-[10px] leading-[14px] tracking-widest uppercase whitespace-nowrap transition-opacity duration-150 ease-out pointer-events-none text-black dark:text-white"
-                  style={{ left: HOVER_HPAD, opacity: isHovered ? 1 : 0 }}
+                  style={{ left: HOVER_HPAD, opacity: isActive ? 1 : 0 }}
                 >
                   {item.full}
                 </span>
