@@ -5,14 +5,21 @@ import type { CompressedMap, TripRange } from '@/lib/timelineCompression'
 interface Props {
   trip: TripRange & { title?: string }
   compressed: CompressedMap
+  zoomWindow: { start: number; end: number }
   containerWidth: number
 }
 
-export default function TimelineSegment({ trip, compressed, containerWidth }: Props) {
+export default function TimelineSegment({ trip, compressed, zoomWindow, containerWidth }: Props) {
   const x0 = compressed.dateToX(trip.startDate)
   const x1 = compressed.dateToX(trip.endDate)
-  const leftPx = x0 * containerWidth
-  const widthPx = Math.max(2, (x1 - x0) * containerWidth)
+  const zoomSpan = zoomWindow.end - zoomWindow.start
+  const projX0 = (x0 - zoomWindow.start) / zoomSpan
+  const projX1 = (x1 - zoomWindow.start) / zoomSpan
+
+  if (projX1 < -0.05 || projX0 > 1.05) return null
+
+  const leftPx = projX0 * containerWidth
+  const widthPx = Math.max(2, (projX1 - projX0) * containerWidth)
   const isDot = widthPx < 12
 
   return (

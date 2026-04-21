@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, useEffect, useMemo, useLayoutEffect } from 'react'
+import { useRef, useState, useEffect, useMemo, useLayoutEffect, useCallback } from 'react'
 import { buildCompressedMap, type TripRange, type CompressedMap } from '@/lib/timelineCompression'
 import TimelineSegment from './TimelineSegment'
 import TimelineAxis from './TimelineAxis'
@@ -66,12 +66,34 @@ function computeDisplayLabels(
   return out
 }
 
+type ZoomWindow = { start: number; end: number }
+
+type GestureState =
+  | { kind: 'pan'; startClientX: number; startZoom: ZoomWindow }
+  | {
+      kind: 'pinch'
+      startDist: number
+      startSpan: number
+      startCenter: number
+      centerXFrac: number
+    }
+  | null
+
+const DRAG_THRESHOLD_PX = 5
+const WHEEL_ZOOM_MULTIPLIER = 0.001
+
 export default function Timeline({ trips, className, now }: TimelineProps) {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   const [labelWidths, setLabelWidths] = useState<Record<string, LabelWidths>>({})
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [zoomWindow, setZoomWindow] = useState<ZoomWindow>({ start: 0, end: 1 })
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map())
+  const gestureRef = useRef<GestureState>(null)
+  const panMovedRef = useRef(false)
+  const rectRef = useRef<DOMRect | null>(null)
+  const windowListenersRef = useRef(false)
 
   useEffect(() => {
     const el = wrapperRef.current
@@ -88,6 +110,176 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
     () => buildCompressedMap(trips, { now }),
     [trips, now],
   )
+
+  // Min zoom span = 20% of the compressed x. Using compressed x (not real days)
+  // keeps a handful of trips visible at max zoom in active-dense regions,
+  // where the `activeBoost` weighting makes real-day math misleading.
+  const MIN_ZOOM_SPAN_FLOOR = 0.2
+  const minZoomSpan = useMemo(() => {
+    const totalMs = Date.parse(compressed.end) - Date.parse(compressed.start)
+    const totalDays = Math.max(1, Math.round(totalMs / 86400000))
+    return Math.min(1, Math.max(MIN_ZOOM_SPAN_FLOOR, 30 / totalDays))
+  }, [compressed.start, compressed.end])
+
+  // Refs mirroring state/memo values so the stable window listeners can read
+  // the latest without being re-bound on every render.
+  const minZoomSpanRef = useRef(minZoomSpan)
+  minZoomSpanRef.current = minZoomSpan
+  const zoomWindowRef = useRef(zoomWindow)
+  zoomWindowRef.current = zoomWindow
+
+  const clampZoom = (start: number, end: number): ZoomWindow => {
+    let s = start
+    let e = end
+    if (s < 0) {
+      e -= s
+      s = 0
+    }
+    if (e > 1) {
+      s -= e - 1
+      e = 1
+      if (s < 0) s = 0
+    }
+    return { start: s, end: e }
+  }
+
+  // Native wheel listener — React's passive SyntheticEvent can't reliably
+  // preventDefault, which would let the page scroll while the timeline zooms.
+  useEffect(() => {
+    const el = wrapperRef.current
+    if (!el) return
+    const handler = (e: WheelEvent) => {
+      e.preventDefault()
+      const rect = el.getBoundingClientRect()
+      if (rect.width === 0) return
+      const cursorXFrac = (e.clientX - rect.left) / rect.width
+      setZoomWindow((cur) => {
+        const span = cur.end - cur.start
+        const cursorX = cur.start + cursorXFrac * span
+        const zoomFactor = Math.exp(e.deltaY * -WHEEL_ZOOM_MULTIPLIER)
+        const newSpan = Math.min(1, Math.max(minZoomSpan, span * zoomFactor))
+        if (newSpan === span) return cur
+        return clampZoom(cursorX - cursorXFrac * newSpan, cursorX - cursorXFrac * newSpan + newSpan)
+      })
+    }
+    el.addEventListener('wheel', handler, { passive: false })
+    return () => el.removeEventListener('wheel', handler)
+  }, [minZoomSpan])
+
+  // Pan/pinch use window-level move/up listeners so the drag keeps tracking
+  // when the cursor leaves the timeline. React's delegated onPointerMove is
+  // unreliable once a pointer leaves the element's hit area, even with
+  // setPointerCapture.
+  const moveImplRef = useRef<(e: PointerEvent) => void>(() => {})
+  const upImplRef = useRef<(e: PointerEvent) => void>(() => {})
+
+  moveImplRef.current = (e: PointerEvent) => {
+    if (!pointersRef.current.has(e.pointerId)) return
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    const gesture = gestureRef.current
+    const rect = rectRef.current
+    if (!gesture || !rect || rect.width === 0) return
+
+    if (gesture.kind === 'pan') {
+      const dx = e.clientX - gesture.startClientX
+      if (!panMovedRef.current && Math.abs(dx) < DRAG_THRESHOLD_PX) return
+      panMovedRef.current = true
+      const dxFrac = dx / rect.width
+      const span = gesture.startZoom.end - gesture.startZoom.start
+      setZoomWindow(
+        clampZoom(
+          gesture.startZoom.start - dxFrac * span,
+          gesture.startZoom.end - dxFrac * span,
+        ),
+      )
+    } else if (gesture.kind === 'pinch') {
+      const pts = Array.from(pointersRef.current.values())
+      if (pts.length < 2) return
+      const [a, b] = pts
+      const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1
+      const ratio = gesture.startDist / dist
+      const newSpan = Math.min(
+        1,
+        Math.max(minZoomSpanRef.current, gesture.startSpan * ratio),
+      )
+      setZoomWindow(
+        clampZoom(
+          gesture.startCenter - gesture.centerXFrac * newSpan,
+          gesture.startCenter - gesture.centerXFrac * newSpan + newSpan,
+        ),
+      )
+    }
+  }
+
+  const stableMove = useCallback((e: PointerEvent) => moveImplRef.current(e), [])
+  const stableUp = useCallback((e: PointerEvent) => upImplRef.current(e), [])
+
+  const detachWindowListeners = useCallback(() => {
+    if (!windowListenersRef.current) return
+    window.removeEventListener('pointermove', stableMove)
+    window.removeEventListener('pointerup', stableUp)
+    window.removeEventListener('pointercancel', stableUp)
+    windowListenersRef.current = false
+  }, [stableMove, stableUp])
+
+  upImplRef.current = (e: PointerEvent) => {
+    if (!pointersRef.current.has(e.pointerId)) return
+    pointersRef.current.delete(e.pointerId)
+    if (pointersRef.current.size === 0) {
+      gestureRef.current = null
+      rectRef.current = null
+      detachWindowListeners()
+    } else if (pointersRef.current.size === 1) {
+      // Dropped from pinch → pan: re-seed pan from the remaining pointer.
+      const [remaining] = Array.from(pointersRef.current.values())
+      gestureRef.current = {
+        kind: 'pan',
+        startClientX: remaining.x,
+        startZoom: zoomWindowRef.current,
+      }
+      panMovedRef.current = false
+    }
+  }
+
+  const attachWindowListeners = () => {
+    if (windowListenersRef.current) return
+    window.addEventListener('pointermove', stableMove)
+    window.addEventListener('pointerup', stableUp)
+    window.addEventListener('pointercancel', stableUp)
+    windowListenersRef.current = true
+  }
+
+  useEffect(() => detachWindowListeners, [detachWindowListeners])
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    panMovedRef.current = false
+    rectRef.current = e.currentTarget.getBoundingClientRect()
+
+    const pts = Array.from(pointersRef.current.values())
+    if (pts.length === 1) {
+      gestureRef.current = {
+        kind: 'pan',
+        startClientX: e.clientX,
+        startZoom: zoomWindow,
+      }
+    } else if (pts.length === 2) {
+      const [a, b] = pts
+      const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1
+      const rect = rectRef.current
+      const span = zoomWindow.end - zoomWindow.start
+      const centerXFrac = rect.width > 0 ? ((a.x + b.x) / 2 - rect.left) / rect.width : 0.5
+      gestureRef.current = {
+        kind: 'pinch',
+        startDist: dist,
+        startSpan: span,
+        startCenter: zoomWindow.start + centerXFrac * span,
+        centerXFrac,
+      }
+    }
+    attachWindowListeners()
+  }
 
   const displayLabels = useMemo(() => computeDisplayLabels(trips), [trips])
 
@@ -128,6 +320,10 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
 
   const innerWidth = Math.max(0, width - TRACK_INSET_X * 2)
 
+  // Row assignment is computed against the full-history view, not the current
+  // zoom window. This keeps each label's row (and the wrapper's total height)
+  // stable during pan/zoom — otherwise labels shuffle vertically as others
+  // cull in and out of the visible window, which reads as jitter.
   const packed = useMemo(() => {
     if (innerWidth === 0 || trips.length === 0) {
       return {
@@ -135,8 +331,7 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
           trip: TripRange & { title?: string }
           short: string
           full: string
-          anchorX: number
-          labelX: number
+          rawX: number
           shortWidth: number
           fullWidth: number
           row: number
@@ -145,27 +340,29 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
       }
     }
 
-    const items = trips
+    const baseItems = trips
       .map((trip) => {
         const { short, full } = displayLabels[trip.id]
-        const anchor = compressed.dateToX(trip.startDate) * innerWidth
+        const rawX = compressed.dateToX(trip.startDate)
         const measured = labelWidths[trip.id]
         const shortWidth = measured?.short ?? short.length * 7
         const fullWidth = measured?.full ?? full.length * 7
-        return { trip, short, full, anchorX: anchor, shortWidth, fullWidth }
+        return { trip, short, full, rawX, shortWidth, fullWidth }
       })
-      .sort((a, b) => a.anchorX - b.anchorX)
+      .sort((a, b) => a.rawX - b.rawX)
 
     const rowEnds: number[] = []
-    const placed = items.map((item) => {
-      let labelX = item.anchorX
+    const placed = baseItems.map((item) => {
+      // Use the full-history anchor to pack. Clamp x to the right edge so the
+      // last label doesn't overflow the 100% case.
+      let labelX = item.rawX * innerWidth
       if (labelX + item.shortWidth > innerWidth) {
         labelX = Math.max(0, innerWidth - item.shortWidth)
       }
       let row = 0
       while (row < rowEnds.length && rowEnds[row] > labelX - LABEL_HORIZONTAL_GAP) row++
       rowEnds[row] = labelX + item.shortWidth
-      return { ...item, labelX, row }
+      return { ...item, row }
     })
     return { items: placed, rowCount: rowEnds.length }
   }, [trips, compressed, innerWidth, labelWidths, displayLabels])
@@ -221,8 +418,9 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
   return (
     <div
       ref={wrapperRef}
-      className={`w-full relative overflow-hidden bg-black/5 dark:bg-white/5 ${className ?? ''}`}
-      style={{ minHeight: Math.max(72, totalHeight) }}
+      className={`w-full relative overflow-hidden bg-black/5 dark:bg-white/5 select-none ${className ?? ''}`}
+      style={{ minHeight: Math.max(72, totalHeight), touchAction: 'pan-y' }}
+      onPointerDown={handlePointerDown}
       onClick={(e) => {
         // Tapping the timeline background dismisses any sticky-active label.
         if (e.target === e.currentTarget) setActiveId(null)
@@ -238,6 +436,7 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
         >
           <TimelineAxis
             compressed={compressed}
+            zoomWindow={zoomWindow}
             containerWidth={innerWidth}
             leftOffset={TRACK_INSET_X}
           />
@@ -257,55 +456,75 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
               key={trip.id}
               trip={trip}
               compressed={compressed}
+              zoomWindow={zoomWindow}
               containerWidth={innerWidth}
             />
           ))}
       </div>
 
       {/* Today marker */}
-      <div
-        data-no-skeleton
-        className="absolute w-px bg-black/35 dark:bg-white/40 pointer-events-none"
-        style={{
-          left: TRACK_INSET_X + innerWidth,
-          top: YEAR_AXIS_Y,
-          height: TRACK_Y + 6 - YEAR_AXIS_Y,
-        }}
-      >
-        <span
-          className="absolute -translate-x-1/2 text-[9px] tracking-widest uppercase text-black/35 dark:text-white/40"
-          style={{ top: TODAY_LABEL_Y - YEAR_AXIS_Y }}
-        >
-          today
-        </span>
-      </div>
+      {(() => {
+        const todayProj = (1 - zoomWindow.start) / (zoomWindow.end - zoomWindow.start)
+        if (todayProj < -0.01 || todayProj > 1.01) return null
+        return (
+          <div
+            data-no-skeleton
+            className="absolute w-px bg-black/35 dark:bg-white/40 pointer-events-none"
+            style={{
+              left: TRACK_INSET_X + todayProj * innerWidth,
+              top: YEAR_AXIS_Y,
+              height: TRACK_Y + 6 - YEAR_AXIS_Y,
+            }}
+          >
+            <span
+              className="absolute -translate-x-1/2 text-[9px] tracking-widest uppercase text-black/35 dark:text-white/40"
+              style={{ top: TODAY_LABEL_Y - YEAR_AXIS_Y }}
+            >
+              today
+            </span>
+          </div>
+        )
+      })()}
 
       {/* Connector lines + labels */}
       {width > 0 &&
-        packed.items.map((item) => {
-          const labelTop = FIRST_LABEL_Y + item.row * LABEL_ROW_HEIGHT
-          const connectorTop = TRACK_Y + 6
-          const connectorHeight = labelTop - connectorTop
-          const isActive = activeId === item.trip.id
-          // When active, clamp so full label + padding stays inside innerWidth.
-          const hoverLeft = Math.max(
-            0,
-            Math.min(item.labelX - HOVER_HPAD, innerWidth - item.fullWidth - HOVER_HPAD * 2),
-          )
-          const restingLeft = TRACK_INSET_X + item.labelX
-          const leftPx = isActive ? TRACK_INSET_X + hoverLeft : restingLeft
+        (() => {
+          const zoomSpan = zoomWindow.end - zoomWindow.start
+          return packed.items.map((item) => {
+            const projX = (item.rawX - zoomWindow.start) / zoomSpan
+            // Cull labels clearly outside the visible window. Row assignment is
+            // stable (full-history packed) so culling doesn't reshuffle rows.
+            if (projX < -0.05 || projX > 1.05) return null
 
-          return (
-            <div key={item.trip.id}>
-              <div
-                data-no-skeleton
-                className="absolute w-px bg-black/15 dark:bg-white/15 pointer-events-none"
-                style={{
-                  left: TRACK_INSET_X + item.anchorX,
-                  top: connectorTop,
-                  height: Math.max(0, connectorHeight),
-                }}
-              />
+            const anchorX = projX * innerWidth
+            let labelX = anchorX
+            if (labelX + item.shortWidth > innerWidth) {
+              labelX = Math.max(0, innerWidth - item.shortWidth)
+            }
+            if (labelX < 0) labelX = 0
+
+            const labelTop = FIRST_LABEL_Y + item.row * LABEL_ROW_HEIGHT
+            const connectorTop = TRACK_Y + 6
+            const connectorHeight = labelTop - connectorTop
+            const isActive = activeId === item.trip.id
+            const hoverLeft = Math.max(
+              0,
+              Math.min(labelX - HOVER_HPAD, innerWidth - item.fullWidth - HOVER_HPAD * 2),
+            )
+            const restingLeft = TRACK_INSET_X + labelX
+            const leftPx = isActive ? TRACK_INSET_X + hoverLeft : restingLeft
+
+            return (
+              <div key={item.trip.id}>
+                <div
+                  data-no-skeleton
+                  className="absolute w-px bg-black/15 dark:bg-white/15 pointer-events-none"
+                  style={{
+                    left: TRACK_INSET_X + anchorX,
+                    top: connectorTop,
+                    height: Math.max(0, connectorHeight),
+                  }}
+                />
               <div
                 onMouseEnter={() => setActiveId(item.trip.id)}
                 onMouseLeave={() =>
@@ -344,7 +563,8 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
               </div>
             </div>
           )
-        })}
+        })
+      })()}
     </div>
   )
 }
