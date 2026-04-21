@@ -183,7 +183,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
                   <div className="flex-1 min-h-0">{children}</div>
                 </div>
               ) : (
-                <GlobeDetailPanel pin={resolvedPin} />
+                <GlobeDetailPanel />
               )}
             </motion.div>
           )}
@@ -291,7 +291,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
               className="absolute left-0 w-full"
               style={{ top: panelTop, maxHeight: 'calc(100vh - 48px)' }}
             >
-              <GlobeDetailPanel pin={selectedPinData} />
+              <GlobeDetailPanel />
             </div>
           </motion.div>
         )}

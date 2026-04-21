@@ -1,21 +1,4 @@
-import type { ContentType, PinWithVisits, SanityImage, VisitSummary } from './types'
-
-// --- Types ---
-
-/**
- * Lightweight item shape rendered inside the pin detail panel. Kept here
- * (not replaced by ContentSummary) because `GlobeDetailItem.tsx` expects
- * `locationLabel` + `year` derived fields that the raw content summary lacks.
- */
-export interface GlobePinItem {
-  _id: string
-  title: string
-  slug: { current: string }
-  content_type: ContentType
-  cover_image?: SanityImage
-  locationLabel: string
-  year?: string
-}
+import type { PinWithVisits, VisitSummary } from './types'
 
 // --- Utilities ---
 
