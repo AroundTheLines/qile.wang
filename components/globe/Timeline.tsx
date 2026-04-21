@@ -159,9 +159,20 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
       e.preventDefault()
       const rect = el.getBoundingClientRect()
       if (rect.width === 0) return
-      const cursorXFrac = (e.clientX - rect.left) / rect.width
       const cur = pendingZoomRef.current ?? zoomWindowRef.current
       const span = cur.end - cur.start
+
+      // Trackpad two-finger horizontal swipe → pan. Browsers report this as a
+      // wheel event with deltaX dominant and no ctrlKey (pinch is ctrlKey+deltaY).
+      // A shift+wheel on a mouse also surfaces as deltaX on some browsers; same
+      // pan semantics are appropriate there.
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && !e.ctrlKey) {
+        const dxFrac = e.deltaX / rect.width
+        scheduleZoom(clampZoom(cur.start + dxFrac * span, cur.end + dxFrac * span))
+        return
+      }
+
+      const cursorXFrac = (e.clientX - rect.left) / rect.width
       const cursorX = cur.start + cursorXFrac * span
       const zoomFactor = Math.exp(e.deltaY * -WHEEL_ZOOM_MULTIPLIER)
       const newSpan = Math.min(1, Math.max(minZoomSpanRef.current, span * zoomFactor))
