@@ -41,7 +41,7 @@ export default function TimelineSegment({
         // than the midpoint of the 2px placeholder box — otherwise the
         // connector line above it appears 1px to the left of the dot.
         <div
-          className={`absolute top-1/2 w-2 h-2 rounded-full ${fillBase} ${fillColor}`}
+          className={`absolute top-1/2 w-1.5 h-1.5 rounded-full ${fillBase} ${fillColor}`}
           style={{ left: 0, transform: 'translate(-50%, -50%)' }}
         />
       ) : (
