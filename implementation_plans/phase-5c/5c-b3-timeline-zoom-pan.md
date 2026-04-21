@@ -361,14 +361,38 @@ Wheel events with `|deltaX| > |deltaY| && !ctrlKey` route to `wheelPan` instead 
 
 **For B6/B7**: if you drive zoom from a `setInterval` or rAF loop that should keep advancing in background tabs (e.g., syncing with a shared timeline service), account for the same hidden-tab concern in your own loop — `scheduleZoom` will commit synchronously but your loop may not tick at all.
 
+### 9. Gesture starts go through a shared `currentZoom()` helper
+
+`currentZoom()` returns `pendingZoomRef.current ?? zoomWindowRef.current`. All three gesture-start paths — wheel handler, `handlePointerDown`, and pinch→pan re-seed — call it instead of reading state directly. This prevents a rapid wheel-then-drag (or wheel-then-pinch) from anchoring to the pre-rAF window: if the user wheels and immediately presses down before the next animation frame flushes, the pointerdown sees the staged window, not stale state.
+
+**For B4/B5/B6**: any new gesture-start path (segment-click, playback-triggered zoom, programmatic "fit-to-trip") should call `currentZoom()` too rather than reading `zoomWindow` directly. Otherwise it races the same way.
+
+### 10. Connector / dot alignment (visual)
+
+Three subpixel corrections landed as part of this ticket that future visual work shouldn't undo:
+
+- **Dot position**: single-day segments render the 6px dot with `left: 0; transform: translate(-50%, -50%)` so its visual center sits exactly on `leftPx` (the trip-start anchor). The previous `left: '50%'` centered the dot on the midpoint of a 2px placeholder box, putting it 1px right of the anchor.
+- **Dot size**: `w-1.5 h-1.5` (6px) matches the track height (`h-1.5` = 6px) so the dot is flush, not peaking above/below the track.
+- **Connector nudge**: the 1px-wide connector line is positioned at `left: TRACK_INSET_X + anchorX - 0.5` so its visual center (which would otherwise be at `anchorX + 0.5`) coincides with `anchorX` and the dot center.
+
+Net result: all three share the same x coordinate to within subpixel rounding (verified at 0.000 px offset).
+
+### 11. Active-segment highlight (visual)
+
+`TimelineSegment` accepts an `isActive` boolean. When a label is hovered or click-active, its corresponding segment fill transitions (150ms) from `bg-black/20` → `bg-black/70` (dark: `bg-white/[.18]` → `bg-white/80`). This makes the timeline↔label correspondence legible without needing to follow the connector line visually.
+
+**For B4 (hover/click)**: the `isActive` flag is currently driven by the same `activeId` state used for label hover/click. When B4 adds segment-click-to-select, it should reuse this flag — no separate "selected" vs "hovered" states unless the UX calls for it.
+
 ---
 
 ## Handoff / outputs consumed by later tickets
 
 - **`Timeline.tsx`** now tracks `zoomWindow` state. B4 reads it to determine whether a clicked label is in the visible window.
-- **`TimelineSegment.tsx`** accepts `zoomWindow` prop. B5 adds clipping cues when a segment is only partially visible.
+- **`TimelineSegment.tsx`** accepts `zoomWindow` + `isActive` props. B5 adds clipping cues when a segment is only partially visible; B4 can drive `isActive` from segment-click selection (currently wired to the label hover/click state).
 - **`TimelineAxis.tsx`** accepts `zoomWindow` prop.
+- **`lib/timelineZoom.ts`** exports pure gesture math (`clampZoom`, `wheelZoom`, `wheelPan`, `dragPan`, `pinchZoom`) and the `ZoomWindow` type. Reuse for any programmatic zoom (B4 "zoom to trip", B6 playback animations, C5 camera→timeline sync).
 - **Drag-threshold contract**: document the 5px threshold — it's shared with B4 segment click handlers.
+- **`currentZoom()` pattern**: future gesture-start paths must read from `pendingZoomRef.current ?? zoomWindowRef.current` to avoid racing in-flight rAF updates.
 
 ## How to verify
 
