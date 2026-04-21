@@ -55,6 +55,18 @@ export const visit = defineType({
         'Items associated with this visit. Same item can appear in other visits too.',
     }),
   ],
+  orderings: [
+    {
+      title: 'Start date, newest first',
+      name: 'startDateDesc',
+      by: [{ field: 'startDate', direction: 'desc' }],
+    },
+    {
+      title: 'Start date, oldest first',
+      name: 'startDateAsc',
+      by: [{ field: 'startDate', direction: 'asc' }],
+    },
+  ],
   preview: {
     select: {
       location: 'location.name',
@@ -62,9 +74,12 @@ export const visit = defineType({
       start: 'startDate',
       end: 'endDate',
     },
-    prepare: ({ location, trip, start, end }) => ({
-      title: location || 'Untitled visit',
-      subtitle: [trip, start && end && `${start} — ${end}`].filter(Boolean).join(' · '),
-    }),
+    prepare: ({ location, trip, start, end }) => {
+      const dateRange = start && end ? `${start} — ${end}` : start || end || null
+      return {
+        title: location || 'Untitled visit',
+        subtitle: [trip, dateRange].filter(Boolean).join(' · '),
+      }
+    },
   },
 })

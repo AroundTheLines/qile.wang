@@ -17,7 +17,11 @@ export const trip = defineType({
       name: 'slug',
       title: 'Slug',
       type: 'slug',
-      options: { source: 'title', maxLength: 96 },
+      options: {
+        source: 'title',
+        maxLength: 96,
+        isUnique: (value, context) => context.defaultIsUnique(value, context),
+      },
       validation: (rule) => rule.required(),
     }),
     defineField({
@@ -28,6 +32,13 @@ export const trip = defineType({
       description:
         'Optional long-form body for /trip/<slug>. Leave empty to ship the trip as a timeline-only entry.',
     }),
+  ],
+  orderings: [
+    {
+      title: 'Title, A→Z',
+      name: 'titleAsc',
+      by: [{ field: 'title', direction: 'asc' }],
+    },
   ],
   preview: {
     select: { title: 'title', subtitle: 'slug.current' },
