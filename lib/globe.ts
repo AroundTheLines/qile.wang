@@ -108,10 +108,12 @@ export function clipLineByGlobe(
  */
 export function aggregatePins(visits: VisitSummary[]): PinWithVisits[] {
   const byLocation = new Map<string, PinWithVisits>()
+  const tripIdSets = new Map<string, Set<string>>()
   for (const v of visits) {
     const key = v.location._id
     let pin = byLocation.get(key)
-    if (!pin) {
+    let tripSet = tripIdSets.get(key)
+    if (!pin || !tripSet) {
       pin = {
         location: v.location,
         visits: [],
@@ -119,11 +121,16 @@ export function aggregatePins(visits: VisitSummary[]): PinWithVisits[] {
         visitCount: 0,
         tripIds: [],
       }
+      tripSet = new Set<string>()
       byLocation.set(key, pin)
+      tripIdSets.set(key, tripSet)
     }
     pin.visits.push(v)
     pin.visitCount++
-    if (!pin.tripIds.includes(v.trip._id)) pin.tripIds.push(v.trip._id)
+    if (!tripSet.has(v.trip._id)) {
+      tripSet.add(v.trip._id)
+      pin.tripIds.push(v.trip._id)
+    }
   }
   for (const pin of byLocation.values()) {
     pin.visits.sort((a, b) => b.startDate.localeCompare(a.startDate))

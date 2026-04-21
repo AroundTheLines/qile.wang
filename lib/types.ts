@@ -63,13 +63,28 @@ export interface Trip extends TripSummary {
   articleBody?: PortableTextBlock[]
 }
 
+/**
+ * Slim item shape returned by visit projections. Narrower than `ContentSummary`
+ * because visit → item projections omit `published_at` and other fields the
+ * pin/trip panels (§7.1, §7.2) don't need. Keeps the type honest against the
+ * actual GROQ shape.
+ */
+export interface VisitItemSummary {
+  _id: string
+  title: string
+  slug: { current: string }
+  content_type: ContentType
+  cover_image?: SanityImage
+  tags?: string[]
+}
+
 export interface VisitSummary {
   _id: string
   startDate: string
   endDate: string
   location: LocationDoc
   trip: { _id: string; title: string; slug: { current: string } }
-  items: ContentSummary[]
+  items: VisitItemSummary[]
 }
 
 /** Alias for the canonical visit shape returned by `allVisitsQuery`. */
@@ -81,7 +96,7 @@ export interface VisitInTrip {
   startDate: string
   endDate: string
   location: LocationDoc
-  items: ContentSummary[]
+  items: VisitItemSummary[]
 }
 
 export interface TripWithVisits extends Trip {

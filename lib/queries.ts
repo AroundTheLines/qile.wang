@@ -33,7 +33,6 @@ export const contentBySlugQuery = groq`
       date_label,
       body,
       images,
-      globe_group,
     },
   }
 `
@@ -51,15 +50,35 @@ export const wardrobeContentQuery = groq`
   }
 `
 
+// Projection fragment for visit items. Narrower than ContentSummary —
+// matches VisitItemSummary in lib/types.ts.
+const visitItemProjection = `{
+  _id,
+  title,
+  slug,
+  content_type,
+  cover_image,
+  tags
+}`
+
+// Two-stage projection: fetch visits once into `__v`, then derive
+// startDate/endDate/visitCount from that array instead of re-running
+// references(^._id) for each aggregate.
 export const allTripsQuery = groq`
   *[_type == "trip"] {
     _id,
     title,
     slug,
-    "startDate": *[_type == "visit" && references(^._id)] | order(startDate asc)[0].startDate,
-    "endDate":   *[_type == "visit" && references(^._id)] | order(endDate desc)[0].endDate,
-    "visitCount": count(*[_type == "visit" && references(^._id)]),
     "hasArticle": defined(articleBody) && length(articleBody) > 0,
+    "__v": *[_type == "visit" && references(^._id)] { startDate, endDate }
+  } {
+    _id,
+    title,
+    slug,
+    hasArticle,
+    "startDate": __v | order(startDate asc)[0].startDate,
+    "endDate":   __v | order(endDate desc)[0].endDate,
+    "visitCount": count(__v),
   } | order(startDate desc)
 `
 
@@ -70,33 +89,36 @@ export const allVisitsQuery = groq`
     endDate,
     "location": location->{ _id, name, coordinates, slug },
     "trip": trip->{ _id, title, slug },
-    "items": items[]->{
-      _id,
-      title,
-      slug,
-      content_type,
-      cover_image,
-      tags
-    }
+    "items": items[]->${visitItemProjection}
   } | order(startDate desc)
 `
 
+// Two-stage projection: fetch full visits once into `visits`, then derive
+// startDate / endDate / visitCount from that array — avoids running
+// `references(^._id)` four times.
 export const tripBySlugQuery = groq`
   *[_type == "trip" && slug.current == $slug][0] {
     _id,
     title,
     slug,
     articleBody,
-    "startDate": *[_type == "visit" && references(^._id)] | order(startDate asc)[0].startDate,
-    "endDate":   *[_type == "visit" && references(^._id)] | order(endDate desc)[0].endDate,
-    "visitCount": count(*[_type == "visit" && references(^._id)]),
     "hasArticle": defined(articleBody) && length(articleBody) > 0,
     "visits": *[_type == "visit" && references(^._id)] | order(startDate asc) {
       _id,
       startDate,
       endDate,
       "location": location->{ _id, name, coordinates },
-      "items": items[]->{ _id, title, slug, content_type, cover_image }
+      "items": items[]->${visitItemProjection}
     }
+  } {
+    _id,
+    title,
+    slug,
+    articleBody,
+    hasArticle,
+    visits,
+    "startDate": visits[0].startDate,
+    "endDate":   visits | order(endDate desc)[0].endDate,
+    "visitCount": count(visits),
   }
 `
