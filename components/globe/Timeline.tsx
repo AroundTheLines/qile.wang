@@ -587,6 +587,7 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
               compressed={compressed}
               zoomWindow={zoomWindow}
               containerWidth={innerWidth}
+              isActive={activeId === trip.id}
             />
           ))}
       </div>
