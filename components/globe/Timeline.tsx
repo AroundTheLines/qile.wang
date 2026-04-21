@@ -98,12 +98,15 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
   const router = useRouter()
   const searchParams = useSearchParams()
 
+  // Depend on the trips array identity, not `ctx` — the provider rebuilds its
+  // context value object every render, so `[ctx]` would recompute unnecessarily.
+  const ctxTripsSource = ctx?.trips
   const ctxTrips = useMemo<TimelineTrip[] | null>(() => {
-    if (!ctx) return null
+    if (!ctxTripsSource) return null
     // Filter zero-visit trips (null startDate/endDate per §1.4) and adapt to
     // TripRange shape. Using _id as the timeline identity to match context's
     // lockedTrip/hoveredTrip fields (C1 resolver writes _id, not slug).
-    return ctx.trips
+    return ctxTripsSource
       .filter((t) => t.startDate && t.endDate)
       .map((t) => ({
         id: t._id,
@@ -112,7 +115,7 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
         endDate: t.endDate,
         slug: t.slug,
       }))
-  }, [ctx])
+  }, [ctxTripsSource])
 
   const trips: TimelineTrip[] = tripsProp ?? ctxTrips ?? []
 
@@ -489,11 +492,12 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
         setLocalActiveId((cur) => (cur === trip.id ? null : cur))
         return
       }
-      if (!isDesktopHover) return
+      // Always release the hover-bound state on leave, even if the viewport
+      // flipped to mobile mid-hover — otherwise the pause reason leaks.
       ctx.setHoveredTrip((cur) => (cur === trip.id ? null : cur))
       ctx.removePauseReason('label-hover')
     },
-    [ctx, isDesktopHover],
+    [ctx],
   )
 
   const handleLabelClick = useCallback(
@@ -502,6 +506,10 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
         setLocalActiveId((cur) => (cur === trip.id ? null : trip.id))
         return
       }
+      // Mobile tap-to-preview is E3's responsibility. Until that ships, do
+      // nothing on mobile rather than lock — a direct lock would race E3's
+      // preview→expand design and surprise users on small viewports.
+      if (ctx.isMobile) return
       if (ctx.lockedTrip === trip.id) {
         ctx.setLockedTrip(null)
         // Also clear hover pause — guard against pointerLeave not firing.
@@ -633,6 +641,12 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
           <div
             onMouseEnter={() => handleLabelEnter(item.trip)}
             onMouseLeave={() => handleLabelLeave(item.trip)}
+            onPointerDown={(e) => {
+              // Don't let the wrapper start a pan gesture under a label —
+              // pointerdown bubbling to the wrapper would arm the drag path.
+              // The wrapper still handles clicks that start on the background.
+              e.stopPropagation()
+            }}
             onClick={(e) => {
               e.stopPropagation()
               if (panMovedRef.current) return

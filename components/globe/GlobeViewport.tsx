@@ -5,7 +5,7 @@ import { useRef, useCallback, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useGlobe } from './GlobeContext'
-import { clampPanelTop } from '@/lib/globe'
+import { clampPanelTop, NAVBAR_HEIGHT_PX } from '@/lib/globe'
 import GlobeFallbackSVG from './GlobeFallbackSVG'
 import GlobeDetailPanel from './GlobeDetailPanel'
 import GlobeTooltip from './GlobeTooltip'
@@ -102,8 +102,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
     // globe area is below the navbar, so its center sits at (navbar+h)/2.
     // Shifting the wrapper down by half the navbar height re-centers the
     // pin in the area that's actually visible to the user.
-    const NAVBAR_HEIGHT = 72
-    const mobileGlobeShiftYPx = showPanel ? NAVBAR_HEIGHT / 2 : 0
+    const mobileGlobeShiftYPx = showPanel ? NAVBAR_HEIGHT_PX / 2 : 0
 
     const closeAll = () => {
       if (isArticle) router.push('/globe', { scroll: false })
