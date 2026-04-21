@@ -1,9 +1,10 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { GlobeContext, type ScreenPosition, type ViewportTier } from './GlobeContext'
-import type { GlobePin, GlobeScreenCircle } from '@/lib/globe'
+import type { PinWithVisits, TripSummary } from '@/lib/types'
+import type { GlobeScreenCircle } from '@/lib/globe'
 
 function useViewportTier(): ViewportTier {
   const [tier, setTier] = useState<ViewportTier>('desktop')
@@ -37,18 +38,37 @@ function useIsDark(): boolean {
 // panel-slide (300ms) and the pin-switch rotate-in-place (up to ~300ms)
 // with a small buffer.
 const PANEL_SETTLE_MS = 450
+const IDLE_RESUME_MS = 5000
 
 export default function GlobeProvider({
+  trips,
   pins,
+  fetchError,
   children,
 }: {
-  pins: GlobePin[]
+  trips: TripSummary[]
+  pins: PinWithVisits[]
+  fetchError: boolean
   children: React.ReactNode
 }) {
+  // --- Pin state ---
   const [selectedPin, setSelectedPin] = useState<string | null>(null)
   const [hoveredPin, setHoveredPin] = useState<string | null>(null)
-  const [slideComplete, setSlideComplete] = useState(false)
+  const [pinSubregionHighlight, setPinSubregionHighlight] = useState<string | null>(null)
   const [selectedPinScreenY, setSelectedPinScreenY] = useState<number | null>(null)
+
+  // --- Trip state ---
+  const [lockedTrip, setLockedTripState] = useState<string | null>(null)
+  const [hoveredTrip, setHoveredTrip] = useState<string | null>(null)
+  const [previewTrip, setPreviewTrip] = useState<string | null>(null)
+
+  // --- Playback state ---
+  const [playbackHighlightedTripIds, setPlaybackHighlightedTripIds] = useState<string[]>([])
+  const pauseReasonsRef = useRef<Set<string>>(new Set())
+  const [pauseReasonCount, setPauseReasonCount] = useState(0)
+
+  // --- Misc ---
+  const [slideComplete, setSlideComplete] = useState(false)
   const pinPositionRef = useRef<Record<string, ScreenPosition>>({})
   const globeScreenRef = useRef<GlobeScreenCircle | null>(null)
   const frameSubscribersRef = useRef<Set<() => void>>(new Set())
@@ -56,87 +76,164 @@ export default function GlobeProvider({
   const isDark = useIsDark()
 
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   const router = useRouter()
+
+  // --- URL derivations ---
   const activeArticleSlug =
     pathname && pathname.startsWith('/globe/') && pathname !== '/globe'
       ? pathname.slice('/globe/'.length).split('/')[0] || null
       : null
+  const activeTripSlug =
+    pathname && pathname.startsWith('/trip/')
+      ? pathname.slice('/trip/'.length).split('/')[0] || null
+      : null
 
-  const selectPin = useCallback((group: string | null) => {
-    if (group === null) {
+  // --- Pin selection with screen-y capture ---
+  const selectPin = useCallback((id: string | null) => {
+    if (id === null) {
       setSelectedPin(null)
       setSelectedPinScreenY(null)
       return
     }
-    // Capture screen Y at moment of click
-    const pos = pinPositionRef.current[group]
+    const pos = pinPositionRef.current[id]
     if (pos) setSelectedPinScreenY(pos.y)
-    setSelectedPin(group)
+    setSelectedPin(id)
   }, [])
 
-  // Drive slideComplete purely off selectedPin changes — that way
-  // pin-switching (same panel, different pin) also triggers the
-  // retract → settle → extend sequence, and we don't depend on
-  // motion.div.onAnimationComplete (which doesn't fire when width
-  // is unchanged).
+  // --- Trip lock wrapper: also clears selectedPin so panelVariant flip is clean.
+  // Pin panel and trip panel share the same screen region — per spec §7.3.2,
+  // locking a trip swaps variants rather than stacking panels.
+  const setLockedTrip = useCallback((id: string | null) => {
+    setLockedTripState(id)
+    if (id !== null) {
+      setSelectedPin(null)
+      setSelectedPinScreenY(null)
+    }
+  }, [])
+
+  // --- Pause reasons ---
+  const addPauseReason = useCallback((reason: string) => {
+    if (!pauseReasonsRef.current.has(reason)) {
+      pauseReasonsRef.current.add(reason)
+      setPauseReasonCount(pauseReasonsRef.current.size)
+    }
+  }, [])
+  const removePauseReason = useCallback((reason: string) => {
+    if (pauseReasonsRef.current.has(reason)) {
+      pauseReasonsRef.current.delete(reason)
+      setPauseReasonCount(pauseReasonsRef.current.size)
+    }
+  }, [])
+
+  const isPaused =
+    pauseReasonCount > 0 ||
+    lockedTrip !== null ||
+    activeArticleSlug !== null ||
+    activeTripSlug !== null
+
+  // --- Playback active: true on first mount (instant start per product call),
+  // false while paused, flips back to true IDLE_RESUME_MS after unpause.
+  const [playbackActive, setPlaybackActive] = useState(true)
+  const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
-    if (!selectedPin) {
+    if (isPaused) {
+      if (resumeTimerRef.current) {
+        clearTimeout(resumeTimerRef.current)
+        resumeTimerRef.current = null
+      }
+      setPlaybackActive(false)
+      return
+    }
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current)
+    resumeTimerRef.current = setTimeout(() => {
+      setPlaybackActive(true)
+      resumeTimerRef.current = null
+    }, IDLE_RESUME_MS)
+    return () => {
+      if (resumeTimerRef.current) {
+        clearTimeout(resumeTimerRef.current)
+        resumeTimerRef.current = null
+      }
+    }
+  }, [isPaused])
+
+  // --- Panel variant derivation ---
+  const panelVariant: 'pin' | 'trip' | null =
+    lockedTrip && !selectedPin ? 'trip' : selectedPin ? 'pin' : null
+
+  // --- Layout state derivation ---
+  const layoutState: 'default' | 'panel-open' | 'article-open' =
+    activeArticleSlug || activeTripSlug
+      ? 'article-open'
+      : panelVariant
+        ? 'panel-open'
+        : 'default'
+
+  // --- Panel-open slideComplete timer (preserved from Phase 5A/5B) ---
+  useEffect(() => {
+    if (!panelVariant) {
       setSlideComplete(false)
       return
     }
     setSlideComplete(false)
     const t = setTimeout(() => setSlideComplete(true), PANEL_SETTLE_MS)
     return () => clearTimeout(t)
-  }, [selectedPin])
-
-  const layoutState: 'default' | 'panel-open' | 'article-open' = activeArticleSlug
-    ? 'article-open'
-    : selectedPin
-      ? 'panel-open'
-      : 'default'
+  }, [panelVariant, selectedPin, lockedTrip])
 
   const closeArticle = useCallback(() => {
-    router.push('/globe', { scroll: false })
-  }, [router])
+    if (activeArticleSlug) {
+      router.push('/globe', { scroll: false })
+    } else if (activeTripSlug) {
+      // Return to /globe?trip=<slug> per §8.2, using the locked trip to
+      // resolve the slug (the URL at this point is /trip/<slug>, but we
+      // prefer the state's lockedTrip to stay consistent with the panel).
+      const trip = trips.find((t) => t._id === lockedTrip)
+      if (trip) {
+        router.push(`/globe?trip=${encodeURIComponent(trip.slug.current)}`, { scroll: false })
+      } else {
+        router.push('/globe', { scroll: false })
+      }
+    }
+  }, [activeArticleSlug, activeTripSlug, router, trips, lockedTrip])
 
-  // Deep-link / refresh on /globe/[slug]: resolve the article's pin so the
-  // selected state is consistent with the open article. We deliberately do
-  // *not* depend on `selectedPin` — otherwise clearing selectedPin (e.g. a
-  // mobile "close panel" action) while still on /globe/[slug] would cause
-  // this effect to immediately re-set it before the URL has a chance to
-  // transition back to /globe.
-  //
-  // We read the current selection via the functional updater's `prev`
-  // argument so we can *prefer* it when the article exists under multiple
-  // pins (items are cross-listed — e.g. silk-scarf-navy appears under
-  // Marrakech, Paris, and Tokyo). Without this, `pins.find` picks the first
-  // match by array ordering and overwrites the user's Paris selection with
-  // Tokyo — which also kicks off a spurious pin-switch rotation that fights
-  // the article-zoom and manifests as a "sudden jump". Using `prev` is the
-  // robust form: no ref sync, no effect-ordering assumptions, and returning
-  // `prev` from the updater lets React bail out so the effect doesn't churn
-  // downstream state. Screen Y for the chosen pin is handled by the
-  // null-Y polling effect below, which fires when selectedPin changes to a
-  // pin whose Y hasn't been captured yet.
+  // --- Deep-link / article-open pin resolution. The `prev`-selection
+  // pattern is load-bearing: items are cross-listed across pins, and we
+  // prefer the current selection when it still matches so the user's pin
+  // choice isn't silently overwritten mid-navigation.
   useEffect(() => {
     if (!activeArticleSlug) return
     setSelectedPin((prev) => {
-      const currentPin = prev ? pins.find((p) => p.group === prev) : null
+      const currentPin = prev ? pins.find((p) => p.location._id === prev) : null
       const keepCurrent =
-        currentPin?.items.some((i) => i.slug.current === activeArticleSlug) ??
-        false
+        currentPin?.visits.some((v) =>
+          v.items.some((i) => i.slug.current === activeArticleSlug),
+        ) ?? false
       const match = keepCurrent
         ? currentPin
         : pins.find((p) =>
-            p.items.some((i) => i.slug.current === activeArticleSlug),
+            p.visits.some((v) =>
+              v.items.some((i) => i.slug.current === activeArticleSlug),
+            ),
           )
-      return match ? match.group : prev
+      return match ? match.location._id : prev
     })
   }, [activeArticleSlug, pins])
 
-  // If selectedPinScreenY is null (deep-link case), poll the pin's screen
-  // position via RAF until it's available, then capture it so the panel and
-  // click-connector align with the pin.
+  // --- Deep-link trip resolution: URL ?trip=<slug> or /trip/<slug> → lock trip.
+  // Read-only; D2 owns the write side.
+  useEffect(() => {
+    const queryTripSlug = searchParams.get('trip')
+    const slugFromUrl = queryTripSlug ?? activeTripSlug
+    if (!slugFromUrl) return
+    setLockedTripState((prev) => {
+      const target = trips.find((t) => t.slug.current === slugFromUrl)
+      return target ? target._id : prev
+    })
+  }, [searchParams, activeTripSlug, trips])
+
+  // --- Selected-pin screen-Y polling (preserved). Deep-link case where
+  // selectedPin was set by the article effect before the pin projected.
   useEffect(() => {
     if (!selectedPin || selectedPinScreenY != null) return
     let raf = 0
@@ -152,9 +249,8 @@ export default function GlobeProvider({
     return () => cancelAnimationFrame(raf)
   }, [selectedPin, selectedPinScreenY])
 
-  // On transition from article-open back to panel-open, the pin may have
-  // moved on screen during zoom-in/out. Re-capture its Y once the zoom-out
-  // animation settles so the panel re-aligns with the pin.
+  // --- Article-close Y re-capture (preserved). The pin may have moved on
+  // screen during zoom-in/out; re-read its Y once the zoom-out settles.
   const prevLayoutRef = useRef(layoutState)
   useEffect(() => {
     const prev = prevLayoutRef.current
@@ -175,11 +271,27 @@ export default function GlobeProvider({
   return (
     <GlobeContext.Provider
       value={{
+        trips,
         pins,
+        fetchError,
         selectedPin,
         selectPin,
         hoveredPin,
         setHoveredPin,
+        pinSubregionHighlight,
+        setPinSubregionHighlight,
+        lockedTrip,
+        setLockedTrip,
+        hoveredTrip,
+        setHoveredTrip,
+        previewTrip,
+        setPreviewTrip,
+        playbackHighlightedTripIds,
+        setPlaybackHighlightedTripIds,
+        playbackActive,
+        addPauseReason,
+        removePauseReason,
+        isPaused,
         layoutState,
         slideComplete,
         selectedPinScreenY,
@@ -187,6 +299,7 @@ export default function GlobeProvider({
         globeScreenRef,
         frameSubscribersRef,
         activeArticleSlug,
+        activeTripSlug,
         closeArticle,
         tier,
         isDesktop,
@@ -195,6 +308,7 @@ export default function GlobeProvider({
         showHover: !isMobile,
         showConnectors: isDesktop,
         isDark,
+        panelVariant,
       }}
     >
       {children}

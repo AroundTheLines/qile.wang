@@ -1,8 +1,9 @@
 export const dynamic = 'force-dynamic'
 
 import { client } from '@/lib/sanity'
-import { globeContentQuery } from '@/lib/queries'
-import { groupPins, type GlobeContentItem } from '@/lib/globe'
+import { allTripsQuery, allVisitsQuery } from '@/lib/queries'
+import { aggregatePins } from '@/lib/globe'
+import type { TripSummary, VisitSummary } from '@/lib/types'
 import GlobeProvider from '@/components/globe/GlobeProvider'
 import GlobeNavbar from '@/components/globe/GlobeNavbar'
 import GlobeViewport from '@/components/globe/GlobeViewport'
@@ -12,11 +13,21 @@ export default async function GlobeLayout({
 }: {
   children: React.ReactNode
 }) {
-  const content: GlobeContentItem[] = await client.fetch(globeContentQuery)
-  const pins = groupPins(content)
+  let trips: TripSummary[] = []
+  let visits: VisitSummary[] = []
+  let fetchError = false
+  try {
+    ;[trips, visits] = await Promise.all([
+      client.fetch<TripSummary[]>(allTripsQuery),
+      client.fetch<VisitSummary[]>(allVisitsQuery),
+    ])
+  } catch {
+    fetchError = true
+  }
+  const pins = aggregatePins(visits)
 
   return (
-    <GlobeProvider pins={pins}>
+    <GlobeProvider trips={trips} pins={pins} fetchError={fetchError}>
       <GlobeNavbar />
       <GlobeViewport>{children}</GlobeViewport>
     </GlobeProvider>
