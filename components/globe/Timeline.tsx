@@ -1,13 +1,21 @@
 'use client'
 
-import { useRef, useState, useEffect, useMemo, useLayoutEffect, useCallback } from 'react'
+import { useRef, useState, useEffect, useMemo, useLayoutEffect, useCallback, useContext } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { buildCompressedMap, type TripRange, type CompressedMap } from '@/lib/timelineCompression'
 import { dragPan, pinchZoom, wheelPan, wheelZoom, type ZoomWindow } from '@/lib/timelineZoom'
 import TimelineSegment from './TimelineSegment'
 import TimelineAxis from './TimelineAxis'
+import { GlobeContext } from './GlobeContext'
+
+type TimelineTrip = TripRange & {
+  title?: string
+  slug?: { current: string }
+}
 
 export interface TimelineProps {
-  trips: (TripRange & { title?: string })[]
+  /** Override used by /timeline-dev with mocks. In production, omit and Timeline reads from context. */
+  trips?: TimelineTrip[]
   className?: string
   now?: string
 }
@@ -24,7 +32,7 @@ const TRACK_TO_LABELS = 10
 const FIRST_LABEL_Y = TRACK_Y + TRACK_TO_LABELS
 const BOTTOM_PADDING = 8
 
-const DRAG_THRESHOLD_PX = 5
+export const DRAG_THRESHOLD_PX = 5
 const WHEEL_ZOOM_MULTIPLIER = 0.001
 // Floor on the min zoom span (fraction of compressed x). Compression's
 // activeBoost makes real-day math misleading in active-dense regions — at
@@ -52,7 +60,7 @@ interface DisplayLabel {
  * the compact row becomes ambiguous and hover is the only disambiguator.
  */
 function computeDisplayLabels(
-  trips: (TripRange & { title?: string })[],
+  trips: TimelineTrip[],
 ): Record<string, DisplayLabel> {
   const fullById: Record<string, string> = {}
   const shortById: Record<string, string> = {}
@@ -85,12 +93,36 @@ type GestureState =
     }
   | null
 
-export default function Timeline({ trips, className, now }: TimelineProps) {
+export default function Timeline({ trips: tripsProp, className, now }: TimelineProps) {
+  const ctx = useContext(GlobeContext)
+  const router = useRouter()
+  const searchParams = useSearchParams()
+
+  const ctxTrips = useMemo<TimelineTrip[] | null>(() => {
+    if (!ctx) return null
+    // Filter zero-visit trips (null startDate/endDate per §1.4) and adapt to
+    // TripRange shape. Using _id as the timeline identity to match context's
+    // lockedTrip/hoveredTrip fields (C1 resolver writes _id, not slug).
+    return ctx.trips
+      .filter((t) => t.startDate && t.endDate)
+      .map((t) => ({
+        id: t._id,
+        title: t.title,
+        startDate: t.startDate,
+        endDate: t.endDate,
+        slug: t.slug,
+      }))
+  }, [ctx])
+
+  const trips: TimelineTrip[] = tripsProp ?? ctxTrips ?? []
+
   const wrapperRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   const [labelWidths, setLabelWidths] = useState<Record<string, LabelWidths>>({})
-  const [activeId, setActiveId] = useState<string | null>(null)
+  // Fallback active id when there is no provider (e.g. /timeline-dev).
+  const [localActiveId, setLocalActiveId] = useState<string | null>(null)
+  const activeId = ctx ? (ctx.hoveredTrip ?? ctx.lockedTrip) : localActiveId
   const [zoomWindow, setZoomWindow] = useState<ZoomWindow>({ start: 0, end: 1 })
   const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map())
   const gestureRef = useRef<GestureState>(null)
@@ -436,6 +468,91 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
     [trips, displayLabels],
   )
 
+  const isDesktopHover = ctx?.isDesktop ?? true
+
+  const handleLabelEnter = useCallback(
+    (trip: TimelineTrip) => {
+      if (!ctx) {
+        setLocalActiveId(trip.id)
+        return
+      }
+      if (!isDesktopHover) return
+      ctx.setHoveredTrip(trip.id)
+      ctx.addPauseReason('label-hover')
+    },
+    [ctx, isDesktopHover],
+  )
+
+  const handleLabelLeave = useCallback(
+    (trip: TimelineTrip) => {
+      if (!ctx) {
+        setLocalActiveId((cur) => (cur === trip.id ? null : cur))
+        return
+      }
+      if (!isDesktopHover) return
+      ctx.setHoveredTrip((cur) => (cur === trip.id ? null : cur))
+      ctx.removePauseReason('label-hover')
+    },
+    [ctx, isDesktopHover],
+  )
+
+  const handleLabelClick = useCallback(
+    (trip: TimelineTrip) => {
+      if (!ctx) {
+        setLocalActiveId((cur) => (cur === trip.id ? null : trip.id))
+        return
+      }
+      if (ctx.lockedTrip === trip.id) {
+        ctx.setLockedTrip(null)
+        // Also clear hover pause — guard against pointerLeave not firing.
+        ctx.removePauseReason('label-hover')
+        if (searchParams?.get('trip')) {
+          router.push('/globe', { scroll: false })
+        }
+      } else {
+        ctx.setLockedTrip(trip.id)
+        if (trip.slug) {
+          const next = trip.slug.current
+          if (searchParams?.get('trip') !== next) {
+            router.push(`/globe?trip=${encodeURIComponent(next)}`, { scroll: false })
+          }
+        }
+      }
+    },
+    [ctx, router, searchParams],
+  )
+
+  const handleBackgroundClick = useCallback(() => {
+    if (panMovedRef.current) return
+    if (!ctx) {
+      setLocalActiveId(null)
+      return
+    }
+    if (ctx.lockedTrip) {
+      ctx.setLockedTrip(null)
+      if (searchParams?.get('trip')) {
+        router.push('/globe', { scroll: false })
+      }
+    }
+  }, [ctx, router, searchParams])
+
+  if (ctx?.fetchError) {
+    return (
+      <div
+        ref={wrapperRef}
+        className={`w-full h-16 md:h-20 flex items-center justify-center gap-2 text-xs tracking-widest uppercase text-black/50 dark:text-white/50 ${className ?? ''}`}
+      >
+        <span>Could not load timeline.</span>
+        <button
+          onClick={() => window.location.reload()}
+          className="underline hover:text-black dark:hover:text-white transition-colors cursor-pointer"
+        >
+          Retry
+        </button>
+      </div>
+    )
+  }
+
   if (trips.length === 0) {
     return (
       <div
@@ -514,11 +631,12 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
             }}
           />
           <div
-            onMouseEnter={() => setActiveId(item.trip.id)}
-            onMouseLeave={() => setActiveId((cur) => (cur === item.trip.id ? null : cur))}
+            onMouseEnter={() => handleLabelEnter(item.trip)}
+            onMouseLeave={() => handleLabelLeave(item.trip)}
             onClick={(e) => {
               e.stopPropagation()
-              setActiveId((cur) => (cur === item.trip.id ? null : item.trip.id))
+              if (panMovedRef.current) return
+              handleLabelClick(item.trip)
             }}
             className={`absolute cursor-default rounded-sm ring-1 transition-[left,width,background-color,box-shadow] duration-150 ease-out ${
               isActive
@@ -559,8 +677,9 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
       style={{ minHeight: Math.max(72, totalHeight), touchAction: 'pan-y' }}
       onPointerDown={handlePointerDown}
       onClick={(e) => {
-        // Tapping the timeline background dismisses any sticky-active label.
-        if (e.target === e.currentTarget) setActiveId(null)
+        // Tapping the timeline background (not a label/segment) dismisses any
+        // locked trip. Drag-vs-click is gated inside handleBackgroundClick.
+        if (e.target === e.currentTarget) handleBackgroundClick()
       }}
     >
       {measurementLayer}
