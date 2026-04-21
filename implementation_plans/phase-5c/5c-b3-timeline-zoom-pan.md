@@ -303,6 +303,52 @@ Decision: use the tick marks B1 provides. If coverage is thin under deep zoom, s
 
    **Action**: ignore.
 
+---
+
+## Implementation notes (post-merge)
+
+Deviations from the spec above and load-bearing choices future tickets should know about:
+
+### 1. `MIN_ZOOM_SPAN` has a **20% floor**, not `30/totalDays`
+
+Spec said `MIN_ZOOM_SPAN = Math.min(1, 30 / totalDays)`. In practice, because B1's compression applies `activeBoost=3` (active regions get 3× the x-space of quiet gaps), the pure `30/totalDays` math lets the view zoom so far into a quiet gap that **zero trips are visible** — the cursor lands between clusters in a region the compression shrunk to ~nothing.
+
+Actual formula: `Math.min(1, Math.max(0.2, 30 / totalDays))` — at max zoom, at least 20% of the compressed x-range is visible. With the mock dataset this keeps ~3–5 trips on screen at max zoom. A dense real dataset will pull the floor toward the `30/totalDays` value. Constant is `MIN_ZOOM_SPAN_FLOOR` in [Timeline.tsx](../../components/globe/Timeline.tsx).
+
+**For B5 / tick densification**: since max zoom is now 20% of compressed x (not 1 month of real days), the "zoom past 2 years → show month ticks" threshold in §4.5 should key on `zoomSpan < MIN_ZOOM_SPAN * ~2` or a similar relative measure, not raw days.
+
+### 2. Pan/pinch use **window-level listeners**, not React pointer events
+
+Spec pseudocode used `onPointerMove`/`onPointerUp` on the wrapper with `setPointerCapture`. In real browsers React's delegated pointer events drop frames once the pointer leaves the element's hit area, even with capture — drag silently stops mid-swipe.
+
+Actual pattern: `onPointerDown` (React) attaches `pointermove`/`pointerup`/`pointercancel` listeners on `window`. They detach when all pointers release. Stable-proxy pattern (`moveImplRef` + `useCallback((e) => moveImplRef.current(e), [])`) keeps listener identity constant while letting the impl close over fresh state.
+
+**For B4**: when you add segment click handlers, `stopPropagation` on the segment's `onPointerDown` is still sufficient — the wrapper's `onPointerDown` never fires, window listeners are never attached.
+
+### 3. Row packing uses **full-history anchors**, not the zoomed view
+
+Critical for avoiding vertical jitter. The initial attempt packed against visible items (`projX * innerWidth`), which meant row count + wrapper height changed every time a label culled in/out during pan. Looked like the whole timeline was jittering.
+
+Actual: `packed.items` stores `rawX` (full-history anchor) and `row` — computed once in a memo keyed on `trips`/`compressed`/`innerWidth`/`labelWidths`. The render loop reprojects horizontally via `(rawX - zoomWindow.start) / zoomSpan` but reuses the stable `row`. `rowCount` and `totalHeight` are invariant under zoom/pan.
+
+**For B5 / collision handling**: any collision logic needs to run against the **zoomed** x-coordinates to be useful (labels that don't overlap at 100% may overlap at 5%). But row *assignment* must stay in the full-history pack to preserve vertical stability. Likely need a second pass that adjusts horizontal offset within a row without reassigning rows.
+
+### 4. Gesture updates **coalesced onto rAF**
+
+Spec had `setZoomWindow` called directly from wheel/pointermove. At ~120Hz trackpad input × N labels × N segments, re-projection dominates frame budget on realistic datasets. `scheduleZoom` batches to one update per animation frame. All code paths that produce a new window (wheel, pan, pinch) go through it.
+
+**For B6/B7 (playhead)**: the playback driver should likewise write zoom updates through the same rAF queue if it ever animates zoom (e.g., a "fit-to-trip" transition).
+
+### 5. Pure `clampZoom` lives in `lib/timelineZoom.ts`
+
+Extracted so it's testable without pulling in React/tsx. Covered by [`lib/timelineZoom.test.ts`](../../lib/timelineZoom.test.ts). B4/B5 that programmatically set the zoom window (e.g., "zoom to this trip") should reuse `clampZoom` rather than inlining the shift-not-truncate logic.
+
+### 6. Pinch uses the **two oldest pointers only**
+
+A 3rd finger landing mid-pinch is ignored until one of the original two releases. Map-like UX.
+
+---
+
 ## Handoff / outputs consumed by later tickets
 
 - **`Timeline.tsx`** now tracks `zoomWindow` state. B4 reads it to determine whether a clicked label is in the visible window.

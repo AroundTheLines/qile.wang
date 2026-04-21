@@ -2,6 +2,7 @@
 
 import { useRef, useState, useEffect, useMemo, useLayoutEffect, useCallback } from 'react'
 import { buildCompressedMap, type TripRange, type CompressedMap } from '@/lib/timelineCompression'
+import { clampZoom, type ZoomWindow } from '@/lib/timelineZoom'
 import TimelineSegment from './TimelineSegment'
 import TimelineAxis from './TimelineAxis'
 
@@ -22,6 +23,13 @@ const TRACK_Y = YEAR_AXIS_Y + YEAR_AXIS_HEIGHT + 4
 const TRACK_TO_LABELS = 10
 const FIRST_LABEL_Y = TRACK_Y + TRACK_TO_LABELS
 const BOTTOM_PADDING = 8
+
+const DRAG_THRESHOLD_PX = 5
+const WHEEL_ZOOM_MULTIPLIER = 0.001
+// Floor on the min zoom span (fraction of compressed x). Compression's
+// activeBoost makes real-day math misleading in active-dense regions — at
+// 1/totalDays the view can land on an empty gap with zero trips visible.
+const MIN_ZOOM_SPAN_FLOOR = 0.2
 
 function shortLabelToken(full: string): string {
   const first = full.split(/\s+/)[0] ?? full
@@ -66,8 +74,6 @@ function computeDisplayLabels(
   return out
 }
 
-type ZoomWindow = { start: number; end: number }
-
 type GestureState =
   | { kind: 'pan'; startClientX: number; startZoom: ZoomWindow }
   | {
@@ -78,9 +84,6 @@ type GestureState =
       centerXFrac: number
     }
   | null
-
-const DRAG_THRESHOLD_PX = 5
-const WHEEL_ZOOM_MULTIPLIER = 0.001
 
 export default function Timeline({ trips, className, now }: TimelineProps) {
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -94,6 +97,8 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
   const panMovedRef = useRef(false)
   const rectRef = useRef<DOMRect | null>(null)
   const windowListenersRef = useRef(false)
+  const rafRef = useRef<number | null>(null)
+  const pendingZoomRef = useRef<ZoomWindow | null>(null)
 
   useEffect(() => {
     const el = wrapperRef.current
@@ -111,10 +116,6 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
     [trips, now],
   )
 
-  // Min zoom span = 20% of the compressed x. Using compressed x (not real days)
-  // keeps a handful of trips visible at max zoom in active-dense regions,
-  // where the `activeBoost` weighting makes real-day math misleading.
-  const MIN_ZOOM_SPAN_FLOOR = 0.2
   const minZoomSpan = useMemo(() => {
     const totalMs = Date.parse(compressed.end) - Date.parse(compressed.start)
     const totalDays = Math.max(1, Math.round(totalMs / 86400000))
@@ -128,20 +129,26 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
   const zoomWindowRef = useRef(zoomWindow)
   zoomWindowRef.current = zoomWindow
 
-  const clampZoom = (start: number, end: number): ZoomWindow => {
-    let s = start
-    let e = end
-    if (s < 0) {
-      e -= s
-      s = 0
-    }
-    if (e > 1) {
-      s -= e - 1
-      e = 1
-      if (s < 0) s = 0
-    }
-    return { start: s, end: e }
-  }
+  // Coalesce high-frequency gesture updates (pointermove, wheel) onto a single
+  // rAF. Without this, each event triggers a full re-projection of every label
+  // and segment. Fine at 9 trips, matters at realistic dataset sizes.
+  const scheduleZoom = useCallback((next: ZoomWindow) => {
+    pendingZoomRef.current = next
+    if (rafRef.current !== null) return
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null
+      const z = pendingZoomRef.current
+      pendingZoomRef.current = null
+      if (z) setZoomWindow(z)
+    })
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+    },
+    [],
+  )
 
   // Native wheel listener — React's passive SyntheticEvent can't reliably
   // preventDefault, which would let the page scroll while the timeline zooms.
@@ -153,18 +160,18 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
       const rect = el.getBoundingClientRect()
       if (rect.width === 0) return
       const cursorXFrac = (e.clientX - rect.left) / rect.width
-      setZoomWindow((cur) => {
-        const span = cur.end - cur.start
-        const cursorX = cur.start + cursorXFrac * span
-        const zoomFactor = Math.exp(e.deltaY * -WHEEL_ZOOM_MULTIPLIER)
-        const newSpan = Math.min(1, Math.max(minZoomSpan, span * zoomFactor))
-        if (newSpan === span) return cur
-        return clampZoom(cursorX - cursorXFrac * newSpan, cursorX - cursorXFrac * newSpan + newSpan)
-      })
+      const cur = pendingZoomRef.current ?? zoomWindowRef.current
+      const span = cur.end - cur.start
+      const cursorX = cur.start + cursorXFrac * span
+      const zoomFactor = Math.exp(e.deltaY * -WHEEL_ZOOM_MULTIPLIER)
+      const newSpan = Math.min(1, Math.max(minZoomSpanRef.current, span * zoomFactor))
+      if (newSpan === span) return
+      const newStart = cursorX - cursorXFrac * newSpan
+      scheduleZoom(clampZoom(newStart, newStart + newSpan))
     }
     el.addEventListener('wheel', handler, { passive: false })
     return () => el.removeEventListener('wheel', handler)
-  }, [minZoomSpan])
+  }, [scheduleZoom])
 
   // Pan/pinch use window-level move/up listeners so the drag keeps tracking
   // when the cursor leaves the timeline. React's delegated onPointerMove is
@@ -186,14 +193,16 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
       panMovedRef.current = true
       const dxFrac = dx / rect.width
       const span = gesture.startZoom.end - gesture.startZoom.start
-      setZoomWindow(
+      scheduleZoom(
         clampZoom(
           gesture.startZoom.start - dxFrac * span,
           gesture.startZoom.end - dxFrac * span,
         ),
       )
     } else if (gesture.kind === 'pinch') {
-      const pts = Array.from(pointersRef.current.values())
+      // Only the two oldest pointers drive the pinch. A 3rd finger is ignored
+      // until one of the original two releases — matches typical map UX.
+      const pts = Array.from(pointersRef.current.values()).slice(0, 2)
       if (pts.length < 2) return
       const [a, b] = pts
       const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1
@@ -202,12 +211,8 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
         1,
         Math.max(minZoomSpanRef.current, gesture.startSpan * ratio),
       )
-      setZoomWindow(
-        clampZoom(
-          gesture.startCenter - gesture.centerXFrac * newSpan,
-          gesture.startCenter - gesture.centerXFrac * newSpan + newSpan,
-        ),
-      )
+      const newStart = gesture.startCenter - gesture.centerXFrac * newSpan
+      scheduleZoom(clampZoom(newStart, newStart + newSpan))
     }
   }
 
@@ -241,13 +246,13 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
     }
   }
 
-  const attachWindowListeners = () => {
+  const attachWindowListeners = useCallback(() => {
     if (windowListenersRef.current) return
     window.addEventListener('pointermove', stableMove)
     window.addEventListener('pointerup', stableUp)
     window.addEventListener('pointercancel', stableUp)
     windowListenersRef.current = true
-  }
+  }, [stableMove, stableUp])
 
   useEffect(() => detachWindowListeners, [detachWindowListeners])
 
@@ -256,25 +261,28 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
     panMovedRef.current = false
     rectRef.current = e.currentTarget.getBoundingClientRect()
+    // Read from the ref so gesture start doesn't capture a stale zoomWindow
+    // if a pending rAF update hasn't yet flushed to state.
+    const startZoom = zoomWindowRef.current
 
     const pts = Array.from(pointersRef.current.values())
     if (pts.length === 1) {
       gestureRef.current = {
         kind: 'pan',
         startClientX: e.clientX,
-        startZoom: zoomWindow,
+        startZoom,
       }
     } else if (pts.length === 2) {
       const [a, b] = pts
       const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1
       const rect = rectRef.current
-      const span = zoomWindow.end - zoomWindow.start
+      const span = startZoom.end - startZoom.start
       const centerXFrac = rect.width > 0 ? ((a.x + b.x) / 2 - rect.left) / rect.width : 0.5
       gestureRef.current = {
         kind: 'pinch',
         startDist: dist,
         startSpan: span,
-        startCenter: zoomWindow.start + centerXFrac * span,
+        startCenter: startZoom.start + centerXFrac * span,
         centerXFrac,
       }
     }
@@ -415,6 +423,108 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
     )
   }
 
+  const zoomSpan = zoomWindow.end - zoomWindow.start
+  const todayProj = (1 - zoomWindow.start) / zoomSpan
+  const todayVisible = todayProj >= -0.01 && todayProj <= 1.01
+
+  const renderTodayMarker = () => {
+    if (!todayVisible) return null
+    return (
+      <div
+        data-no-skeleton
+        className="absolute w-px bg-black/35 dark:bg-white/40 pointer-events-none"
+        style={{
+          left: TRACK_INSET_X + todayProj * innerWidth,
+          top: YEAR_AXIS_Y,
+          height: TRACK_Y + 6 - YEAR_AXIS_Y,
+        }}
+      >
+        <span
+          className="absolute -translate-x-1/2 text-[9px] tracking-widest uppercase text-black/35 dark:text-white/40"
+          style={{ top: TODAY_LABEL_Y - YEAR_AXIS_Y }}
+        >
+          today
+        </span>
+      </div>
+    )
+  }
+
+  const renderLabels = () => {
+    if (width === 0) return null
+    return packed.items.map((item) => {
+      const projX = (item.rawX - zoomWindow.start) / zoomSpan
+      // Cull labels clearly outside the visible window. Row assignment is
+      // stable (full-history packed) so culling doesn't reshuffle rows.
+      if (projX < -0.05 || projX > 1.05) return null
+
+      const anchorX = projX * innerWidth
+      let labelX = anchorX
+      if (labelX + item.shortWidth > innerWidth) {
+        labelX = Math.max(0, innerWidth - item.shortWidth)
+      }
+      if (labelX < 0) labelX = 0
+
+      const labelTop = FIRST_LABEL_Y + item.row * LABEL_ROW_HEIGHT
+      const connectorTop = TRACK_Y + 6
+      const connectorHeight = labelTop - connectorTop
+      const isActive = activeId === item.trip.id
+      const hoverLeft = Math.max(
+        0,
+        Math.min(labelX - HOVER_HPAD, innerWidth - item.fullWidth - HOVER_HPAD * 2),
+      )
+      const restingLeft = TRACK_INSET_X + labelX
+      const leftPx = isActive ? TRACK_INSET_X + hoverLeft : restingLeft
+
+      return (
+        <div key={item.trip.id}>
+          <div
+            data-no-skeleton
+            className="absolute w-px bg-black/15 dark:bg-white/15 pointer-events-none"
+            style={{
+              left: TRACK_INSET_X + anchorX,
+              top: connectorTop,
+              height: Math.max(0, connectorHeight),
+            }}
+          />
+          <div
+            onMouseEnter={() => setActiveId(item.trip.id)}
+            onMouseLeave={() => setActiveId((cur) => (cur === item.trip.id ? null : cur))}
+            onClick={(e) => {
+              e.stopPropagation()
+              setActiveId((cur) => (cur === item.trip.id ? null : item.trip.id))
+            }}
+            className={`absolute cursor-default rounded-sm ring-1 transition-[left,width,background-color,box-shadow] duration-150 ease-out ${
+              isActive
+                ? 'z-10 bg-white/95 dark:bg-black/95 shadow-sm ring-black/10 dark:ring-white/15'
+                : 'bg-transparent shadow-none ring-transparent'
+            }`}
+            style={{
+              left: leftPx,
+              top: labelTop,
+              height: LABEL_ROW_HEIGHT,
+              width:
+                (isActive ? item.fullWidth : item.shortWidth) +
+                (isActive ? HOVER_HPAD * 2 : 0),
+            }}
+          >
+            <span
+              className="absolute top-0 text-[10px] leading-[14px] tracking-widest uppercase whitespace-nowrap transition-opacity duration-150 ease-out pointer-events-none text-black/80 dark:text-white/80"
+              style={{ left: isActive ? HOVER_HPAD : 0, opacity: isActive ? 0 : 1 }}
+            >
+              {item.short}
+            </span>
+            <span
+              className="absolute top-0 text-[10px] leading-[14px] tracking-widest uppercase whitespace-nowrap transition-opacity duration-150 ease-out pointer-events-none text-black dark:text-white"
+              style={{ left: HOVER_HPAD, opacity: isActive ? 1 : 0 }}
+            >
+              {item.full}
+            </span>
+          </div>
+        </div>
+      )
+    })
+  }
+
   return (
     <div
       ref={wrapperRef}
@@ -462,109 +572,8 @@ export default function Timeline({ trips, className, now }: TimelineProps) {
           ))}
       </div>
 
-      {/* Today marker */}
-      {(() => {
-        const todayProj = (1 - zoomWindow.start) / (zoomWindow.end - zoomWindow.start)
-        if (todayProj < -0.01 || todayProj > 1.01) return null
-        return (
-          <div
-            data-no-skeleton
-            className="absolute w-px bg-black/35 dark:bg-white/40 pointer-events-none"
-            style={{
-              left: TRACK_INSET_X + todayProj * innerWidth,
-              top: YEAR_AXIS_Y,
-              height: TRACK_Y + 6 - YEAR_AXIS_Y,
-            }}
-          >
-            <span
-              className="absolute -translate-x-1/2 text-[9px] tracking-widest uppercase text-black/35 dark:text-white/40"
-              style={{ top: TODAY_LABEL_Y - YEAR_AXIS_Y }}
-            >
-              today
-            </span>
-          </div>
-        )
-      })()}
-
-      {/* Connector lines + labels */}
-      {width > 0 &&
-        (() => {
-          const zoomSpan = zoomWindow.end - zoomWindow.start
-          return packed.items.map((item) => {
-            const projX = (item.rawX - zoomWindow.start) / zoomSpan
-            // Cull labels clearly outside the visible window. Row assignment is
-            // stable (full-history packed) so culling doesn't reshuffle rows.
-            if (projX < -0.05 || projX > 1.05) return null
-
-            const anchorX = projX * innerWidth
-            let labelX = anchorX
-            if (labelX + item.shortWidth > innerWidth) {
-              labelX = Math.max(0, innerWidth - item.shortWidth)
-            }
-            if (labelX < 0) labelX = 0
-
-            const labelTop = FIRST_LABEL_Y + item.row * LABEL_ROW_HEIGHT
-            const connectorTop = TRACK_Y + 6
-            const connectorHeight = labelTop - connectorTop
-            const isActive = activeId === item.trip.id
-            const hoverLeft = Math.max(
-              0,
-              Math.min(labelX - HOVER_HPAD, innerWidth - item.fullWidth - HOVER_HPAD * 2),
-            )
-            const restingLeft = TRACK_INSET_X + labelX
-            const leftPx = isActive ? TRACK_INSET_X + hoverLeft : restingLeft
-
-            return (
-              <div key={item.trip.id}>
-                <div
-                  data-no-skeleton
-                  className="absolute w-px bg-black/15 dark:bg-white/15 pointer-events-none"
-                  style={{
-                    left: TRACK_INSET_X + anchorX,
-                    top: connectorTop,
-                    height: Math.max(0, connectorHeight),
-                  }}
-                />
-              <div
-                onMouseEnter={() => setActiveId(item.trip.id)}
-                onMouseLeave={() =>
-                  setActiveId((cur) => (cur === item.trip.id ? null : cur))
-                }
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setActiveId((cur) => (cur === item.trip.id ? null : item.trip.id))
-                }}
-                className={`absolute cursor-default rounded-sm ring-1 transition-[left,width,background-color,box-shadow] duration-150 ease-out ${
-                  isActive
-                    ? 'z-10 bg-white/95 dark:bg-black/95 shadow-sm ring-black/10 dark:ring-white/15'
-                    : 'bg-transparent shadow-none ring-transparent'
-                }`}
-                style={{
-                  left: leftPx,
-                  top: labelTop,
-                  height: LABEL_ROW_HEIGHT,
-                  width:
-                    (isActive ? item.fullWidth : item.shortWidth) +
-                    (isActive ? HOVER_HPAD * 2 : 0),
-                }}
-              >
-                <span
-                  className="absolute top-0 text-[10px] leading-[14px] tracking-widest uppercase whitespace-nowrap transition-opacity duration-150 ease-out pointer-events-none text-black/80 dark:text-white/80"
-                  style={{ left: isActive ? HOVER_HPAD : 0, opacity: isActive ? 0 : 1 }}
-                >
-                  {item.short}
-                </span>
-                <span
-                  className="absolute top-0 text-[10px] leading-[14px] tracking-widest uppercase whitespace-nowrap transition-opacity duration-150 ease-out pointer-events-none text-black dark:text-white"
-                  style={{ left: HOVER_HPAD, opacity: isActive ? 1 : 0 }}
-                >
-                  {item.full}
-                </span>
-              </div>
-            </div>
-          )
-        })
-      })()}
+      {renderTodayMarker()}
+      {renderLabels()}
     </div>
   )
 }
