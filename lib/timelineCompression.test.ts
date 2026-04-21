@@ -93,6 +93,60 @@ describe('buildCompressedMap', () => {
     expect(months.length).toBeGreaterThan(0)
   })
 
+  it('overlapping trips merge into one active interval', () => {
+    const map = buildCompressedMap(
+      [
+        { id: 'a', startDate: '2024-01-01', endDate: '2024-01-20' },
+        { id: 'b', startDate: '2024-01-10', endDate: '2024-01-31' },
+      ],
+      { now: '2024-06-01' }
+    )
+    // Merged range is 2024-01-01 → 2024-01-31. The interior date (2024-01-15)
+    // falls inside the active band, so its x should sit between the two
+    // endpoints with non-zero margin on both sides.
+    const xStart = map.dateToX('2024-01-01')
+    const xMid = map.dateToX('2024-01-15')
+    const xEnd = map.dateToX('2024-01-31')
+    expect(xMid - xStart).toBeGreaterThan(0)
+    expect(xEnd - xMid).toBeGreaterThan(0)
+    // No empty gap should appear between the overlapping trips: x at b.start
+    // must be strictly less than x at a.end + (one active-segment width).
+    const gapBetween = map.dateToX('2024-01-10') - map.dateToX('2024-01-09')
+    const sameSpanInside = map.dateToX('2024-01-21') - map.dateToX('2024-01-20')
+    // If merge worked, both spans live inside one active segment and have the
+    // same per-day width. If merge failed, the second span would be much smaller
+    // (compressed empty). Allow a tiny tolerance for floating point.
+    expect(Math.abs(gapBetween - sameSpanInside)).toBeLessThan(1e-9)
+  })
+
+  it('trips with endDate after now are clamped to now', () => {
+    const map = buildCompressedMap(
+      [{ id: 'a', startDate: '2024-03-01', endDate: '2025-01-01' }],
+      { now: '2024-06-01' }
+    )
+    expect(map.end).toBe('2024-06-01')
+    expect(map.dateToX('2024-06-01')).toBeCloseTo(1, 10)
+    // Dates past now clamp silently, no throw.
+    expect(map.dateToX('2030-01-01')).toBeCloseTo(1, 10)
+  })
+
+  it('subtractOneYear handles leap day without producing a phantom date', () => {
+    // Empty trips path uses subtractOneYear(now). On a leap day, this used to
+    // produce 2023-02-29 — Date.UTC silently rolls that to Mar 1, but the bug
+    // was a real correctness risk. Verify start is a real date and span is ~365.
+    const map = buildCompressedMap([], { now: '2024-02-29' })
+    expect(map.end).toBe('2024-02-29')
+    // Start should be a parseable date that's roughly 365 days earlier.
+    const startMs = Date.UTC(
+      +map.start.slice(0, 4),
+      +map.start.slice(5, 7) - 1,
+      +map.start.slice(8, 10)
+    )
+    const endMs = Date.UTC(2024, 1, 29)
+    const days = Math.round((endMs - startMs) / 86400000)
+    expect(days).toBe(365)
+  })
+
   it('dateToX is monotonically increasing', () => {
     const map = buildCompressedMap(
       [

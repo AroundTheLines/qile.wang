@@ -36,6 +36,7 @@ interface Segment {
 
 const MS_PER_DAY = 86400000
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const TICK_COLLISION_X = 0.02
 
 function isoToUtcMs(iso: string): number {
   return Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10))
@@ -55,10 +56,12 @@ function addDays(iso: string, days: number): string {
 }
 
 function todayIso(): string {
+  // UTC to match daysBetween/addDays, which use Date.UTC. A local-time "today"
+  // would drift one day from these helpers near midnight in non-UTC zones.
   const d = new Date()
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
+  const y = d.getUTCFullYear()
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
 }
 
@@ -67,8 +70,9 @@ function minIso(a: string, b: string): string {
 }
 
 function subtractOneYear(iso: string): string {
-  const y = +iso.slice(0, 4) - 1
-  return `${y}${iso.slice(4)}`
+  // Round-trip through Date.UTC so leap-day inputs (e.g. 2024-02-29) don't
+  // produce a non-existent prior-year date; addDays with -365 lands on Mar 1.
+  return addDays(iso, -365)
 }
 
 export function buildCompressedMap(
@@ -84,6 +88,8 @@ export function buildCompressedMap(
   for (const t of trips) {
     if (t.startDate > now) continue
     const endDate = minIso(t.endDate, now)
+    // Defensive: if a caller passes startDate > endDate (invalid), collapse to a
+    // single-day trip at endDate rather than throw — matches "no throw" gotcha.
     const startDate = t.startDate < endDate ? t.startDate : endDate
     normalized.push({ id: t.id, startDate, endDate })
   }
@@ -238,7 +244,7 @@ export function buildCompressedMap(
       }
     }
     for (const cand of monthCandidates) {
-      const collides = tickMarks.some((t) => Math.abs(t.x - cand.x) < 0.02)
+      const collides = tickMarks.some((t) => Math.abs(t.x - cand.x) < TICK_COLLISION_X)
       if (!collides) tickMarks.push(cand)
     }
   }
