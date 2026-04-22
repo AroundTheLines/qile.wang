@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { GlobeContext, type ScreenPosition, type ViewportTier } from './GlobeContext'
-import type { PinWithVisits, TripSummary } from '@/lib/types'
+import type { PinWithVisits, TripSummary, TripWithVisits } from '@/lib/types'
 import type { GlobeScreenCircle } from '@/lib/globe'
 
 function useViewportTier(): ViewportTier {
@@ -43,11 +43,13 @@ const IDLE_RESUME_MS = 5000
 export default function GlobeProvider({
   trips,
   pins,
+  tripsWithVisits,
   fetchError,
   children,
 }: {
   trips: TripSummary[]
   pins: PinWithVisits[]
+  tripsWithVisits: TripWithVisits[]
   fetchError: boolean
   children: React.ReactNode
 }) {
@@ -282,6 +284,7 @@ export default function GlobeProvider({
       value={{
         trips,
         pins,
+        tripsWithVisits,
         fetchError,
         selectedPin,
         selectPin,

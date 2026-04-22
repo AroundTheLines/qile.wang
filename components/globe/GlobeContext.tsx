@@ -7,7 +7,7 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from 'react'
-import type { PinWithVisits, TripSummary } from '@/lib/types'
+import type { PinWithVisits, TripSummary, TripWithVisits } from '@/lib/types'
 import type { GlobeScreenCircle } from '@/lib/globe'
 
 export interface ScreenPosition {
@@ -26,6 +26,8 @@ export interface GlobeContextValue {
   // --- Server-fed data ---
   trips: TripSummary[]
   pins: PinWithVisits[]
+  /** Trips with embedded visits+items. Drives TripPanel (C4). */
+  tripsWithVisits: TripWithVisits[]
   fetchError: boolean
 
   // --- Pin selection ---

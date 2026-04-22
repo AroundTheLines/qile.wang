@@ -31,6 +31,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
     isDesktop,
     pins,
     layoutState,
+    panelVariant,
     activeArticleSlug,
     closeArticle,
   } = useGlobe()
@@ -214,7 +215,10 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
   // - article-open: shrunk to articleGlobeWidthPx, pinned left, article on right
   const isArticle = layoutState === 'article-open'
   const globeWidth = isArticle ? articleGlobeWidthPx : viewportW
-  const globeX = isArticle ? 0 : selectedPin ? -panelWidthPx / 2 : 0
+  // Shift the globe to make room for the panel whenever any panel variant
+  // is open (pin or trip — C4). Keyed on panelVariant rather than selectedPin
+  // so a trip-only lock also opens the panel slot.
+  const globeX = isArticle ? 0 : panelVariant ? -panelWidthPx / 2 : 0
 
   return (
     <div
@@ -280,7 +284,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
       </AnimatePresence>
 
       <AnimatePresence>
-        {selectedPin && selectedPinData && layoutState === 'panel-open' && (
+        {panelVariant && layoutState === 'panel-open' && (
           <motion.div
             className="absolute top-0 bottom-0"
             style={{ width: panelWidthPx, right: 16 }}
