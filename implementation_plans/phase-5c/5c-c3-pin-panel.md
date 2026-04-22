@@ -454,16 +454,20 @@ Known follow-up for C4/C7: the `VisitLike` union type inside `VisitSection.tsx` 
 - **`disabled` + `onClick`** — the browser really does suppress clicks on disabled buttons, so the `if (!hasArticle) return` guard in `handleViewArticle` is belt-and-braces and can be dropped if someone wants to lean on HTML semantics.
 - **Sticky stacking order** — browser swaps sticky headers naturally as they scroll past each other. No explicit `z-index` arithmetic required; one `z-10` per header is enough.
 
-### Visual grouping pass (follow-up commit)
+### Visual grouping pass (follow-up commits)
 
-Initial render made the expand toggle + expanded items look like independent rows beneath the section (each item had its own full-width `border-b`, the toggle had a full-width hover background). Read as "here are some related items" rather than "here are this trip's items."
+Initial render made the expand toggle + items look like an independent list below the header — each item had its own `border-b`, the toggle had a full-width hover background, and the header had its own `border-b` that visually competed with the between-trips border.
 
-Tightened by:
-- Indenting the items region with `pl-4 pr-4` + a left rail (`border-l border-gray-200 dark:border-gray-800 pl-3`) that visually tethers the toggle + items back to the section header.
-- Dropping per-item `border-b` on `GlobeDetailItem` — the indent rail + whitespace carry the separation.
-- Dropping the full-row hover background on the toggle; hover is now text-color only so the toggle reads as part of the section, not a distinct action row.
+**First attempt** (reverted): indent-container + left-rail (`border-l pl-3`) around the items region. Read as "nested sub-thing" with noisy left-padding.
 
-Future edits to `GlobeDetailItem`: don't re-add the `border-b`, it'll read as independent-list again.
+**Shipped version**:
+- **No wrapping indent on the items region.** Toggle + items span the full panel width; internal `px-4` matches the header's padding so text aligns vertically with the date/trip-title line above.
+- **Header has no `border-b`.** The divider between the header and its own items was visually equal to the between-trips divider, implying the items were peers of the header. Removed entirely.
+- **Section (between-trip) border bumped to `border-gray-200 dark:border-gray-800`** (from `gray-100` / `gray-900`). Now the only horizontal line inside a visit block is the one separating it from the next trip — the header reads as attached to its items, and trips read as distinct units.
+- **Per-item `border-b` stays removed** on `GlobeDetailItem`. Items are separated by whitespace + hover affordance only. Future edits: don't re-add it.
+- **Accordion defaults to open.** `useState(true)` in `VisitSection`. Overrides the spec-stated "collapsed default" (§7.3.2) at the user's request — rationale: expanded is the most informative default for a UI where most visits have ≤ a handful of items, and collapsing wastes a click for the common case. §7.3.2's "resets on variant switch" rule still applies: the baseline is now expanded, and switching panels returns to that baseline.
+
+Knock-on: sticky-header swap on scroll no longer has a horizontal rule to signal the transition — relies on the header's solid `bg-white dark:bg-black` covering outgoing content. Acceptable in practice; revisit if testing shows the swap reads unclearly.
 
 ### Tests added
 
