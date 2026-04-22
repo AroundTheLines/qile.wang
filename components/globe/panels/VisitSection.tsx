@@ -87,25 +87,27 @@ export default function VisitSection({
       </header>
 
       {visit.items.length > 0 && (
-        <>
-          <button
-            onClick={() => setExpanded((e) => !e)}
-            className="w-full px-4 py-2 flex items-center justify-between text-left text-[10px] tracking-widest uppercase text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors cursor-pointer"
-            aria-expanded={expanded}
-          >
-            <span>
-              {visit.items.length} {visit.items.length === 1 ? 'item' : 'items'}
-            </span>
-            <span data-no-skeleton aria-hidden>{expanded ? '▴' : '▾'}</span>
-          </button>
-          {expanded && (
-            <div>
-              {visit.items.map((item) => (
-                <GlobeDetailItem key={item._id} item={item} />
-              ))}
-            </div>
-          )}
-        </>
+        <div className="pl-4 pr-4 pb-2">
+          <div className="border-l border-gray-200 dark:border-gray-800 pl-3">
+            <button
+              onClick={() => setExpanded((e) => !e)}
+              className="w-full py-2 flex items-center justify-between text-left text-[10px] tracking-widest uppercase text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white transition-colors cursor-pointer"
+              aria-expanded={expanded}
+            >
+              <span>
+                {visit.items.length} {visit.items.length === 1 ? 'item' : 'items'}
+              </span>
+              <span data-no-skeleton aria-hidden>{expanded ? '▴' : '▾'}</span>
+            </button>
+            {expanded && (
+              <div className="pb-1">
+                {visit.items.map((item) => (
+                  <GlobeDetailItem key={item._id} item={item} />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </section>
   )

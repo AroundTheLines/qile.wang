@@ -454,6 +454,17 @@ Known follow-up for C4/C7: the `VisitLike` union type inside `VisitSection.tsx` 
 - **`disabled` + `onClick`** — the browser really does suppress clicks on disabled buttons, so the `if (!hasArticle) return` guard in `handleViewArticle` is belt-and-braces and can be dropped if someone wants to lean on HTML semantics.
 - **Sticky stacking order** — browser swaps sticky headers naturally as they scroll past each other. No explicit `z-index` arithmetic required; one `z-10` per header is enough.
 
+### Visual grouping pass (follow-up commit)
+
+Initial render made the expand toggle + expanded items look like independent rows beneath the section (each item had its own full-width `border-b`, the toggle had a full-width hover background). Read as "here are some related items" rather than "here are this trip's items."
+
+Tightened by:
+- Indenting the items region with `pl-4 pr-4` + a left rail (`border-l border-gray-200 dark:border-gray-800 pl-3`) that visually tethers the toggle + items back to the section header.
+- Dropping per-item `border-b` on `GlobeDetailItem` — the indent rail + whitespace carry the separation.
+- Dropping the full-row hover background on the toggle; hover is now text-color only so the toggle reads as part of the section, not a distinct action row.
+
+Future edits to `GlobeDetailItem`: don't re-add the `border-b`, it'll read as independent-list again.
+
 ### Tests added
 
 - `lib/formatDates.test.ts` — covers all three `formatDateRange` branches (single day, same-month, cross-month) plus `formatMonthYear` and `formatFullDate`.

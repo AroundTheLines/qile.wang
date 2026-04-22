@@ -16,7 +16,7 @@ export default function GlobeDetailItem({ item }: { item: VisitItemSummary }) {
 
   return (
     <button
-      className="flex gap-3 p-3 w-full text-left hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors cursor-pointer border-b border-gray-100 dark:border-gray-900 last:border-b-0"
+      className="flex gap-3 py-2 pr-3 w-full text-left hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors cursor-pointer"
       onClick={handleClick}
     >
       <div className="w-16 h-20 flex-shrink-0 bg-gray-100 dark:bg-gray-900 overflow-hidden">
