@@ -19,8 +19,11 @@ const PIN_ROTATE_DURATION = 0.3
 const ARTICLE_ZOOM_DURATION = 0.4
 // When zoomed for article-open, pull camera closer than resting.
 const ARTICLE_CAMERA_DISTANCE = 4.2
-// Cinematic rotate-to-fit duration for trip lock (§17.3).
-const TRIP_FIT_DURATION = 0.8
+// Cinematic rotate-to-fit duration for trip lock (§17.3). Nudged up
+// from the spec's 800ms after PR review flagged trip-to-trip transitions
+// as "whiplash-y" — the longer runway softens the mid-animation peak
+// velocity without changing the ease curve.
+const TRIP_FIT_DURATION = 1.1
 // Padding around max angular spread when fitting a trip.
 const TRIP_FIT_MARGIN = 0.15
 // Cap zoom-out for globe-spanning trips so the globe stays ~40% visible

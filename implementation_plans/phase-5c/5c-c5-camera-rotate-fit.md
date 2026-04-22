@@ -343,6 +343,12 @@ Both the `useEffect` and the entrance-done consumer inside `useFrame` collect co
 
 Guards intentionally stay at the call sites (not inside the helper) so each path can express its own preconditions (`entranceDone.current`, `layoutState !== 'article-open'`, `pins` non-empty) without the helper having to read them.
 
+### Duration tuning: 800ms → 1100ms
+
+Spec §17.3 calls for ~800ms. After initial implementation, PR review feedback flagged trip-to-trip transitions as feeling whiplash-y — the abrupt mid-animation peak velocity from `0 → endPos` over 0.8s reads as jerky when the user re-targets quickly between locked trips. Bumped to **1.1s** without changing the quadratic ease-in-out curve (`t < 0.5 ? 2*t² : 1 − (−2t+2)²/2`). The longer runway lowers peak velocity ~27%, which is the knob that actually affects perceived abruptness; the curve shape is fine.
+
+If future polish wants even softer edges (not currently needed), swap to a quintic ease-in-out (`t < 0.5 ? 16*t⁵ : 1 − (−2t+2)⁵/32`) — flatter boundaries, same midpoint.
+
 ### Scope left for follow-ups
 
 - **Proper frustum-fit math.** The current near-binary behavior works but isn't a "proper" camera-FOV frustum fit. If a future ticket wants a smooth `distance(spread)` curve — e.g. Japan at resting, Europe slightly pulled back, RTW at max — revisit the derivation using the camera's actual vertical FOV. Out of scope for C5.
