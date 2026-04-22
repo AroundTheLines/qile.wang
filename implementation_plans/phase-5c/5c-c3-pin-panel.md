@@ -473,6 +473,26 @@ Knock-on: sticky-header swap on scroll no longer has a horizontal rule to signal
 
 - `lib/formatDates.test.ts` — covers all three `formatDateRange` branches (single day, same-month, cross-month) plus `formatMonthYear` and `formatFullDate`.
 
-### Verification deferred
+### Headless testability — `GlobePinTriggers`
 
-Interactive panel behavior (sticky-header swap on scroll, expand/collapse, disabled "View trip article" tooltip) was not auto-verified in CI — the R3F raycaster doesn't fire on synthesized pointer events from a headless harness. Human smoke test required on first `/globe` load with the multi-visit Berlin fixture.
+Pins live inside an R3F canvas, so the raycaster does not respond to synthesized pointer events. To allow headless preview tooling (and keyboard/AT users) to open the pin panel without a pointer, `components/globe/GlobePinTriggers.tsx` renders an `sr-only` list of `<button>`s — one per pin — that call `selectPin(location._id)` directly on click. Mounted inside `GlobeViewport` (both mobile and desktop branches).
+
+API shape:
+- Buttons have `data-pin-trigger="<locationId>"` and `data-pin-name="<location.name>"`.
+- Wrapped in `<ul aria-label="Pin locations">` so AT announces it as a distinct group.
+
+Usage from Claude Preview:
+```js
+document.querySelector('[data-pin-trigger="seed.location.berlin-germany"]').click()
+// then wait ~1000ms for the motion.div slide-in to commit
+```
+Or via `preview_click('[data-pin-trigger="<id>"]')`.
+
+Verified end-to-end through the headless preview:
+- Pin panel opens with correct title + subtitle (Berlin "2 visits", single-visit pins have no subtitle).
+- Visit sections render newest-first.
+- Accordion defaults to expanded; toggle collapses + re-expands with animation.
+- Disabled "View trip article" on trips without body: `disabled`, `aria-disabled="true"`, `title="No content available for this trip."`, `cursor-not-allowed` — all present.
+- Close X button fully dismisses the panel.
+
+Sticky-header swap on scroll still needs a human eyeball (scroll is easy to test headlessly, but the *visual* transition quality isn't something a snapshot can judge).
