@@ -1,4 +1,4 @@
-import type { PinWithVisits, VisitSummary } from './types'
+import type { Coordinates, PinWithVisits, VisitSummary } from './types'
 
 // --- Layout constants ---
 
@@ -32,6 +32,88 @@ export function clampPanelTop(pinY: number | null, viewportHeight: number): numb
   // Align panel top ~60px above the pin (so pin visually connects to header)
   const desired = pinY - 60
   return Math.max(24, Math.min(desired, viewportHeight - 400))
+}
+
+// --- Camera framing (C5) ---
+
+/**
+ * Compute the camera position (relative to globe origin) that frames all
+ * `coords` on a unit-radius sphere. Returns a position vector scaled to
+ * the computed fit distance, clamped to [restingDistance, maxDistance].
+ *
+ * Conventions:
+ * - Coords are treated as directions on the unit sphere. The globe's
+ *   actual mesh radius is not threaded through because `restingDistance`
+ *   is measured from origin and the `1/tan(fitFov)` formula is scale-
+ *   free in that frame.
+ * - `centroid` = normalized sum of direction vectors. If the inputs are
+ *   antipodal (sum ≈ 0), falls back to the first visit's direction.
+ * - `fitFov = maxAngle + margin`. When fitFov approaches π/2, `1/tan`
+ *   explodes and then goes negative; `fovSingularityBuffer` catches that
+ *   band early and pins to `maxDistance` so globe-spanning trips stay
+ *   framed (§16 Q4 "~40% visible").
+ */
+export interface ComputeFitCameraOpts {
+  restingDistance: number
+  maxDistance: number
+  /** Radians of padding around the angular spread. */
+  margin: number
+  /** Radians before π/2 at which we bail to maxDistance. */
+  fovSingularityBuffer: number
+}
+
+export function computeFitCamera(
+  coords: Coordinates[],
+  opts: ComputeFitCameraOpts,
+): { x: number; y: number; z: number; distance: number } {
+  if (coords.length === 0) {
+    return { x: 0, y: 0, z: opts.restingDistance, distance: opts.restingDistance }
+  }
+  const vectors = coords.map((c) => sphericalToCartesian(c.lat, c.lng, 1))
+
+  let cx = 0
+  let cy = 0
+  let cz = 0
+  for (const [x, y, z] of vectors) {
+    cx += x
+    cy += y
+    cz += z
+  }
+  let clen = Math.hypot(cx, cy, cz)
+  if (clen < 1e-6) {
+    // Antipodal — fall back to the first visit's direction.
+    ;[cx, cy, cz] = vectors[0]
+    clen = Math.hypot(cx, cy, cz)
+  }
+  cx /= clen
+  cy /= clen
+  cz /= clen
+
+  let maxAngle = 0
+  for (const [vx, vy, vz] of vectors) {
+    const dot = Math.min(1, Math.max(-1, cx * vx + cy * vy + cz * vz))
+    const a = Math.acos(dot)
+    if (a > maxAngle) maxAngle = a
+  }
+
+  const fitFov = maxAngle + opts.margin
+  // `rawDistance = 1/tan(fitFov)` in unit-sphere units — derivation: for a
+  // camera at distance d looking at origin, the pin at angular offset α from
+  // the centroid subtends screen angle atan(sin α / (d - cos α)) ≈ α / d for
+  // small α and d >> 1. Setting that equal to half the camera FOV and solving
+  // for d gives d ≈ 1/tan(α). The `* RESTING` multiplier seen in the C5
+  // ticket's pseudocode was a transcription bug — it caused single-visit
+  // trips to clamp at MAX_DISTANCE instead of landing at RESTING.
+  const rawDistance = 1 / Math.tan(fitFov)
+  const distance =
+    fitFov >= Math.PI / 2 - opts.fovSingularityBuffer
+      ? opts.maxDistance
+      : Math.min(
+          opts.maxDistance,
+          Math.max(opts.restingDistance, rawDistance),
+        )
+
+  return { x: cx * distance, y: cy * distance, z: cz * distance, distance }
 }
 
 export function sphericalToCartesian(

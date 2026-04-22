@@ -266,6 +266,88 @@ This guard lives in GlobeScene's existing pin-rotate effect. Coordinate with C7.
 - C7 reads `pin.tripIds` to decide whether to trigger rotate or scroll panel. Confirm the pin-rotate-guard is in place.
 - None other.
 
+---
+
+## Shipped implementation notes (2026-04-22)
+
+Record of what actually landed and the decisions made during implementation. Reviewers and future implementers should treat this section as authoritative over the pseudocode in *Implementation guidance* above when they disagree.
+
+### Where the code lives
+
+- **`lib/globe.ts`** owns `computeFitCamera` as a pure, parameter-driven helper. Extracted from `GlobeScene.tsx` so it's unit-testable without a R3F runtime and because the math is independent of any component state. The ticket suggested keeping it local; we chose to extract because the test harness pattern (`aggregatePins` + friends in `lib/globe.ts` with a `lib/globe.test.ts` companion) was already established in Phase 5C.
+- **`components/globe/GlobeScene.tsx`** owns the scene-side glue: state refs, the `useEffect` that fires on `lockedTrip` change, the `useFrame` animation branch, and a `kickOffTripFit` `useCallback` that both the effect and the entrance-done handler call. Extracted because the two call sites had duplicated coord-collection + ref-write logic.
+- **`lib/globe.test.ts`** covers the 5 branches of `computeFitCamera`: single coord, tight cluster, hemisphere-straddle (→ max), antipodal (→ fallback direction, not NaN), and empty input (→ resting, defensive).
+
+### Correction to the ticket's pseudocode — `rawDistance` multiplier
+
+The ticket's reference pseudocode (§Fit-to-bounds math, line 102 of the original draft) had:
+
+```ts
+const distance = Math.min(MAX_FIT_DISTANCE, Math.max(RESTING, rawDistance * RESTING))
+```
+
+The `* RESTING` multiplier is a transcription bug. The derivation above it (§92–93) correctly states `d = R / tan(α + margin)` with R=1, which gives `d = 1/tan(fitFov) = rawDistance` — no extra multiplier. The bug caused single-visit and tight-cluster trips to compute `rawDistance * RESTING ≈ 6.6 × 6.5 ≈ 43`, which clamped to `MAX_FIT_DISTANCE = 13` — so every trip, regardless of spread, zoomed out to the cap.
+
+The shipped formula drops the multiplier:
+
+```ts
+const rawDistance = 1 / Math.tan(fitFov)
+const distance =
+  fitFov >= Math.PI / 2 - FIT_FOV_SINGULARITY_BUFFER
+    ? maxDistance
+    : Math.min(maxDistance, Math.max(restingDistance, rawDistance))
+```
+
+The ticket's own gotcha §247 ("rawDistance = 1/tan(MARGIN) ≈ 6.6. Close to resting.") already assumed this simpler form — it's the intended behavior.
+
+### Resulting distance behavior (near-binary)
+
+With the corrected formula, the output is effectively a step function:
+
+| Angular spread | Example trip | Distance |
+|---|---|---|
+| 0° (single visit) | Morocco '18 | ~6.62 (≈ resting) |
+| a few ° (tight cluster) | Japan Spring '22 (Tokyo/Kyoto/Osaka) | `RESTING_DISTANCE` = 6.5 |
+| up to ~82° | Any continental trip | `RESTING_DISTANCE` = 6.5 |
+| ≥ π/2 − 0.05 rad (~87°) | Round-the-World (Tokyo/NYC/Sydney) | `TRIP_FIT_MAX_DISTANCE` = 13 |
+
+The `rawDistance > RESTING` branch only fires for `fitFov < atan(1/6.5) ≈ 8.74°`, i.e. when `maxAngle + margin` is under ~8.74° — which in practice means single visits (maxAngle = 0) and degenerate-close pairs. For those, the camera lands a whisker past resting (6.62 vs 6.5) — close enough to match the ticket's acceptance criterion "single visit: resting distance."
+
+This binary behavior is intentional and matches §16 Q4's "~40% visible for intercontinental trips" plus the acceptance-criteria "single visit → resting" line.
+
+### `FIT_FOV_SINGULARITY_BUFFER = 0.05 rad` (~2.9°)
+
+Named constant for the hemisphere-straddle branch. `1/tan(fitFov)` diverges and then flips negative as `fitFov` crosses π/2, so we bail out of the math a hair before the singularity. 0.05 rad chosen empirically — large enough to avoid floating-point noise near π/2, small enough that it never steals from trips the user would expect to frame smoothly.
+
+### Invariant: `RESTING_DISTANCE < TRIP_FIT_MAX_DISTANCE`
+
+The `Math.max(RESTING_DISTANCE, …)` floor assumes this; the `OrbitControls maxDistance` prop is also pinned to `TRIP_FIT_MAX_DISTANCE`. If `RESTING_DISTANCE` is ever tuned upward, bump `TRIP_FIT_MAX_DISTANCE` to preserve headroom.
+
+### `OrbitControls maxDistance` bumped 11 → 13
+
+Previously the OrbitControls `maxDistance` prop capped at 11. The trip-fit target distance (`TRIP_FIT_MAX_DISTANCE = 13`) clamps against `OrbitControls`'s internal limits, so without this bump the fit animation would appear truncated. The prop is now wired to the same constant.
+
+### Cold-URL `?trip=` handling
+
+Implemented via a `pendingTripFit` ref. If the `lockedTrip` effect fires *before* the entrance animation completes, we set the pending flag and return. The entrance-done branch inside `useFrame` consumes the flag and calls `kickOffTripFit(lockedTrip)` directly — no extra effect dance, same helper.
+
+This pattern mirrors the existing `pendingArticleZoom` mechanism for cold-URL article loads.
+
+### Article-open guard + `prevLockedTripRef` ordering
+
+The effect returns early when `layoutState === 'article-open'` *without* updating `prevLockedTripRef`. This is intentional: if a user deep-links to `/trip/<slug>/<article>` (article-open while trip is locked) and then closes the article back to `panel-open`, the effect re-fires with the same `lockedTrip` value. Because `prev !== lockedTrip` still holds (we never marked it seen), the fit lands on article close. If you ever want to suppress that re-fit, update `prevLockedTripRef.current = lockedTrip` before returning.
+
+### `kickOffTripFit` shared helper
+
+Both the `useEffect` and the entrance-done consumer inside `useFrame` collect coords from `pins[]` where `v.trip._id === tripId`, compute the fit camera position, and populate `rotateToFitTripRef`. The shared callback is the single place to update if the data model's trip-id key ever moves.
+
+Guards intentionally stay at the call sites (not inside the helper) so each path can express its own preconditions (`entranceDone.current`, `layoutState !== 'article-open'`, `pins` non-empty) without the helper having to read them.
+
+### Scope left for follow-ups
+
+- **Proper frustum-fit math.** The current near-binary behavior works but isn't a "proper" camera-FOV frustum fit. If a future ticket wants a smooth `distance(spread)` curve — e.g. Japan at resting, Europe slightly pulled back, RTW at max — revisit the derivation using the camera's actual vertical FOV. Out of scope for C5.
+- **Pending-flag state machine.** Both `pendingArticleZoom` and `pendingTripFit` are consumed in the same post-entrance block; if a third "pending X on entrance" ever shows up, the interaction matrix grows and a dedicated state machine would be cleaner. Not needed at two.
+
 ## How to verify
 
 1. `/globe` — click Japan Spring '22 timeline label.

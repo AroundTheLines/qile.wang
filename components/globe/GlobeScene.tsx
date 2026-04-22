@@ -5,7 +5,7 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { useGlobe } from './GlobeContext'
-import { sphericalToCartesian } from '@/lib/globe'
+import { computeFitCamera, sphericalToCartesian } from '@/lib/globe'
 import type { Coordinates } from '@/lib/types'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 
@@ -23,46 +23,23 @@ const ARTICLE_CAMERA_DISTANCE = 4.2
 const TRIP_FIT_DURATION = 0.8
 // Padding around max angular spread when fitting a trip.
 const TRIP_FIT_MARGIN = 0.15
-// Cap zoom-out for globe-spanning trips so the globe stays ~40% visible.
+// Cap zoom-out for globe-spanning trips so the globe stays ~40% visible
+// (§16 Q4). Invariant: RESTING_DISTANCE < TRIP_FIT_MAX_DISTANCE — the
+// `Math.max(RESTING_DISTANCE, …)` floor inside computeFitCamera assumes
+// this and the `OrbitControls maxDistance` prop is pinned to it too.
 const TRIP_FIT_MAX_DISTANCE = RESTING_DISTANCE * 2
+// Buffer (radians) applied to the `fitFov = π/2` singularity. `1/tan`
+// diverges sharply as fitFov approaches π/2 and goes negative past it;
+// bailing to the max-distance cap a hair early (~2.9°) gives us a stable
+// branch for trips whose pins almost-but-not-quite straddle the hemisphere.
+const FIT_FOV_SINGULARITY_BUFFER = 0.05
 
-function computeFitCamera(
-  coords: Coordinates[],
-): THREE.Vector3 {
-  const vectors = coords.map((c) => {
-    const [x, y, z] = sphericalToCartesian(c.lat, c.lng, 1)
-    return new THREE.Vector3(x, y, z)
-  })
-
-  const centroid = new THREE.Vector3()
-  for (const v of vectors) centroid.add(v)
-  if (centroid.lengthSq() < 1e-6) {
-    // Antipodal degenerate — pick first visit's direction as fallback.
-    centroid.copy(vectors[0])
-  }
-  centroid.normalize()
-
-  let maxAngle = 0
-  for (const v of vectors) {
-    const a = centroid.angleTo(v)
-    if (a > maxAngle) maxAngle = a
-  }
-
-  const fitFov = maxAngle + TRIP_FIT_MARGIN
-  // Once spread >= ~90°, pins straddle the hemisphere and no camera
-  // distance can frame them all — `1/tan` goes negative past π/2.
-  // Fall back to the max cap so globe-spanning trips zoom out as far
-  // as we allow (§16 Q4 "~40% visible").
-  const distance =
-    fitFov >= Math.PI / 2 - 0.05
-      ? TRIP_FIT_MAX_DISTANCE
-      : Math.min(
-          TRIP_FIT_MAX_DISTANCE,
-          Math.max(RESTING_DISTANCE, (1 / Math.tan(fitFov)) * RESTING_DISTANCE),
-        )
-
-  return centroid.clone().multiplyScalar(distance)
-}
+const FIT_CAMERA_OPTS = {
+  restingDistance: RESTING_DISTANCE,
+  maxDistance: TRIP_FIT_MAX_DISTANCE,
+  margin: TRIP_FIT_MARGIN,
+  fovSingularityBuffer: FIT_FOV_SINGULARITY_BUFFER,
+} as const
 
 type RotateState = {
   active: boolean
@@ -254,6 +231,38 @@ export default function GlobeScene() {
     setControlsEnabled(false)
   }, [selectedPin, pins, camera, lockedTrip])
 
+  // Kick off the fit animation for a given lockedTrip id. Shared between
+  // the `useEffect` driven by `lockedTrip` changes and the entrance-done
+  // consumer in `useFrame` (cold `?trip=` URL). Caller is responsible for
+  // the guards (entranceDone, layoutState) — this helper only does the
+  // coord-collection and animation bookkeeping.
+  const kickOffTripFit = useCallback(
+    (tripId: string) => {
+      const coords: Coordinates[] = []
+      for (const p of pins) {
+        for (const v of p.visits) {
+          if (v.trip._id === tripId) {
+            coords.push(p.coordinates)
+            break
+          }
+        }
+      }
+      if (coords.length === 0) return
+      prevLockedTripRef.current = tripId
+      const fit = computeFitCamera(coords, FIT_CAMERA_OPTS)
+      rotateToFitTripRef.current = {
+        active: true,
+        elapsed: 0,
+        startPos: camera.position.clone(),
+        endPos: new THREE.Vector3(fit.x, fit.y, fit.z),
+        duration: TRIP_FIT_DURATION,
+      }
+      setAutoRotate(false)
+      setControlsEnabled(false)
+    },
+    [pins, camera],
+  )
+
   // C5: rotate-to-fit when a trip locks. Runs when lockedTrip changes to a
   // new non-null id. Pulls visit coordinates from the already-hydrated pins
   // list — if pins haven't arrived yet, the effect re-fires once they do.
@@ -270,33 +279,13 @@ export default function GlobeScene() {
       pendingTripFit.current = true
       return
     }
-    // Article-open owns its own camera state — don't stomp it.
+    // Article-open owns its own camera state — don't stomp it. We
+    // intentionally do NOT update prevLockedTripRef here so that when
+    // the article later closes, a re-fire of this effect still sees
+    // `prev !== lockedTrip` and lands the fit.
     if (layoutState === 'article-open') return
-    prevLockedTripRef.current = lockedTrip
-
-    const coords: Coordinates[] = []
-    for (const p of pins) {
-      for (const v of p.visits) {
-        if (v.trip._id === lockedTrip) {
-          coords.push(p.coordinates)
-          break
-        }
-      }
-    }
-    if (coords.length === 0) return
-
-    const endPos = computeFitCamera(coords)
-
-    rotateToFitTripRef.current = {
-      active: true,
-      elapsed: 0,
-      startPos: camera.position.clone(),
-      endPos,
-      duration: TRIP_FIT_DURATION,
-    }
-    setAutoRotate(false)
-    setControlsEnabled(false)
-  }, [lockedTrip, pins, layoutState, camera])
+    kickOffTripFit(lockedTrip)
+  }, [lockedTrip, layoutState, kickOffTripFit])
 
   // Single useFrame driving entrance + programmatic rotation
   useFrame((_, delta) => {
@@ -320,28 +309,7 @@ export default function GlobeScene() {
         }
         if (pendingTripFit.current && lockedTrip && layoutState !== 'article-open') {
           pendingTripFit.current = false
-          // Collect coords and kick off fit directly — same as the main effect.
-          const coords: Coordinates[] = []
-          for (const p of pins) {
-            for (const v of p.visits) {
-              if (v.trip._id === lockedTrip) {
-                coords.push(p.coordinates)
-                break
-              }
-            }
-          }
-          if (coords.length > 0) {
-            prevLockedTripRef.current = lockedTrip
-            rotateToFitTripRef.current = {
-              active: true,
-              elapsed: 0,
-              startPos: camera.position.clone(),
-              endPos: computeFitCamera(coords),
-              duration: TRIP_FIT_DURATION,
-            }
-            setAutoRotate(false)
-            setControlsEnabled(false)
-          }
+          kickOffTripFit(lockedTrip)
         }
       }
       return
