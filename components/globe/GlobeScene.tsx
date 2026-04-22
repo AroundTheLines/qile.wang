@@ -42,12 +42,13 @@ const GLOBE_RADIUS = 2
 const TRIP_FIT_MAX_DISTANCE = 8.6
 
 // Closest the trip-fit animation will land for tight clusters. Chosen
-// so the globe fills ~95% of viewport height at this distance (pretty
-// zoomed in, outermost pin centered, no frustum overflow):
-//   globe angle = 2 · asin(R/D) = 2 · asin(2/5.5) ≈ 43° → ~95% of FOV
-// Closer than RESTING_DISTANCE (6.5) because a locked trip is an
-// editorial focus, not an idle view.
-const TRIP_FIT_MIN_DISTANCE = 5.5
+// so the globe fills ~125% of viewport height — intentionally overflows
+// the viewport so a tight cluster like Japan Spring '22 reads as a
+// proper zoomed-in detail shot rather than just "a globe with pins":
+//   globe angle = 2 · asin(R/D) = 2 · asin(2/4.3) ≈ 56° vs FOV 45° → ~125%
+// Kept comfortably above OrbitControls `minDistance = 4` so the fit
+// doesn't land against the user-zoom floor.
+const TRIP_FIT_MIN_DISTANCE = 4.3
 
 const FIT_CAMERA_OPTS = {
   globeRadius: GLOBE_RADIUS,

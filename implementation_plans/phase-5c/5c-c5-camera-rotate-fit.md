@@ -317,7 +317,7 @@ Japan and single-visit trips clamp to 5.5 (close-up, globe fills ~95% of viewpor
 ### Constants
 
 - `GLOBE_RADIUS = 2` — duplicated in `GlobeMesh.tsx`; update both if the mesh radius changes.
-- `TRIP_FIT_MIN_DISTANCE = 5.5` — floor. Globe at this distance fills ~95% of viewport vertically (2·asin(R/D) = 43° vs 45° FOV). Closer than `RESTING_DISTANCE` = 6.5 because a locked trip is an editorial focus, not an idle view.
+- `TRIP_FIT_MIN_DISTANCE = 4.3` — floor. Globe at this distance *overflows* the viewport by ~25% (2·asin(R/D) ≈ 56° vs 45° FOV → ~125%). Intentionally tight: a tight-cluster trip like Japan Spring '22 should read as a zoomed-in detail shot, not "a globe with pins." Kept comfortably above OrbitControls `minDistance = 4` so the fit doesn't land on the user-zoom floor.
 - `TRIP_FIT_MAX_DISTANCE = 8.6` — ceiling. Globe fills ~60% of viewport (derived from §16 Q4 tuning).
 
 ### Invariant: `minDistance < maxDistance`

@@ -4,7 +4,7 @@ import type { VisitSummary } from './types'
 
 const FIT_OPTS = {
   globeRadius: 2,
-  minDistance: 5.5,
+  minDistance: 4.3,
   maxDistance: 8.6,
 }
 
