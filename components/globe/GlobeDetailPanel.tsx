@@ -75,7 +75,7 @@ export default function GlobeDetailPanel() {
         <motion.div
           key={displayed.key ?? 'empty'}
           animate={{ opacity }}
-          initial={false}
+          initial={{ opacity: 0 }}
           transition={{ duration: FADE_MS / 1000 }}
           className="h-full"
         >

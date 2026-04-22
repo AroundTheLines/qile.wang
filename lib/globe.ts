@@ -9,17 +9,29 @@ import type { PinWithVisits, VisitSummary } from './types'
  */
 export const NAVBAR_HEIGHT_PX = 72
 
+/**
+ * Approximate vertical extent of the timeline at the top of `/globe`
+ * (navbar + timeline rail + a small gap). The panel floor uses this so
+ * trip locks — which have no pin to anchor against — don't overlap the
+ * timeline. Conservative: actual timeline height is ~92–120px depending
+ * on year-axis config, so 200px keeps a visible gap below it.
+ */
+export const PANEL_TOP_FLOOR_PX = NAVBAR_HEIGHT_PX + 128
+
 // --- Utilities ---
 
 /**
  * Clamp the panel's top coordinate so it stays fully within the viewport
  * while aligning with the selected pin's Y position when possible.
+ *
+ * When no pin anchor is available (e.g. a trip-only lock), fall back to
+ * PANEL_TOP_FLOOR_PX so the panel sits below the timeline rather than
+ * covering it.
  */
 export function clampPanelTop(pinY: number | null, viewportHeight: number): number {
-  if (pinY == null) return 100
-  // Align panel top ~60px above the pin (so pin visually connects to header)
+  if (pinY == null) return PANEL_TOP_FLOOR_PX
   const desired = pinY - 60
-  return Math.max(24, Math.min(desired, viewportHeight - 400))
+  return Math.max(PANEL_TOP_FLOOR_PX, Math.min(desired, viewportHeight - 400))
 }
 
 export function sphericalToCartesian(
