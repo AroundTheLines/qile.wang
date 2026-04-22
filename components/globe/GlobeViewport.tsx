@@ -5,7 +5,7 @@ import { useRef, useCallback, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useGlobe } from './GlobeContext'
-import { clampPanelTop, NAVBAR_HEIGHT_PX } from '@/lib/globe'
+import { clampPanelTop, NAVBAR_HEIGHT_PX, TRIP_PANEL_TOP_PX } from '@/lib/globe'
 import GlobeFallbackSVG from './GlobeFallbackSVG'
 import GlobeDetailPanel from './GlobeDetailPanel'
 import GlobePinTriggers from './GlobePinTriggers'
@@ -65,7 +65,14 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
   const viewportW = viewportSize.w
   const viewportH = viewportSize.h
 
-  const panelTop = clampPanelTop(selectedPinScreenY, viewportH || 800)
+  // Trip panel is always pinned just below the timeline (§7.2) so it reads
+  // visually distinct from pin panels, which anchor to their pin's Y and
+  // draw a connector from pin → panel header. Fixed anchor keeps trip panels
+  // stable regardless of what was selected before.
+  const panelTop =
+    panelVariant === 'trip'
+      ? TRIP_PANEL_TOP_PX
+      : clampPanelTop(selectedPinScreenY, viewportH || 800)
   const selectedPinData = pins.find((p) => p.location._id === selectedPin)
 
   if (isMobile) {

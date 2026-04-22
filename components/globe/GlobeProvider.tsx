@@ -103,17 +103,17 @@ export default function GlobeProvider({
     setSelectedPin(id)
   }, [])
 
-  // --- Trip lock wrapper: also clears selectedPin so panelVariant flip is clean.
-  // Pin panel and trip panel share the same screen region — per spec §7.3.2,
-  // locking a trip swaps variants rather than stacking panels. We deliberately
-  // DO NOT clear selectedPinScreenY here: if the user was on a pin panel, we
-  // want the trip panel to keep the same vertical anchor so the cross-fade
-  // doesn't also cause a vertical jump. When there's no prior pin, the value
-  // is already null and clampPanelTop falls back to PANEL_TOP_FLOOR_PX.
+  // --- Trip lock wrapper: also clears pin selection so panelVariant flips
+  // cleanly. Pin panel and trip panel share the same screen region — per
+  // spec §7.3.2, locking a trip swaps variants rather than stacking panels.
+  // Trip panels don't use selectedPinScreenY (their Y is a fixed anchor in
+  // GlobeViewport), so clearing it here keeps state tidy for the next
+  // pin selection.
   const setLockedTrip = useCallback((id: string | null) => {
     setLockedTripState(id)
     if (id !== null) {
       setSelectedPin(null)
+      setSelectedPinScreenY(null)
     }
   }, [])
 
