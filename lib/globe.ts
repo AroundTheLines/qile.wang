@@ -17,6 +17,15 @@ export interface GlobePinItem {
   year?: string
 }
 
+// --- Layout constants ---
+
+/**
+ * Height of the fixed top navbar on `/globe` (see `GlobeNavbar.tsx`). Shared
+ * so layout shells (timeline offset, mobile globe re-centering) don't drift
+ * if the navbar height changes.
+ */
+export const NAVBAR_HEIGHT_PX = 72
+
 // --- Utilities ---
 
 /**

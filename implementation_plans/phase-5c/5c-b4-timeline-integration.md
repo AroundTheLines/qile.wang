@@ -2,6 +2,8 @@
 
 **Epic**: B. Timeline & Playback · **Owner**: Dev B · **Can be run by agent?**: Yes · **Estimated size**: M
 
+**Status**: ✅ Shipped (PR #35). See [Implementation notes (as shipped)](#implementation-notes-as-shipped) for deviations from the original sketch that downstream tickets should inherit.
+
 ## Dependencies
 
 ### Hard
@@ -311,3 +313,83 @@ Actually — B5 handles visit tick marks and the sub-region band. Leave this to 
 8. Click between segments (empty area) — if locked, deselects.
 9. Add `throw new Error('test')` to `client.fetch` in `layout.tsx` → reload → inline error shows with Retry.
 10. Empty the trips array (temporarily in layout) → "Nothing yet" shows.
+
+---
+
+## Implementation notes (as shipped)
+
+The shipped implementation diverges from the sketch above in a few places downstream tickets need to know about. If you're reading this to build on top of B4, trust this section over the "Implementation guidance" sketch.
+
+### Trip identity is `_id`, not `slug`
+
+The A3 notes originally used the trip `slug` as the identity key, but C1's resolver (the one that writes `hoveredTrip` / `lockedTrip` into context) keys by Sanity `_id`. To avoid an identity mismatch between the writers (pin hover, deep-link effect in `GlobeProvider` which calls `setLockedTripState(target._id)`) and the readers (Timeline labels), Timeline also keys by `_id`. The URL still uses `slug.current` — identity and URL-surface are deliberately different.
+
+**Impact on D2 / future tickets**: any comparison against `hoveredTrip` / `lockedTrip` must use `_id`. If you find yourself reaching for `slug` to compare, you're probably introducing a bug.
+
+### Interaction target is the label, not the segment
+
+B3 landed hover-on-label, not hover-on-segment. B4 inherited that: `onPointerEnter` / `onPointerLeave` / `onPointerDown` / `onPointerUp` live on the label element (and on a transparent hit-area around it), not on the segment bar. This matches the §9.1 acceptance wording ("hover a label") and avoids the timeline's pan-gesture interference at the segment level.
+
+The `stopPropagation` guidance from the sketch still applies, but it's on the label's `onPointerDown` only. The segment itself has no handlers.
+
+### Layout shell: fixed-layer wrapper at `top: NAVBAR_HEIGHT_PX`
+
+`GlobeViewport` uses `fixed inset-0`, which overpaints anything rendered as its sibling in normal flow. To keep Timeline visible on `/globe`, it's mounted inside a fixed-layer shell:
+
+```tsx
+<div
+  className="hidden md:block fixed left-0 right-0 z-40 px-4"
+  style={{ top: NAVBAR_HEIGHT_PX }}
+>
+  <Timeline />
+</div>
+```
+
+`NAVBAR_HEIGHT_PX = 72` now lives in `lib/globe.ts` and is imported by both `GlobeViewport` (for mobile globe re-centering math) and `app/globe/layout.tsx`. If the navbar height changes, update the constant once.
+
+**For E1 (mobile layout)**: mobile restructure (globe above timeline) is explicitly *out of scope* for B4. The fixed-layer wrapper is gated `hidden md:block` so mobile sees nothing here — E1 owns the mobile arrangement.
+
+### Mobile click is gated until E3 ships
+
+Label hover is desktop-only (`isDesktop` gate). Label *click* is also gated on mobile — tapping a label on mobile is a no-op for now. E3 will wire the mobile preview-label expansion and its own click behavior. Until then, letting mobile taps trigger the desktop lock path would conflict with the mobile panel/URL flow.
+
+### Pause-reason cleanup is unconditional on leave
+
+The `label-hover` pause reason is removed on `pointerLeave` **regardless of `isDesktop`**. This is defensive: if a user resizes from desktop → mobile while hovering, the enter handler may have added a reason that the mobile leave handler would otherwise skip removing. Cheaper to always call `removePauseReason` than to debug a stuck pause.
+
+### Backward compat with `/timeline-dev`
+
+Timeline reads `useContext(GlobeContext)` **raw** (not via `useGlobe()`) so it can null-check and fall back to the `trips` prop. This keeps `/timeline-dev` (mock data, no provider) working. The `trips` prop is now optional:
+
+```tsx
+type TimelineTrip = TripRange & { title?: string; slug?: { current: string } }
+interface TimelineProps {
+  trips?: TimelineTrip[]
+  // ...
+}
+```
+
+When both the context and the prop are present, the prop wins (so `/timeline-dev` remains predictable). B8 will retire `/timeline-dev` — at that point the prop can be dropped.
+
+### Fetch-error UI lives inside Timeline
+
+`fetchError` is read from context. When true, Timeline returns an inline error row with a Retry button that calls `window.location.reload()`. Retry = full reload because `client.fetch` is server-side (SSR); a client-side refetch would require a different data path. Spec §12.7 doesn't mandate a mechanism — reload is acceptable.
+
+### Memo dependency on `ctx?.trips`
+
+The trips-derivation memo reads `const ctxTripsSource = ctx?.trips` into a local and depends on `[ctxTripsSource]` (not `[ctx]`). Depending on the whole context object causes the memo to recompute on any context change (e.g. hover state flips). The tighter dep is load-bearing for perf when a user is hovering labels rapidly.
+
+### Verification
+
+The ticket was verified against live data on `/globe`:
+- URL updates to `?trip=morocco-2018` on label click.
+- Switching between labels updates the URL correctly.
+- Background click (empty timeline area) deselects and clears the query param.
+- `/timeline-dev` still renders with mock data.
+- No console or server errors.
+
+Hover-state verification (cursor enter/leave → accent color) was deferred to manual user test because synthetic `mouseenter` events dispatched via `preview_eval` don't trip React's SyntheticEvent system reliably.
+
+### Environment note for future agents
+
+The dev dataset is token-gated. The worktree needs `.env.local` symlinked from the main checkout (or the authenticated `readClient` path from `lib/sanity.ts`) or `/globe` will render with 0 trips even when Sanity has data. `app/globe/layout.tsx` imports `readClient` — do not swap it back to the public `client`.
