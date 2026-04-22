@@ -73,7 +73,6 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
     panelVariant === 'trip'
       ? TRIP_PANEL_TOP_PX
       : clampPanelTop(selectedPinScreenY, viewportH || 800)
-  const selectedPinData = pins.find((p) => p.location._id === selectedPin)
 
   if (isMobile) {
     // On mobile, article content opens *inside* the sidecar panel — no separate
@@ -82,7 +81,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
     // visible behind the scrim so the user can always tap back to the globe.
     const isArticle = layoutState === 'article-open'
     const resolvedPin =
-      selectedPinData ||
+      pins.find((p) => p.location._id === selectedPin) ||
       (activeArticleSlug
         ? pins.find((p) =>
             p.visits.some((v) =>
@@ -300,12 +299,19 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
             exit={{ x: '110%' }}
             transition={SLIDE_TRANSITION}
           >
-            <div
+            {/* Animate `top` so variant switches (pin → trip and back)
+                tween the panel's Y alongside the inner content cross-fade,
+                rather than snapping instantly. Duration matches the inner
+                fade (200ms) so the two motions land together. */}
+            <motion.div
               className="absolute left-0 w-full"
-              style={{ top: panelTop, maxHeight: 'calc(100vh - 48px)' }}
+              style={{ maxHeight: 'calc(100vh - 48px)' }}
+              initial={false}
+              animate={{ top: panelTop }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
             >
               <GlobeDetailPanel />
-            </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

@@ -14,19 +14,23 @@ export default async function GlobeLayout({
 }: {
   children: React.ReactNode
 }) {
-  let trips: TripSummary[] = []
-  let visits: VisitSummary[] = []
-  let tripsWithVisits: TripWithVisits[] = []
-  let fetchError = false
-  try {
-    ;[trips, visits, tripsWithVisits] = await Promise.all([
-      client.fetch<TripSummary[]>(allTripsQuery),
-      client.fetch<VisitSummary[]>(allVisitsQuery),
-      client.fetch<TripWithVisits[]>(allTripsWithVisitsQuery),
-    ])
-  } catch {
-    fetchError = true
-  }
+  // Use allSettled so one query failing (e.g. the heavier tripsWithVisits
+  // projection) doesn't blank the timeline + pins too. `fetchError` stays
+  // true whenever any query fails so downstream UI can still surface a
+  // degraded-state banner.
+  const [tripsResult, visitsResult, tripsWithVisitsResult] = await Promise.allSettled([
+    client.fetch<TripSummary[]>(allTripsQuery),
+    client.fetch<VisitSummary[]>(allVisitsQuery),
+    client.fetch<TripWithVisits[]>(allTripsWithVisitsQuery),
+  ])
+  const trips: TripSummary[] = tripsResult.status === 'fulfilled' ? tripsResult.value : []
+  const visits: VisitSummary[] = visitsResult.status === 'fulfilled' ? visitsResult.value : []
+  const tripsWithVisits: TripWithVisits[] =
+    tripsWithVisitsResult.status === 'fulfilled' ? tripsWithVisitsResult.value : []
+  const fetchError =
+    tripsResult.status === 'rejected' ||
+    visitsResult.status === 'rejected' ||
+    tripsWithVisitsResult.status === 'rejected'
   const pins = aggregatePins(visits)
 
   return (

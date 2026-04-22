@@ -39,7 +39,6 @@ export default function TripPanel({ trip }: Props) {
             data-no-skeleton
             onClick={handleViewArticle}
             disabled={!trip.hasArticle}
-            aria-disabled={!trip.hasArticle}
             title={trip.hasArticle ? 'View trip article' : 'No content available for this trip.'}
             className={`w-full text-[11px] tracking-widest uppercase py-2 border transition-colors ${
               trip.hasArticle

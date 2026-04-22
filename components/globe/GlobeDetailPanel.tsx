@@ -50,12 +50,13 @@ export default function GlobeDetailPanel() {
   const [opacity, setOpacity] = useState(1)
   const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Track the last key we kicked a fade for, so the initial mount (which
+  // React runs effects for even when targetKey === displayed.key) doesn't
+  // flash the panel opacity down and back up.
+  const lastFadeKey = useRef(targetKey)
   useEffect(() => {
-    if (targetKey === displayed.key) {
-      // Same variant+id — refresh the React node so prop updates flow through.
-      setDisplayed((prev) => ({ key: prev.key, node: targetContent }))
-      return
-    }
+    if (targetKey === lastFadeKey.current) return
+    lastFadeKey.current = targetKey
     setOpacity(0)
     if (fadeTimer.current) clearTimeout(fadeTimer.current)
     fadeTimer.current = setTimeout(() => {
