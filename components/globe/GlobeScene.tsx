@@ -26,11 +26,17 @@ const ARTICLE_CAMERA_DISTANCE = 4.2
 const TRIP_FIT_DURATION = 1.1
 // Padding around max angular spread when fitting a trip.
 const TRIP_FIT_MARGIN = 0.15
-// Cap zoom-out for globe-spanning trips so the globe stays ~40% visible
-// (§16 Q4). Invariant: RESTING_DISTANCE < TRIP_FIT_MAX_DISTANCE — the
+// Cap zoom-out for globe-spanning trips so the globe fills ~60% of the
+// viewport at max zoom (§16 Q4 — originally spec'd as ~40% but bumped up
+// after RTW review: the globe read as too small). Derivation with
+// GLOBE_RADIUS = 2 and camera vertical FOV = 45°:
+//   target_fraction = 0.6 → full_angle = 0.6 × 45° = 27° → half = 13.5°
+//   distance = R / sin(13.5°) = 2 / 0.2334 ≈ 8.57 → round to 8.6.
+// Invariant: RESTING_DISTANCE < TRIP_FIT_MAX_DISTANCE — the
 // `Math.max(RESTING_DISTANCE, …)` floor inside computeFitCamera assumes
-// this and the `OrbitControls maxDistance` prop is pinned to it too.
-const TRIP_FIT_MAX_DISTANCE = RESTING_DISTANCE * 2
+// this. OrbitControls `maxDistance` is intentionally *higher* than this
+// so the user can wheel-zoom out past the trip-fit cap.
+const TRIP_FIT_MAX_DISTANCE = 8.6
 // Buffer (radians) applied to the `fitFov = π/2` singularity. `1/tan`
 // diverges sharply as fitFov approaches π/2 and goes negative past it;
 // bailing to the max-distance cap a hair early (~2.9°) gives us a stable
@@ -418,7 +424,9 @@ export default function GlobeScene() {
         enablePan={false}
         enableZoom={true}
         minDistance={4}
-        maxDistance={TRIP_FIT_MAX_DISTANCE}
+        // Deliberately looser than TRIP_FIT_MAX_DISTANCE so the user can
+        // wheel-zoom out past the trip-fit cap during an unlocked session.
+        maxDistance={13}
         enableDamping={true}
         dampingFactor={0.05}
         rotateSpeed={0.5}

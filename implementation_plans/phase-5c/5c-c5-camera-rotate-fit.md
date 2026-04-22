@@ -309,7 +309,7 @@ With the corrected formula, the output is effectively a step function:
 | 0° (single visit) | Morocco '18 | ~6.62 (≈ resting) |
 | a few ° (tight cluster) | Japan Spring '22 (Tokyo/Kyoto/Osaka) | `RESTING_DISTANCE` = 6.5 |
 | up to ~82° | Any continental trip | `RESTING_DISTANCE` = 6.5 |
-| ≥ π/2 − 0.05 rad (~87°) | Round-the-World (Tokyo/NYC/Sydney) | `TRIP_FIT_MAX_DISTANCE` = 13 |
+| ≥ π/2 − 0.05 rad (~87°) | Round-the-World (Tokyo/NYC/Sydney) | `TRIP_FIT_MAX_DISTANCE` = 8.6 |
 
 The `rawDistance > RESTING` branch only fires for `fitFov < atan(1/6.5) ≈ 8.74°`, i.e. when `maxAngle + margin` is under ~8.74° — which in practice means single visits (maxAngle = 0) and degenerate-close pairs. For those, the camera lands a whisker past resting (6.62 vs 6.5) — close enough to match the ticket's acceptance criterion "single visit: resting distance."
 
@@ -323,9 +323,12 @@ Named constant for the hemisphere-straddle branch. `1/tan(fitFov)` diverges and 
 
 The `Math.max(RESTING_DISTANCE, …)` floor assumes this; the `OrbitControls maxDistance` prop is also pinned to `TRIP_FIT_MAX_DISTANCE`. If `RESTING_DISTANCE` is ever tuned upward, bump `TRIP_FIT_MAX_DISTANCE` to preserve headroom.
 
-### `OrbitControls maxDistance` bumped 11 → 13
+### `OrbitControls maxDistance` vs `TRIP_FIT_MAX_DISTANCE`
 
-Previously the OrbitControls `maxDistance` prop capped at 11. The trip-fit target distance (`TRIP_FIT_MAX_DISTANCE = 13`) clamps against `OrbitControls`'s internal limits, so without this bump the fit animation would appear truncated. The prop is now wired to the same constant.
+Two independent caps with different jobs:
+
+- `TRIP_FIT_MAX_DISTANCE = 8.6` — the farthest the **trip-fit animation** will land. Chosen so the globe fills ~60% of viewport height at max zoom: with `GLOBE_RADIUS = 2` and camera FOV = 45°, `d = R / sin(0.6 × 45° / 2) = 2 / 0.2334 ≈ 8.57`. Originally spec'd as ~40% (2× resting = 13) but bumped after the RTW trip read as too small.
+- `OrbitControls maxDistance = 13` — how far the **user's scroll wheel** can push the camera. Kept looser so the user can zoom out past the fit cap if they want to. Invariant: `maxDistance ≥ TRIP_FIT_MAX_DISTANCE` so the fit animation is never clipped by controls.
 
 ### Cold-URL `?trip=` handling
 

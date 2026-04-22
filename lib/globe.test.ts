@@ -4,7 +4,7 @@ import type { VisitSummary } from './types'
 
 const FIT_OPTS = {
   restingDistance: 6.5,
-  maxDistance: 13,
+  maxDistance: 8.6,
   margin: 0.15,
   fovSingularityBuffer: 0.05,
 }
