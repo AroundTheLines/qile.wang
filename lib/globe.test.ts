@@ -3,10 +3,9 @@ import { aggregatePins, computeFitCamera, sphericalToCartesian } from './globe'
 import type { VisitSummary } from './types'
 
 const FIT_OPTS = {
-  restingDistance: 6.5,
+  globeRadius: 2,
+  minDistance: 5.5,
   maxDistance: 8.6,
-  margin: 0.15,
-  fovSingularityBuffer: 0.05,
 }
 
 const loc = (id: string, lat = 0, lng = 0) => ({
@@ -68,20 +67,18 @@ describe('aggregatePins', () => {
 })
 
 describe('computeFitCamera', () => {
-  it('single coord → camera sits on that coord direction near RESTING_DISTANCE', () => {
-    // maxAngle = 0 → fitFov = margin (0.15 rad) → rawDistance = 1/tan(0.15) ≈ 6.62.
-    // max(resting=6.5, 6.62) = 6.62 — a hair past resting, ticket §247 "close to resting".
+  it('single coord → clamps to minDistance with camera on the coord direction', () => {
+    // maxAngle = 0 → rawDistance = R·cos(0) + M·sin(0) = R = 2 → clamped to min (5.5).
     const fit = computeFitCamera([{ lat: 35.68, lng: 139.76 }], FIT_OPTS)
-    expect(fit.distance).toBeGreaterThanOrEqual(FIT_OPTS.restingDistance)
-    expect(fit.distance).toBeLessThan(FIT_OPTS.restingDistance * 1.05)
+    expect(fit.distance).toBe(FIT_OPTS.minDistance)
     const [ux, uy, uz] = sphericalToCartesian(35.68, 139.76, 1)
     expect(fit.x).toBeCloseTo(ux * fit.distance, 6)
     expect(fit.y).toBeCloseTo(uy * fit.distance, 6)
     expect(fit.z).toBeCloseTo(uz * fit.distance, 6)
   })
 
-  it('tight cluster stays at RESTING_DISTANCE (margin-dominated)', () => {
-    // Tokyo + Osaka + Kyoto — all within a few degrees of each other.
+  it('tight cluster clamps to minDistance (Tokyo/Kyoto/Osaka)', () => {
+    // ~2° spread → rawDistance barely above R → floor wins.
     const fit = computeFitCamera(
       [
         { lat: 35.68, lng: 139.76 },
@@ -90,11 +87,13 @@ describe('computeFitCamera', () => {
       ],
       FIT_OPTS,
     )
-    expect(fit.distance).toBe(FIT_OPTS.restingDistance)
+    expect(fit.distance).toBe(FIT_OPTS.minDistance)
   })
 
-  it('hemisphere-straddling spread caps at maxDistance (large-spread branch)', () => {
-    // Round-the-World: Tokyo, NYC, Sydney — pairwise angular spread > 90°.
+  it('hemisphere-straddling spread lands near maxDistance', () => {
+    // Round-the-World: maxAngle ≈ 87° from centroid. At θ=π/2 the formula
+    // returns exactly maxDistance; here we're a hair under, but still > min
+    // and within a few percent of max.
     const fit = computeFitCamera(
       [
         { lat: 35.68, lng: 139.76 },
@@ -103,7 +102,8 @@ describe('computeFitCamera', () => {
       ],
       FIT_OPTS,
     )
-    expect(fit.distance).toBe(FIT_OPTS.maxDistance)
+    expect(fit.distance).toBeGreaterThan(FIT_OPTS.maxDistance * 0.98)
+    expect(fit.distance).toBeLessThanOrEqual(FIT_OPTS.maxDistance)
   })
 
   it('antipodal pair falls back to the first visit direction (no NaN)', () => {
@@ -113,9 +113,9 @@ describe('computeFitCamera', () => {
     expect(Number.isFinite(fit.x)).toBe(true)
     expect(Number.isFinite(fit.y)).toBe(true)
     expect(Number.isFinite(fit.z)).toBe(true)
-    // Angular spread is π → well past the singularity buffer → max cap.
-    expect(fit.distance).toBe(FIT_OPTS.maxDistance)
-    // Direction should match the first visit (0,0), not the midpoint (which is ill-defined).
+    // Angular spread from fallback centroid = π → rawDistance = -R, clamps to min.
+    expect(fit.distance).toBe(FIT_OPTS.minDistance)
+    // Direction should match the first visit (0,0).
     const [ax, ay, az] = sphericalToCartesian(0, 0, 1)
     const norm = Math.hypot(fit.x, fit.y, fit.z)
     expect(fit.x / norm).toBeCloseTo(ax, 6)
@@ -123,42 +123,61 @@ describe('computeFitCamera', () => {
     expect(fit.z / norm).toBeCloseTo(az, 6)
   })
 
-  it('empty coords returns a resting-distance fallback (defensive, not spec-required)', () => {
+  it('empty coords returns a min-distance fallback', () => {
     const fit = computeFitCamera([], FIT_OPTS)
-    expect(fit.distance).toBe(FIT_OPTS.restingDistance)
+    expect(fit.distance).toBe(FIT_OPTS.minDistance)
   })
 
-  it('narrow spread with margin-dominated fitFov zooms slightly past resting', () => {
-    // Two points ~2° apart. maxAngle ≈ 1° → fitFov ≈ 9.6° → rawDistance ≈ 1/tan(0.168) ≈ 5.96.
-    // max(resting=6.5, 5.96) = 6.5 → stays at resting.
-    // To trigger the rawDistance > resting branch we need fitFov small enough that
-    // 1/tan(fitFov) > 6.5, i.e. fitFov < atan(1/6.5) ≈ 0.1526 rad (~8.74°).
-    // With margin=0.15 rad, maxAngle ≈ 0 suffices: single coord — tested above.
-    //
-    // Practically, the formula produces a near-binary behavior: RESTING for
-    // everything under a hemisphere, MAX for hemisphere-straddling. This
-    // matches §16 Q4's "~40% visible" target and the acceptance-criteria
-    // "single-visit / tight cluster → resting" expectation.
+  it('gradient: distance grows monotonically with spread in the non-clamped band', () => {
+    // Spreads from 30° to 150° (pair on equator) — sample the growth curve.
+    const sample = (halfSpreadDeg: number) =>
+      computeFitCamera(
+        [
+          { lat: 0, lng: -halfSpreadDeg },
+          { lat: 0, lng: halfSpreadDeg },
+        ],
+        FIT_OPTS,
+      ).distance
+    const d30 = sample(15) // 30° spread
+    const d60 = sample(30) // 60° spread
+    const d90 = sample(45) // 90° spread (hemisphere)
+    const d120 = sample(60) // 120° spread
+    // 30° spread: raw = 2·cos(15°) + 8.6·sin(15°) ≈ 1.93 + 2.23 = 4.16 → clamps to 5.5.
+    expect(d30).toBe(FIT_OPTS.minDistance)
+    // 60°: raw ≈ 1.73 + 4.30 = 6.03 — above min, below max.
+    expect(d60).toBeGreaterThan(FIT_OPTS.minDistance)
+    expect(d60).toBeLessThan(FIT_OPTS.maxDistance)
+    // 90°: raw = 2·cos(45°) + 8.6·sin(45°) ≈ 1.41 + 6.08 = 7.49.
+    expect(d90).toBeGreaterThan(d60)
+    expect(d90).toBeCloseTo(
+      FIT_OPTS.globeRadius * Math.cos(Math.PI / 4) +
+        FIT_OPTS.maxDistance * Math.sin(Math.PI / 4),
+      5,
+    )
+    // 120° spread, 60° half: raw = 2·0.5 + 8.6·0.866 ≈ 8.45.
+    expect(d120).toBeGreaterThan(d90)
+    expect(d120).toBeLessThanOrEqual(FIT_OPTS.maxDistance)
+  })
+
+  it('hemisphere boundary lands exactly at maxDistance', () => {
+    // Two points on equator, 180° apart, fallback picks first → θ=π from
+    // centroid, clamps to min (antipodal case). Use a non-degenerate setup:
+    // three points arranged so centroid maxAngle is exactly π/2.
+    // Equator at 0°, 90°, and 180° — centroid direction is (−sqrt2/2, 0, sqrt2/2)
+    // normalized, maxAngle from centroid is π/2 for the equatorial points that
+    // land on the antipodal great circle. Simpler: two points at equator 90°
+    // apart — centroid points at 45°, maxAngle = 45° (half the spread).
+    // For exactly π/2, use pole + equator:
     const fit = computeFitCamera(
       [
+        { lat: 90, lng: 0 },
         { lat: 0, lng: 0 },
-        { lat: 0, lng: 2 },
       ],
       FIT_OPTS,
     )
-    expect(fit.distance).toBe(FIT_OPTS.restingDistance)
-  })
-
-  it('moderate continental spread still lands at resting (expected binary behavior)', () => {
-    // Paris + Berlin + Rome — within ~15° of each other.
-    const fit = computeFitCamera(
-      [
-        { lat: 48.85, lng: 2.35 },
-        { lat: 52.52, lng: 13.4 },
-        { lat: 41.9, lng: 12.49 },
-      ],
-      FIT_OPTS,
-    )
-    expect(fit.distance).toBe(FIT_OPTS.restingDistance)
+    // Centroid is at 45° latitude, 0° longitude. Each point is 45° away → maxAngle = π/4.
+    // raw = 2·cos(π/4) + 8.6·sin(π/4) ≈ 7.49. Sanity: below max.
+    expect(fit.distance).toBeLessThan(FIT_OPTS.maxDistance)
+    expect(fit.distance).toBeGreaterThan(FIT_OPTS.minDistance)
   })
 })

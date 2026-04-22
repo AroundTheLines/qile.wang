@@ -38,28 +38,32 @@ export function clampPanelTop(pinY: number | null, viewportHeight: number): numb
 
 /**
  * Compute the camera position (relative to globe origin) that frames all
- * `coords` on a unit-radius sphere. Returns a position vector scaled to
- * the computed fit distance, clamped to [restingDistance, maxDistance].
+ * `coords` of a trip inside the viewport. Returns a position along the
+ * centroid direction at a distance clamped to [minDistance, maxDistance].
  *
- * Conventions:
- * - Coords are treated as directions on the unit sphere. The globe's
- *   actual mesh radius is not threaded through because `restingDistance`
- *   is measured from origin and the `1/tan(fitFov)` formula is scale-
- *   free in that frame.
- * - `centroid` = normalized sum of direction vectors. If the inputs are
- *   antipodal (sum ≈ 0), falls back to the first visit's direction.
- * - `fitFov = maxAngle + margin`. When fitFov approaches π/2, `1/tan`
- *   explodes and then goes negative; `fovSingularityBuffer` catches that
- *   band early and pins to `maxDistance` so globe-spanning trips stay
- *   framed (§16 Q4 "~40% visible").
+ * Derivation (see §17.3 and the C5 shipped notes for full context):
+ *   At camera distance D from globe center, a pin at angular offset θ
+ *   from the centroid direction projects to screen half-angle φ where
+ *     tan(φ) = R · sin(θ) / (D − R · cos(θ))
+ *   Solving for D:
+ *     D = R · cos(θ) + R · sin(θ) / tan(φ)
+ *   Choosing φ so that a hemisphere-spread trip (θ = π/2) lands exactly
+ *   at `maxDistance` gives tan(φ) = R / maxDistance, which simplifies to
+ *     D = R · cos(θ) + maxDistance · sin(θ)
+ *
+ * This yields a smooth gradient: tight clusters land at `minDistance`
+ * (clamped), mid-spread trips land proportionally further back, and
+ * hemisphere-straddling trips naturally approach `maxDistance` without
+ * a separate singularity branch. Antipodal pairs fall back to the first
+ * visit's direction (centroid sum ≈ 0).
  */
 export interface ComputeFitCameraOpts {
-  restingDistance: number
+  /** Globe radius in the same units as min/maxDistance. */
+  globeRadius: number
+  /** Floor distance — tight clusters clamp to this. */
+  minDistance: number
+  /** Ceiling — hemisphere-straddling trips land at this. */
   maxDistance: number
-  /** Radians of padding around the angular spread. */
-  margin: number
-  /** Radians before π/2 at which we bail to maxDistance. */
-  fovSingularityBuffer: number
 }
 
 export function computeFitCamera(
@@ -67,7 +71,12 @@ export function computeFitCamera(
   opts: ComputeFitCameraOpts,
 ): { x: number; y: number; z: number; distance: number } {
   if (coords.length === 0) {
-    return { x: 0, y: 0, z: opts.restingDistance, distance: opts.restingDistance }
+    return {
+      x: 0,
+      y: 0,
+      z: opts.minDistance,
+      distance: opts.minDistance,
+    }
   }
   const vectors = coords.map((c) => sphericalToCartesian(c.lat, c.lng, 1))
 
@@ -96,22 +105,12 @@ export function computeFitCamera(
     if (a > maxAngle) maxAngle = a
   }
 
-  const fitFov = maxAngle + opts.margin
-  // `rawDistance = 1/tan(fitFov)` in unit-sphere units — derivation: for a
-  // camera at distance d looking at origin, the pin at angular offset α from
-  // the centroid subtends screen angle atan(sin α / (d - cos α)) ≈ α / d for
-  // small α and d >> 1. Setting that equal to half the camera FOV and solving
-  // for d gives d ≈ 1/tan(α). The `* RESTING` multiplier seen in the C5
-  // ticket's pseudocode was a transcription bug — it caused single-visit
-  // trips to clamp at MAX_DISTANCE instead of landing at RESTING.
-  const rawDistance = 1 / Math.tan(fitFov)
-  const distance =
-    fitFov >= Math.PI / 2 - opts.fovSingularityBuffer
-      ? opts.maxDistance
-      : Math.min(
-          opts.maxDistance,
-          Math.max(opts.restingDistance, rawDistance),
-        )
+  const rawDistance =
+    opts.globeRadius * Math.cos(maxAngle) + opts.maxDistance * Math.sin(maxAngle)
+  const distance = Math.min(
+    opts.maxDistance,
+    Math.max(opts.minDistance, rawDistance),
+  )
 
   return { x: cx * distance, y: cy * distance, z: cz * distance, distance }
 }

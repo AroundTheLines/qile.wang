@@ -278,57 +278,55 @@ Record of what actually landed and the decisions made during implementation. Rev
 - **`components/globe/GlobeScene.tsx`** owns the scene-side glue: state refs, the `useEffect` that fires on `lockedTrip` change, the `useFrame` animation branch, and a `kickOffTripFit` `useCallback` that both the effect and the entrance-done handler call. Extracted because the two call sites had duplicated coord-collection + ref-write logic.
 - **`lib/globe.test.ts`** covers the 5 branches of `computeFitCamera`: single coord, tight cluster, hemisphere-straddle (→ max), antipodal (→ fallback direction, not NaN), and empty input (→ resting, defensive).
 
-### Correction to the ticket's pseudocode — `rawDistance` multiplier
+### Fit formula (final form)
 
-The ticket's reference pseudocode (§Fit-to-bounds math, line 102 of the original draft) had:
+The shipped formula is a proper camera-frustum fit — not the ticket's `1/tan` approximation, which had transcription bugs and produced near-binary behavior. Derivation:
 
-```ts
-const distance = Math.min(MAX_FIT_DISTANCE, Math.max(RESTING, rawDistance * RESTING))
-```
+> At camera distance `D` from globe center looking at the centroid direction, a pin at angular offset `θ` from the centroid projects to screen half-angle `φ` where `tan(φ) = R · sin(θ) / (D − R · cos(θ))`. Solving for `D` and choosing `φ` so that a hemisphere-spread trip (`θ = π/2`) lands exactly at `maxDistance` yields:
+>
+> **`D = R · cos(θ) + maxDistance · sin(θ)`**
+>
+> Clamped to `[minDistance, maxDistance]`.
 
-The `* RESTING` multiplier is a transcription bug. The derivation above it (§92–93) correctly states `d = R / tan(α + margin)` with R=1, which gives `d = 1/tan(fitFov) = rawDistance` — no extra multiplier. The bug caused single-visit and tight-cluster trips to compute `rawDistance * RESTING ≈ 6.6 × 6.5 ≈ 43`, which clamped to `MAX_FIT_DISTANCE = 13` — so every trip, regardless of spread, zoomed out to the cap.
+This is smooth, monotonic, and handles the hemisphere cusp analytically — no separate singularity branch needed. `minDistance` sets the close-up floor for tight clusters; `maxDistance` sets the pulled-back ceiling for globe-spanning trips.
 
-The shipped formula drops the multiplier:
+### Evolution of this formula
 
-```ts
-const rawDistance = 1 / Math.tan(fitFov)
-const distance =
-  fitFov >= Math.PI / 2 - FIT_FOV_SINGULARITY_BUFFER
-    ? maxDistance
-    : Math.min(maxDistance, Math.max(restingDistance, rawDistance))
-```
+Three iterations during review:
 
-The ticket's own gotcha §247 ("rawDistance = 1/tan(MARGIN) ≈ 6.6. Close to resting.") already assumed this simpler form — it's the intended behavior.
+1. **Ticket pseudocode v1** (never shipped): `rawDistance = 1/tan(α + margin) * RESTING`. The `* RESTING` multiplier was a copy-paste bug inconsistent with the derivation above it. Every trip clamped to max.
+2. **Transcription fix** (shipped, then replaced): dropped the multiplier. Near-binary — tight clusters → resting, hemisphere-straddle → max. Morocco '18 at ~6.62, Japan at 6.5, RTW at 13.
+3. **Proper frustum fit** (current): replaced the whole `1/tan` approximation with the exact camera-geometry formula. Smooth gradient between `minDistance` and `maxDistance`. Tight clusters clamp to min (close-up feel); mid-spreads grow proportionally; RTW lands exactly at max.
 
-### Resulting distance behavior (near-binary)
+### Distance gradient (final)
 
-With the corrected formula, the output is effectively a step function:
+With `globeRadius = 2`, `minDistance = 5.5`, `maxDistance = 8.6`:
 
-| Angular spread | Example trip | Distance |
-|---|---|---|
-| 0° (single visit) | Morocco '18 | ~6.62 (≈ resting) |
-| a few ° (tight cluster) | Japan Spring '22 (Tokyo/Kyoto/Osaka) | `RESTING_DISTANCE` = 6.5 |
-| up to ~82° | Any continental trip | `RESTING_DISTANCE` = 6.5 |
-| ≥ π/2 − 0.05 rad (~87°) | Round-the-World (Tokyo/NYC/Sydney) | `TRIP_FIT_MAX_DISTANCE` = 8.6 |
+| Angular spread (from centroid) | Example | Computed D | Clamped D |
+|---|---|---|---|
+| 0° (single) | Morocco '18 | 2.0 | 5.5 (min) |
+| ~2° (cluster) | Japan Spring '22 | ~2.3 | 5.5 (min) |
+| 15° | close continental pair | ~4.16 | 5.5 (min) |
+| 30° | ~30° continental spread | ~6.03 | 6.03 |
+| 45° (hemisphere edge) | — | ~7.49 | 7.49 |
+| 60° | — | ~8.45 | 8.45 |
+| ≥ 65° | RTW (Tokyo/NYC/Sydney) | 8.6+ | 8.6 (max) |
 
-The `rawDistance > RESTING` branch only fires for `fitFov < atan(1/6.5) ≈ 8.74°`, i.e. when `maxAngle + margin` is under ~8.74° — which in practice means single visits (maxAngle = 0) and degenerate-close pairs. For those, the camera lands a whisker past resting (6.62 vs 6.5) — close enough to match the ticket's acceptance criterion "single visit: resting distance."
+Japan and single-visit trips clamp to 5.5 (close-up, globe fills ~95% of viewport). RTW lands at 8.6 (globe fills ~60% of viewport). The transition through continental and hemispheric spreads is smooth.
 
-This binary behavior is intentional and matches §16 Q4's "~40% visible for intercontinental trips" plus the acceptance-criteria "single visit → resting" line.
+### Constants
 
-### `FIT_FOV_SINGULARITY_BUFFER = 0.05 rad` (~2.9°)
+- `GLOBE_RADIUS = 2` — duplicated in `GlobeMesh.tsx`; update both if the mesh radius changes.
+- `TRIP_FIT_MIN_DISTANCE = 5.5` — floor. Globe at this distance fills ~95% of viewport vertically (2·asin(R/D) = 43° vs 45° FOV). Closer than `RESTING_DISTANCE` = 6.5 because a locked trip is an editorial focus, not an idle view.
+- `TRIP_FIT_MAX_DISTANCE = 8.6` — ceiling. Globe fills ~60% of viewport (derived from §16 Q4 tuning).
 
-Named constant for the hemisphere-straddle branch. `1/tan(fitFov)` diverges and then flips negative as `fitFov` crosses π/2, so we bail out of the math a hair before the singularity. 0.05 rad chosen empirically — large enough to avoid floating-point noise near π/2, small enough that it never steals from trips the user would expect to frame smoothly.
+### Invariant: `minDistance < maxDistance`
 
-### Invariant: `RESTING_DISTANCE < TRIP_FIT_MAX_DISTANCE`
-
-The `Math.max(RESTING_DISTANCE, …)` floor assumes this; the `OrbitControls maxDistance` prop is also pinned to `TRIP_FIT_MAX_DISTANCE`. If `RESTING_DISTANCE` is ever tuned upward, bump `TRIP_FIT_MAX_DISTANCE` to preserve headroom.
+Enforced implicitly by the choice of constants (5.5 < 8.6). The fit formula is only meaningful when this holds. `OrbitControls maxDistance` stays at 13 (looser) so the user's scroll-wheel has headroom past the trip-fit cap.
 
 ### `OrbitControls maxDistance` vs `TRIP_FIT_MAX_DISTANCE`
 
-Two independent caps with different jobs:
-
-- `TRIP_FIT_MAX_DISTANCE = 8.6` — the farthest the **trip-fit animation** will land. Chosen so the globe fills ~60% of viewport height at max zoom: with `GLOBE_RADIUS = 2` and camera FOV = 45°, `d = R / sin(0.6 × 45° / 2) = 2 / 0.2334 ≈ 8.57`. Originally spec'd as ~40% (2× resting = 13) but bumped after the RTW trip read as too small.
-- `OrbitControls maxDistance = 13` — how far the **user's scroll wheel** can push the camera. Kept looser so the user can zoom out past the fit cap if they want to. Invariant: `maxDistance ≥ TRIP_FIT_MAX_DISTANCE` so the fit animation is never clipped by controls.
+Two independent caps with different jobs. `OrbitControls maxDistance = 13` is kept looser than `TRIP_FIT_MAX_DISTANCE = 8.6` so the user's scroll-wheel can push past the fit cap if they want to. Invariant: `OrbitControls.maxDistance ≥ TRIP_FIT_MAX_DISTANCE` so the fit animation is never clipped by controls.
 
 ### Cold-URL `?trip=` handling
 

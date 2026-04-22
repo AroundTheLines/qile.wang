@@ -24,30 +24,35 @@ const ARTICLE_CAMERA_DISTANCE = 4.2
 // as "whiplash-y" — the longer runway softens the mid-animation peak
 // velocity without changing the ease curve.
 const TRIP_FIT_DURATION = 1.1
-// Padding around max angular spread when fitting a trip.
-const TRIP_FIT_MARGIN = 0.15
-// Cap zoom-out for globe-spanning trips so the globe fills ~60% of the
-// viewport at max zoom (§16 Q4 — originally spec'd as ~40% but bumped up
-// after RTW review: the globe read as too small). Derivation with
-// GLOBE_RADIUS = 2 and camera vertical FOV = 45°:
-//   target_fraction = 0.6 → full_angle = 0.6 × 45° = 27° → half = 13.5°
-//   distance = R / sin(13.5°) = 2 / 0.2334 ≈ 8.57 → round to 8.6.
-// Invariant: RESTING_DISTANCE < TRIP_FIT_MAX_DISTANCE — the
-// `Math.max(RESTING_DISTANCE, …)` floor inside computeFitCamera assumes
-// this. OrbitControls `maxDistance` is intentionally *higher* than this
-// so the user can wheel-zoom out past the trip-fit cap.
+
+// Globe mesh radius — must match GLOBE_RADIUS in GlobeMesh.tsx. Used by
+// the fit formula to anchor the `R·cos(θ)` term. If the mesh radius ever
+// changes, update both places.
+const GLOBE_RADIUS = 2
+
+// Farthest the trip-fit animation will land — sized so the globe fills
+// ~60% of the viewport at max zoom (§16 Q4, tuned after the RTW visual
+// review). Derivation with R=2, camera vertical FOV=45°:
+//   target fraction = 0.6 → full_angle = 27° → half = 13.5°
+//   distance = R / sin(13.5°) ≈ 8.57 → round to 8.6.
+// Also determines the screen half-angle that the outermost pin of a
+// hemisphere-spread trip lands at: atan(R/maxDistance) ≈ 13.5°, which
+// is ~60% of the camera's half-FOV — plenty of margin from the frustum
+// edge. See `computeFitCamera` for how this ripples into the fit curve.
 const TRIP_FIT_MAX_DISTANCE = 8.6
-// Buffer (radians) applied to the `fitFov = π/2` singularity. `1/tan`
-// diverges sharply as fitFov approaches π/2 and goes negative past it;
-// bailing to the max-distance cap a hair early (~2.9°) gives us a stable
-// branch for trips whose pins almost-but-not-quite straddle the hemisphere.
-const FIT_FOV_SINGULARITY_BUFFER = 0.05
+
+// Closest the trip-fit animation will land for tight clusters. Chosen
+// so the globe fills ~95% of viewport height at this distance (pretty
+// zoomed in, outermost pin centered, no frustum overflow):
+//   globe angle = 2 · asin(R/D) = 2 · asin(2/5.5) ≈ 43° → ~95% of FOV
+// Closer than RESTING_DISTANCE (6.5) because a locked trip is an
+// editorial focus, not an idle view.
+const TRIP_FIT_MIN_DISTANCE = 5.5
 
 const FIT_CAMERA_OPTS = {
-  restingDistance: RESTING_DISTANCE,
+  globeRadius: GLOBE_RADIUS,
+  minDistance: TRIP_FIT_MIN_DISTANCE,
   maxDistance: TRIP_FIT_MAX_DISTANCE,
-  margin: TRIP_FIT_MARGIN,
-  fovSingularityBuffer: FIT_FOV_SINGULARITY_BUFFER,
 } as const
 
 type RotateState = {
