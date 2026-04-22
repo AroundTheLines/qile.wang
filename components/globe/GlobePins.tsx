@@ -4,7 +4,7 @@ import { useRef, useCallback, useMemo } from 'react'
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useGlobe } from './GlobeContext'
-import { sphericalToCartesian } from '@/lib/globe'
+import { GLOBE_RADIUS, sphericalToCartesian } from '@/lib/globe'
 
 const PIN_RADIUS = 0.042
 // The dot is a full sphere sitting on the globe surface, so half of it
@@ -20,7 +20,6 @@ const SURFACE_OFFSET = 0.006
 // hover/click from neighbors when the globe is zoomed in.
 const HIT_RADIUS = 0.075
 const PIN_COLOR = '#EF4444'
-const GLOBE_RADIUS = 2
 
 // Render-order bands — explicit so the transparent-sort order is
 // deterministic and doesn't flip per-frame based on camera depth.

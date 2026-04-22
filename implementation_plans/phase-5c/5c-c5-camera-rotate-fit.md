@@ -312,13 +312,18 @@ With `globeRadius = 2`, `minDistance = 5.5`, `maxDistance = 8.6`:
 | 60° | — | ~8.45 | 8.45 |
 | ≥ 65° | RTW (Tokyo/NYC/Sydney) | 8.6+ | 8.6 (max) |
 
-Japan and single-visit trips clamp to 5.5 (close-up, globe fills ~95% of viewport). RTW lands at 8.6 (globe fills ~60% of viewport). The transition through continental and hemispheric spreads is smooth.
+Japan and single-visit trips clamp to `minDistance ≈ 4.24` (close-up, globe overflows viewport at ~125%). RTW lands at `maxDistance ≈ 8.57` (globe fills ~60% of viewport). The transition through continental and hemispheric spreads is smooth.
 
 ### Constants
 
-- `GLOBE_RADIUS = 2` — duplicated in `GlobeMesh.tsx`; update both if the mesh radius changes.
-- `TRIP_FIT_MIN_DISTANCE = 4.3` — floor. Globe at this distance *overflows* the viewport by ~25% (2·asin(R/D) ≈ 56° vs 45° FOV → ~125%). Intentionally tight: a tight-cluster trip like Japan Spring '22 should read as a zoomed-in detail shot, not "a globe with pins." Kept comfortably above OrbitControls `minDistance = 4` so the fit doesn't land on the user-zoom floor.
-- `TRIP_FIT_MAX_DISTANCE = 8.6` — ceiling. Globe fills ~60% of viewport (derived from §16 Q4 tuning).
+Everything is derived from four primary inputs — `GLOBE_RADIUS`, `CAMERA_FOV_DEG`, and two viewport-fraction targets — so tuning is a one-place change:
+
+- `GLOBE_RADIUS = 2` — now the **single source of truth** in [`lib/globe.ts`](../../lib/globe.ts). Previously duplicated across `GlobeMesh.tsx`, `GlobePins.tsx`, `GlobePositionBridge.tsx`, and `GlobeScene.tsx` — all four now import it.
+- `CAMERA_FOV_DEG = 45` — mirrors the `Canvas` prop in `GlobeCanvas.tsx`. Still a duplication, but a narrow one that lives next to its consumer. If the camera FOV ever changes, update both.
+- `TRIP_FIT_MIN_VIEWPORT_FRAC = 1.25` — tight clusters fill 125% of the viewport (intentionally overflow). Derives `TRIP_FIT_MIN_DISTANCE ≈ 4.24`, which has ~0.24 clearance above OrbitControls `minDistance = 4`.
+- `TRIP_FIT_MAX_VIEWPORT_FRAC = 0.6` — globe-spanning trips fill 60% of viewport. Derives `TRIP_FIT_MAX_DISTANCE ≈ 8.57`, below OrbitControls `maxDistance = 13` (which stays looser so user wheel-zoom has headroom).
+
+`distanceForViewportFraction(f) = R / sin(f · FOV / 2)` handles the conversion. Both endpoints use the same helper so the symmetry is obvious.
 
 ### Invariant: `minDistance < maxDistance`
 

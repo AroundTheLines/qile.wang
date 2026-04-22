@@ -1,5 +1,16 @@
 import type { Coordinates, PinWithVisits, VisitSummary } from './types'
 
+// --- Scene constants ---
+
+/**
+ * Globe mesh radius. Referenced by anything that needs to place objects
+ * on/near the sphere surface, project screen positions, or compute camera
+ * framing. Previously duplicated in `GlobeMesh.tsx`, `GlobePins.tsx`,
+ * `GlobePositionBridge.tsx`, and `GlobeScene.tsx` — consolidated here so
+ * tweaking the globe size doesn't require a multi-file hunt.
+ */
+export const GLOBE_RADIUS = 2
+
 // --- Layout constants ---
 
 /**
@@ -105,6 +116,13 @@ export function computeFitCamera(
     if (a > maxAngle) maxAngle = a
   }
 
+  // `rawDistance` is exact on θ ∈ [0, π/2]. Past π/2 the cos term goes
+  // negative and the curve starts bending back down — at θ=π it
+  // evaluates to −R. That's outside the formula's meaningful domain;
+  // the outer clamp to [minDistance, maxDistance] is what actually
+  // guarantees a sane output for degenerate-spread inputs. Antipodal
+  // inputs never reach this branch because the centroid fallback above
+  // picks the first visit direction (θ=0) instead.
   const rawDistance =
     opts.globeRadius * Math.cos(maxAngle) + opts.maxDistance * Math.sin(maxAngle)
   const distance = Math.min(

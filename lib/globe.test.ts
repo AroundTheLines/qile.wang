@@ -128,6 +128,42 @@ describe('computeFitCamera', () => {
     expect(fit.distance).toBe(FIT_OPTS.minDistance)
   })
 
+  it('formula: raw distance matches R·cos(θ) + Dmax·sin(θ) for each term independently', () => {
+    // Pair of points on equator at ±30° → centroid at (0,0,0-ish). Each
+    // point is 30° from centroid → θ = π/6. Formula: 2·cos(π/6) + 8.6·sin(π/6).
+    const theta = Math.PI / 6
+    const expected =
+      FIT_OPTS.globeRadius * Math.cos(theta) + FIT_OPTS.maxDistance * Math.sin(theta)
+    const fit = computeFitCamera(
+      [
+        { lat: 0, lng: -30 },
+        { lat: 0, lng: 30 },
+      ],
+      FIT_OPTS,
+    )
+    expect(fit.distance).toBeCloseTo(expected, 5)
+    // Sanity: both terms individually — bumping R or Dmax should move the result.
+    const fitBiggerR = computeFitCamera(
+      [
+        { lat: 0, lng: -30 },
+        { lat: 0, lng: 30 },
+      ],
+      { ...FIT_OPTS, globeRadius: 3 },
+    )
+    expect(fitBiggerR.distance - fit.distance).toBeCloseTo((3 - 2) * Math.cos(theta), 5)
+    const fitBiggerMax = computeFitCamera(
+      [
+        { lat: 0, lng: -30 },
+        { lat: 0, lng: 30 },
+      ],
+      { ...FIT_OPTS, maxDistance: 10 },
+    )
+    expect(fitBiggerMax.distance - fit.distance).toBeCloseTo(
+      (10 - 8.6) * Math.sin(theta),
+      5,
+    )
+  })
+
   it('gradient: distance grows monotonically with spread in the non-clamped band', () => {
     // Spreads from 30° to 150° (pair on equator) — sample the growth curve.
     const sample = (halfSpreadDeg: number) =>

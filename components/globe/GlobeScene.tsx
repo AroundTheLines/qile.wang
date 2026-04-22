@@ -5,7 +5,7 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { useGlobe } from './GlobeContext'
-import { computeFitCamera, sphericalToCartesian } from '@/lib/globe'
+import { computeFitCamera, GLOBE_RADIUS, sphericalToCartesian } from '@/lib/globe'
 import type { Coordinates } from '@/lib/types'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 
@@ -19,36 +19,38 @@ const PIN_ROTATE_DURATION = 0.3
 const ARTICLE_ZOOM_DURATION = 0.4
 // When zoomed for article-open, pull camera closer than resting.
 const ARTICLE_CAMERA_DISTANCE = 4.2
+// Camera vertical FOV (degrees). Must match the Canvas prop in
+// GlobeCanvas.tsx. Threaded through the trip-fit distances below.
+const CAMERA_FOV_DEG = 45
+
+// Target viewport fractions for the trip-fit animation endpoints,
+// expressed as `globe vertical angular diameter / camera vertical FOV`.
+// Values > 1 mean the globe intentionally overflows the viewport
+// (tight-cluster close-up feel). Both distances are derived from these
+// fractions so they stay coupled to the camera FOV and globe radius.
+const TRIP_FIT_MIN_VIEWPORT_FRAC = 1.25 // tight clusters overflow by ~25%
+const TRIP_FIT_MAX_VIEWPORT_FRAC = 0.6 // hemisphere-spread trips at ~60%
+
+/** distance(viewport_fraction) — inverse of `2·asin(R/D) / FOV`. */
+function distanceForViewportFraction(fraction: number): number {
+  const halfAngle = (fraction * CAMERA_FOV_DEG * Math.PI) / 360
+  return GLOBE_RADIUS / Math.sin(halfAngle)
+}
+
+// Closest the trip-fit animation will land (tight clusters like Japan
+// Spring '22). Kept above `OrbitControls minDistance = 4` so the fit
+// doesn't collide with the user-zoom floor — asserted below.
+const TRIP_FIT_MIN_DISTANCE = distanceForViewportFraction(TRIP_FIT_MIN_VIEWPORT_FRAC)
+// Farthest the trip-fit animation will land (globe-spanning trips).
+// See §16 Q4 — originally spec'd as ~40% visible, bumped to 60% after
+// the RTW visual review (the globe read as too small).
+const TRIP_FIT_MAX_DISTANCE = distanceForViewportFraction(TRIP_FIT_MAX_VIEWPORT_FRAC)
+
 // Cinematic rotate-to-fit duration for trip lock (§17.3). Nudged up
 // from the spec's 800ms after PR review flagged trip-to-trip transitions
 // as "whiplash-y" — the longer runway softens the mid-animation peak
 // velocity without changing the ease curve.
 const TRIP_FIT_DURATION = 1.1
-
-// Globe mesh radius — must match GLOBE_RADIUS in GlobeMesh.tsx. Used by
-// the fit formula to anchor the `R·cos(θ)` term. If the mesh radius ever
-// changes, update both places.
-const GLOBE_RADIUS = 2
-
-// Farthest the trip-fit animation will land — sized so the globe fills
-// ~60% of the viewport at max zoom (§16 Q4, tuned after the RTW visual
-// review). Derivation with R=2, camera vertical FOV=45°:
-//   target fraction = 0.6 → full_angle = 27° → half = 13.5°
-//   distance = R / sin(13.5°) ≈ 8.57 → round to 8.6.
-// Also determines the screen half-angle that the outermost pin of a
-// hemisphere-spread trip lands at: atan(R/maxDistance) ≈ 13.5°, which
-// is ~60% of the camera's half-FOV — plenty of margin from the frustum
-// edge. See `computeFitCamera` for how this ripples into the fit curve.
-const TRIP_FIT_MAX_DISTANCE = 8.6
-
-// Closest the trip-fit animation will land for tight clusters. Chosen
-// so the globe fills ~125% of viewport height — intentionally overflows
-// the viewport so a tight cluster like Japan Spring '22 reads as a
-// proper zoomed-in detail shot rather than just "a globe with pins":
-//   globe angle = 2 · asin(R/D) = 2 · asin(2/4.3) ≈ 56° vs FOV 45° → ~125%
-// Kept comfortably above OrbitControls `minDistance = 4` so the fit
-// doesn't land against the user-zoom floor.
-const TRIP_FIT_MIN_DISTANCE = 4.3
 
 const FIT_CAMERA_OPTS = {
   globeRadius: GLOBE_RADIUS,
