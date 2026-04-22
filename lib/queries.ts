@@ -93,6 +93,35 @@ export const allVisitsQuery = groq`
   } | order(startDate desc)
 `
 
+// Bulk trip fetch with embedded visits — drives the trip panel (C4) so it
+// has per-visit sections + items without a second network round-trip.
+// Deliberately separate from `allTripsQuery` (which stays lean for the
+// timeline) so we don't pay the item-reference cost for every timeline render.
+export const allTripsWithVisitsQuery = groq`
+  *[_type == "trip"] {
+    _id,
+    title,
+    slug,
+    "hasArticle": defined(articleBody) && length(articleBody) > 0,
+    "visits": *[_type == "visit" && references(^._id)] | order(startDate asc) {
+      _id,
+      startDate,
+      endDate,
+      "location": location->{ _id, name, coordinates, slug },
+      "items": items[]->${visitItemProjection}
+    }
+  } {
+    _id,
+    title,
+    slug,
+    hasArticle,
+    visits,
+    "startDate": visits[0].startDate,
+    "endDate":   visits | order(endDate desc)[0].endDate,
+    "visitCount": count(visits),
+  } | order(startDate desc)
+`
+
 // Two-stage projection: fetch full visits once into `visits`, then derive
 // startDate / endDate / visitCount from that array — avoids running
 // `references(^._id)` four times.

@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { GlobeContext, type ScreenPosition, type ViewportTier } from './GlobeContext'
-import type { PinWithVisits, TripSummary } from '@/lib/types'
+import type { PinWithVisits, TripSummary, TripWithVisits } from '@/lib/types'
 import type { GlobeScreenCircle } from '@/lib/globe'
 
 function useViewportTier(): ViewportTier {
@@ -43,11 +43,13 @@ const IDLE_RESUME_MS = 5000
 export default function GlobeProvider({
   trips,
   pins,
+  tripsWithVisits,
   fetchError,
   children,
 }: {
   trips: TripSummary[]
   pins: PinWithVisits[]
+  tripsWithVisits: TripWithVisits[]
   fetchError: boolean
   children: React.ReactNode
 }) {
@@ -101,9 +103,12 @@ export default function GlobeProvider({
     setSelectedPin(id)
   }, [])
 
-  // --- Trip lock wrapper: also clears selectedPin so panelVariant flip is clean.
-  // Pin panel and trip panel share the same screen region — per spec §7.3.2,
-  // locking a trip swaps variants rather than stacking panels.
+  // --- Trip lock wrapper: also clears pin selection so panelVariant flips
+  // cleanly. Pin panel and trip panel share the same screen region — per
+  // spec §7.3.2, locking a trip swaps variants rather than stacking panels.
+  // Trip panels don't use selectedPinScreenY (their Y is a fixed anchor in
+  // GlobeViewport), so clearing it here keeps state tidy for the next
+  // pin selection.
   const setLockedTrip = useCallback((id: string | null) => {
     setLockedTripState(id)
     if (id !== null) {
@@ -282,6 +287,7 @@ export default function GlobeProvider({
       value={{
         trips,
         pins,
+        tripsWithVisits,
         fetchError,
         selectedPin,
         selectPin,

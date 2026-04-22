@@ -9,6 +9,18 @@ import type { PinWithVisits, VisitSummary } from './types'
  */
 export const NAVBAR_HEIGHT_PX = 72
 
+/**
+ * Vertical anchor used by the trip panel (§7.2). Unlike the pin panel —
+ * which is anchored to the selected pin's Y so the connector line reads
+ * cleanly from pin → panel header — the trip panel has no geometric
+ * anchor on the globe, so we pin it just below the timeline rail. The
+ * fixed offset is what visually distinguishes the two variants.
+ *
+ * Navbar (72) + timeline rail (~92) + a visible gap (~28) ≈ 192. Rounded
+ * to 200 to keep the floor resilient to small timeline-height changes.
+ */
+export const TRIP_PANEL_TOP_PX = NAVBAR_HEIGHT_PX + 128
+
 // --- Utilities ---
 
 /**

@@ -5,7 +5,7 @@ import { useRef, useCallback, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useGlobe } from './GlobeContext'
-import { clampPanelTop, NAVBAR_HEIGHT_PX } from '@/lib/globe'
+import { clampPanelTop, NAVBAR_HEIGHT_PX, TRIP_PANEL_TOP_PX } from '@/lib/globe'
 import GlobeFallbackSVG from './GlobeFallbackSVG'
 import GlobeDetailPanel from './GlobeDetailPanel'
 import GlobePinTriggers from './GlobePinTriggers'
@@ -31,6 +31,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
     isDesktop,
     pins,
     layoutState,
+    panelVariant,
     activeArticleSlug,
     closeArticle,
   } = useGlobe()
@@ -64,8 +65,14 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
   const viewportW = viewportSize.w
   const viewportH = viewportSize.h
 
-  const panelTop = clampPanelTop(selectedPinScreenY, viewportH || 800)
-  const selectedPinData = pins.find((p) => p.location._id === selectedPin)
+  // Trip panel is always pinned just below the timeline (§7.2) so it reads
+  // visually distinct from pin panels, which anchor to their pin's Y and
+  // draw a connector from pin → panel header. Fixed anchor keeps trip panels
+  // stable regardless of what was selected before.
+  const panelTop =
+    panelVariant === 'trip'
+      ? TRIP_PANEL_TOP_PX
+      : clampPanelTop(selectedPinScreenY, viewportH || 800)
 
   if (isMobile) {
     // On mobile, article content opens *inside* the sidecar panel — no separate
@@ -74,7 +81,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
     // visible behind the scrim so the user can always tap back to the globe.
     const isArticle = layoutState === 'article-open'
     const resolvedPin =
-      selectedPinData ||
+      pins.find((p) => p.location._id === selectedPin) ||
       (activeArticleSlug
         ? pins.find((p) =>
             p.visits.some((v) =>
@@ -214,7 +221,10 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
   // - article-open: shrunk to articleGlobeWidthPx, pinned left, article on right
   const isArticle = layoutState === 'article-open'
   const globeWidth = isArticle ? articleGlobeWidthPx : viewportW
-  const globeX = isArticle ? 0 : selectedPin ? -panelWidthPx / 2 : 0
+  // Shift the globe to make room for the panel whenever any panel variant
+  // is open (pin or trip — C4). Keyed on panelVariant rather than selectedPin
+  // so a trip-only lock also opens the panel slot.
+  const globeX = isArticle ? 0 : panelVariant ? -panelWidthPx / 2 : 0
 
   return (
     <div
@@ -280,7 +290,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
       </AnimatePresence>
 
       <AnimatePresence>
-        {selectedPin && selectedPinData && layoutState === 'panel-open' && (
+        {panelVariant && layoutState === 'panel-open' && (
           <motion.div
             className="absolute top-0 bottom-0"
             style={{ width: panelWidthPx, right: 16 }}
@@ -289,12 +299,19 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
             exit={{ x: '110%' }}
             transition={SLIDE_TRANSITION}
           >
-            <div
+            {/* Animate `top` so variant switches (pin → trip and back)
+                tween the panel's Y alongside the inner content cross-fade,
+                rather than snapping instantly. Duration matches the inner
+                fade (200ms) so the two motions land together. */}
+            <motion.div
               className="absolute left-0 w-full"
-              style={{ top: panelTop, maxHeight: 'calc(100vh - 48px)' }}
+              style={{ maxHeight: 'calc(100vh - 48px)' }}
+              initial={false}
+              animate={{ top: panelTop }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
             >
               <GlobeDetailPanel />
-            </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

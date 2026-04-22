@@ -1,9 +1,9 @@
 export const dynamic = 'force-dynamic'
 
 import { readClient as client } from '@/lib/sanity'
-import { allTripsQuery, allVisitsQuery } from '@/lib/queries'
+import { allTripsQuery, allVisitsQuery, allTripsWithVisitsQuery } from '@/lib/queries'
 import { aggregatePins, NAVBAR_HEIGHT_PX } from '@/lib/globe'
-import type { TripSummary, VisitSummary } from '@/lib/types'
+import type { TripSummary, TripWithVisits, VisitSummary } from '@/lib/types'
 import GlobeProvider from '@/components/globe/GlobeProvider'
 import GlobeNavbar from '@/components/globe/GlobeNavbar'
 import GlobeViewport from '@/components/globe/GlobeViewport'
@@ -14,21 +14,32 @@ export default async function GlobeLayout({
 }: {
   children: React.ReactNode
 }) {
-  let trips: TripSummary[] = []
-  let visits: VisitSummary[] = []
-  let fetchError = false
-  try {
-    ;[trips, visits] = await Promise.all([
-      client.fetch<TripSummary[]>(allTripsQuery),
-      client.fetch<VisitSummary[]>(allVisitsQuery),
-    ])
-  } catch {
-    fetchError = true
-  }
+  // Use allSettled so one query failing (e.g. the heavier tripsWithVisits
+  // projection) doesn't blank the timeline + pins too. `fetchError` stays
+  // true whenever any query fails so downstream UI can still surface a
+  // degraded-state banner.
+  const [tripsResult, visitsResult, tripsWithVisitsResult] = await Promise.allSettled([
+    client.fetch<TripSummary[]>(allTripsQuery),
+    client.fetch<VisitSummary[]>(allVisitsQuery),
+    client.fetch<TripWithVisits[]>(allTripsWithVisitsQuery),
+  ])
+  const trips: TripSummary[] = tripsResult.status === 'fulfilled' ? tripsResult.value : []
+  const visits: VisitSummary[] = visitsResult.status === 'fulfilled' ? visitsResult.value : []
+  const tripsWithVisits: TripWithVisits[] =
+    tripsWithVisitsResult.status === 'fulfilled' ? tripsWithVisitsResult.value : []
+  const fetchError =
+    tripsResult.status === 'rejected' ||
+    visitsResult.status === 'rejected' ||
+    tripsWithVisitsResult.status === 'rejected'
   const pins = aggregatePins(visits)
 
   return (
-    <GlobeProvider trips={trips} pins={pins} fetchError={fetchError}>
+    <GlobeProvider
+      trips={trips}
+      pins={pins}
+      tripsWithVisits={tripsWithVisits}
+      fetchError={fetchError}
+    >
       <GlobeNavbar />
       {/* Desktop/tablet only — spec §2. Mobile restructure (globe above
           timeline) is owned by E1. GlobeViewport uses `fixed inset-0`, so the
