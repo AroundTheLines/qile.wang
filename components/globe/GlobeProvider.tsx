@@ -301,10 +301,15 @@ export default function GlobeProvider({
     if (prev === lockedTrip) return
     if (pathname !== '/globe') return
     const currentTripQuery = searchParams.get('trip')
+    const currentPinQuery = searchParams.get('pin')
     const lockedTripSlug = lockedTrip
       ? (trips.find((t) => t._id === lockedTrip)?.slug.current ?? null)
       : null
-    if (lockedTripSlug && lockedTripSlug !== currentTripQuery) {
+    // Strip `?pin=` whenever a trip is locked — they're mutually exclusive in
+    // state (`setLockedTrip` clears `selectedPin`). This also covers the
+    // deep-link case `/globe?pin=X&trip=Y` where the slug matches but the
+    // stale `?pin=` would otherwise linger in the URL.
+    if (lockedTripSlug && (lockedTripSlug !== currentTripQuery || currentPinQuery)) {
       const next = new URLSearchParams(searchParams.toString())
       next.set('trip', lockedTripSlug)
       next.delete('pin')
