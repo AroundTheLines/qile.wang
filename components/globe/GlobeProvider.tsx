@@ -272,6 +272,54 @@ export default function GlobeProvider({
     })
   }, [searchParams, activeTripSlug, trips])
 
+  // --- Invalid ?trip=<slug> on /globe → silently replace to /globe.
+  // /trip/<invalid> is handled by the route's not-found.tsx. Here we guard
+  // against trips.length === 0 so we don't redirect while data is hydrating.
+  useEffect(() => {
+    if (pathname !== '/globe') return
+    const slug = searchParams.get('trip')
+    if (!slug) return
+    if (trips.length === 0) return
+    const exists = trips.some((t) => t.slug.current === slug)
+    if (!exists) router.replace('/globe', { scroll: false })
+  }, [pathname, searchParams, trips, router])
+
+  // --- Escape key: layered dismiss (sliver → preview → panel → nothing).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (activeArticleSlug || activeTripSlug) {
+        closeArticle()
+        return
+      }
+      if (previewTrip) {
+        setPreviewTrip(null)
+        return
+      }
+      if (selectedPin) {
+        selectPin(null)
+        return
+      }
+      if (lockedTrip) {
+        setLockedTrip(null)
+        router.push('/globe', { scroll: false })
+        return
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [
+    activeArticleSlug,
+    activeTripSlug,
+    previewTrip,
+    selectedPin,
+    lockedTrip,
+    closeArticle,
+    selectPin,
+    setLockedTrip,
+    router,
+  ])
+
   // --- Deep-link pin resolution: URL ?pin=<slug-or-id> → select pin.
   // Matches on either `location.slug.current` or `location._id` so the
   // write side can fall back to _id when a location has no slug. Only runs
