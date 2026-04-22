@@ -496,3 +496,13 @@ Verified end-to-end through the headless preview:
 - Close X button fully dismisses the panel.
 
 Sticky-header swap on scroll still needs a human eyeball (scroll is easy to test headlessly, but the *visual* transition quality isn't something a snapshot can judge).
+
+### Self-review follow-ups (addressed in-code)
+
+Surfaced in the PR self-review and pinned as TODOs in the source so C7 / F-series don't re-derive them:
+
+- **`bg-[var(--accent)]/10` in `VisitSection` is inert today.** Tailwind's `/10` alpha suffix only works when `--accent` is defined as space-separated RGB channels (`210 80 60`). `--accent` is currently undefined anywhere in the repo, so the `pulsing` prop is effectively a no-op until C7 either defines `--accent` correctly or switches to an explicit rgba / overlay element. Flagged via JSDoc on the `pulsing` prop.
+- **`VisitSection.onRef` re-registers on every render.** The inline ref callback `ref={(el) => onRef?.(el, visit._id)}` allocates a new function identity per render. Callers (C7) MUST wrap their handler in `useCallback`. Flagged via JSDoc on the `onRef` prop — not just in this ticket doc, so the tripwire is visible from the call site.
+- **`PinPanel` Skeleton has no `fixture`.** Tagged `TODO(F1)` inline so the skeleton-fixture pass has a greppable marker. `name="pin-panel-multi"` is intended to stay stable across F1.
+- **`GlobePinTriggers` focus management.** After activation, focus stays on the hidden trigger rather than moving into the opened panel. Acceptable for C3; tagged `TODO` in the component's JSDoc for the A11y polish pass.
+- **`handleViewArticle` has a redundant `!hasArticle` guard.** Left in place (browsers suppress clicks on `disabled`, but explicit is cheap). No source change.

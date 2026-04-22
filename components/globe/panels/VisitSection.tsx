@@ -18,9 +18,22 @@ interface Props {
   sticky?: boolean
   /** Header label variant: pin panels show trip title, trip panels show location name. */
   secondaryLabel?: string
-  /** Callback exposed for C7 auto-scroll pattern. */
+  /**
+   * Callback exposed for C7 auto-scroll pattern.
+   *
+   * NOTE: the ref is attached with an inline arrow (`el => onRef?.(el, visit._id)`),
+   * so it fires on every render. Callers MUST wrap their handler in `useCallback`
+   * (keyed on a stable identity) to avoid re-registering on each parent render.
+   */
   onRef?: (el: HTMLElement | null, visitId: string) => void
-  /** Is this section receiving a cross-interaction pulse? (C7) */
+  /**
+   * Is this section receiving a cross-interaction pulse? (C7)
+   *
+   * NOTE: the pulse style below uses `bg-[var(--accent)]/10`, which requires
+   * `--accent` to be defined as space-separated RGB channels for the `/10`
+   * alpha-suffix to work. C7 owns defining `--accent` (or switching this to an
+   * explicit rgba/overlay). Until then the prop is inert.
+   */
   pulsing?: boolean
 }
 

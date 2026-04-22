@@ -15,6 +15,11 @@ import { useGlobe } from './GlobeContext'
  *    `[data-pin-trigger="<locationId>"]` without synthesising pointer
  *    events against the R3F raycaster (which doesn't respond to
  *    `dispatchEvent`).
+ *
+ * TODO: focus management — after activation, focus stays on the trigger.
+ * For AT parity with native pin-click we may want to move focus to the
+ * panel's close button (or first focusable) once the panel opens. Defer
+ * to the A11y polish pass (F-series).
  */
 export default function GlobePinTriggers() {
   const { pins, selectPin } = useGlobe()

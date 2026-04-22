@@ -17,6 +17,7 @@ export default function PinPanel({ pin }: Props) {
     pin.visits.length > 1 ? `${pin.visits.length} visits` : undefined
 
   return (
+    // TODO(F1): add `fixture` prop so bones can be (re)captured for the loading state.
     <Skeleton name="pin-panel-multi" loading={false}>
       <PanelChrome
         title={pin.location.name}
