@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { useRouter } from 'next/navigation'
 import { useGlobe } from '../GlobeContext'
 import GlobeDetailItem from '../GlobeDetailItem'
@@ -96,15 +97,34 @@ export default function VisitSection({
             <span>
               {visit.items.length} {visit.items.length === 1 ? 'item' : 'items'}
             </span>
-            <span data-no-skeleton aria-hidden>{expanded ? '▴' : '▾'}</span>
+            <motion.span
+              data-no-skeleton
+              aria-hidden
+              animate={{ rotate: expanded ? 0 : 180 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+              className="inline-block"
+            >
+              ▴
+            </motion.span>
           </button>
-          {expanded && (
-            <div className="pb-3">
-              {visit.items.map((item) => (
-                <GlobeDetailItem key={item._id} item={item} />
-              ))}
-            </div>
-          )}
+          <AnimatePresence initial={false}>
+            {expanded && (
+              <motion.div
+                key="items"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+                className="overflow-hidden"
+              >
+                <div className="pb-3">
+                  {visit.items.map((item) => (
+                    <GlobeDetailItem key={item._id} item={item} />
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </>
       )}
     </section>
