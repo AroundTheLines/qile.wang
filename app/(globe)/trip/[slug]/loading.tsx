@@ -1,0 +1,11 @@
+'use client'
+
+import { Skeleton } from 'boneyard-js/react'
+
+export default function Loading() {
+  return (
+    <div className="w-full h-full">
+      <Skeleton name="trip-article-content" loading={true} animate="shimmer">{null}</Skeleton>
+    </div>
+  )
+}

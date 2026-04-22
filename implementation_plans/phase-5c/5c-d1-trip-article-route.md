@@ -296,6 +296,82 @@ Provider derives `layoutState = 'article-open'` when either `activeArticleSlug` 
 - `/trip/<slug>` route — consumed by TripPanel's "View trip article" button (C4), by D2 for URL sync, by D3 for 404 redirect.
 - `TripArticleContent`, `TripArticleReveal` — D2 may trigger these via router.push.
 
+## Shipped decisions (post-implementation record)
+
+Captured during implementation so future tickets don't have to re-derive these
+from code. Supersedes any conflicting guidance earlier in this document.
+
+- **Sanity client**: `app/(globe)/trip/[slug]/page.tsx` uses `readClient`, not
+  `client`. The spec example used `client`, but this dataset denies anonymous
+  reads for `trip` docs and the public client silently returns `null` (every
+  slug 404s). `app/(globe)/layout.tsx` already uses `readClient` for the same
+  reason. Comment in the file records the rationale.
+
+- **`TripNotFoundRedirect` is a server component, not `'use client'`.** When it
+  was marked `'use client'`, Next.js bailed out of rendering the segment-level
+  `not-found.tsx` and served the global `app/not-found` instead (the custom
+  "Trip not found." message never reached the DOM). D3 owns the 1.5s redirect
+  and will need `useEffect`, so it must either (a) re-mark this file `'use
+  client'` AND verify the segment 404 still renders in dev — possibly by
+  wrapping a client redirect component inside a server `not-found.tsx` — or
+  (b) use a non-component mechanism (e.g. `redirect()` after a delay on the
+  server via metadata). A comment in `TripNotFoundRedirect.tsx` flags this.
+
+- **Route group: `app/(globe)/`.** Moved `app/globe/*` into `app/(globe)/globe/*`
+  and lifted `app/globe/layout.tsx` → `app/(globe)/layout.tsx`. Route paths are
+  unchanged (`(globe)` is a route group, not a segment). `/trip/<slug>` lives
+  at `app/(globe)/trip/[slug]/*` and inherits the layout (provider + navbar +
+  timeline + viewport). No layout duplication.
+
+- **Empty article body fallback**: renders `No content yet for this trip.` as
+  muted text. Spec §8.3 says "only nav chrome — no specific skeleton/placeholder
+  state," but the impl guidance example includes the fallback. Went with the
+  fallback — one muted line is closer to "nav chrome only" in spirit than to
+  a dedicated empty-state treatment, and gives SSR something readable. Trivial
+  to drop if a reviewer prefers fully blank.
+
+- **Camera pan target (§8.1)**: `GlobeScene.resolveArticleZoomPinId()` returns
+  `selectedPin` when set (item articles), otherwise the first (earliest) visit's
+  `location._id` of the `activeTripSlug` trip. This lets both `/globe/<item>`
+  and `/trip/<slug>` share the same article-zoom machinery.
+
+- **`tripsWithVisits` stability in `GlobeScene`**: mirrored into a ref
+  (`tripsWithVisitsRef`) inside `resolveArticleZoomPinId` so the resolver's
+  identity depends only on `selectedPin` + `activeTripSlug`. Without this, a
+  new array reference from the layout re-render would re-trigger the
+  article-open zoom effect mid-view. The pending-zoom effect still keeps
+  `tripsWithVisits` in its deps (guarded by `pendingArticleZoom.current`) so
+  cold-loads can resolve the target after hydration.
+
+- **Close path**: reused `GlobeProvider.closeArticle` (already written in C1,
+  branches on `activeArticleSlug` vs `activeTripSlug`). `/trip/<slug>` →
+  `/globe?trip=<slug>` is handled there; D1 made no routing changes of its own.
+
+- **Visit list inside the trip article body**: intentionally omitted. Spec
+  §8 doesn't mandate it. If a reviewer wants one, add a "Visits on this trip"
+  section to `TripArticleContent.tsx`.
+
+- **Scope of C7 / D2 / D3 in this PR**: mostly none. URL-state write side,
+  browser history push tuning, escape-key handling, and the 404 auto-redirect
+  are explicitly out of scope — with two user-requested exceptions below.
+
+- **Pin URL sync (partial D2)**: clicking a pin now mirrors into
+  `/globe?pin=<slug-or-id>` (write via `router.replace`, not `push`, to keep
+  history clean for casual pin-to-pin exploration). Cold-load of
+  `/globe?pin=<slug-or-id>` resolves via `location.slug.current` then falls
+  back to `location._id` so pins without slugs still link. URL writes only
+  fire on the base `/globe` path — article routes own their own URLs.
+  Deselection (`selectPin(null)`) strips the param. D2 still owns the fuller
+  URL contract (trip write side, history-push vs. replace semantics, combined
+  pin+trip param behavior, etc.).
+
+- **Timeline hidden on article pages**: extracted the layout's fixed timeline
+  block into `TimelineOverlay.tsx` (client component) that returns `null`
+  when `layoutState === 'article-open'`. Previously the z-40 timeline painted
+  over the top of the article body. The overlay renders the same markup as
+  before in panel-open / default states — no visible change off of article
+  routes.
+
 ## How to verify
 
 1. Navigate to `/trip/berlin-2022` directly. Sliver opens, article visible.

@@ -91,17 +91,43 @@ export default function GlobeProvider({
       ? pathname.slice('/trip/'.length).split('/')[0] || null
       : null
 
+  // Serialize a pin id to a URL-safe param. Prefer the location slug (if
+  // the dataset has one) so URLs read naturally; fall back to the _id so
+  // every pin has a stable linkable identifier.
+  const pinParamForId = useCallback(
+    (id: string): string => {
+      const pin = pins.find((p) => p.location._id === id)
+      return pin?.location.slug?.current ?? id
+    },
+    [pins],
+  )
+
   // --- Pin selection with screen-y capture ---
-  const selectPin = useCallback((id: string | null) => {
-    if (id === null) {
-      setSelectedPin(null)
-      setSelectedPinScreenY(null)
-      return
-    }
-    const pos = pinPositionRef.current[id]
-    if (pos) setSelectedPinScreenY(pos.y)
-    setSelectedPin(id)
-  }, [])
+  // Also mirrors the selection into the URL (`?pin=<slug>`) so the state is
+  // shareable / bookmarkable. D2 owns the broader URL-state contract; this
+  // is the minimal write-side for pins.
+  const selectPin = useCallback(
+    (id: string | null) => {
+      if (id === null) {
+        setSelectedPin(null)
+        setSelectedPinScreenY(null)
+      } else {
+        const pos = pinPositionRef.current[id]
+        if (pos) setSelectedPinScreenY(pos.y)
+        setSelectedPin(id)
+      }
+
+      // Only mutate URL on the base /globe path — article routes own their
+      // own URL and shouldn't have ?pin= injected underneath them.
+      if (pathname !== '/globe') return
+      const next = new URLSearchParams(searchParams.toString())
+      if (id === null) next.delete('pin')
+      else next.set('pin', pinParamForId(id))
+      const query = next.toString()
+      router.replace(query ? `/globe?${query}` : '/globe', { scroll: false })
+    },
+    [pathname, searchParams, router, pinParamForId],
+  )
 
   // --- Trip lock wrapper: also clears pin selection so panelVariant flips
   // cleanly. Pin panel and trip panel share the same screen region — per
@@ -234,17 +260,83 @@ export default function GlobeProvider({
     })
   }, [activeArticleSlug, pins])
 
-  // --- Deep-link trip resolution: URL ?trip=<slug> or /trip/<slug> → lock trip.
-  // Read-only; D2 owns the write side.
+  // --- Deep-link trip resolution: URL ?trip=<slug> or /trip/<slug> ↔ lockedTrip.
+  // Clears the lock when the URL no longer encodes a trip so back-nav from
+  // `/globe?trip=<slug>` → `/globe` settles correctly (otherwise the write-side
+  // effect sees stale state and re-pushes `?trip=`, trapping history).
   useEffect(() => {
     const queryTripSlug = searchParams.get('trip')
     const slugFromUrl = queryTripSlug ?? activeTripSlug
-    if (!slugFromUrl) return
+    if (!slugFromUrl) {
+      // On base /globe with no ?trip=, unlock. Article routes (/globe/<slug>)
+      // keep the current lock untouched — they don't own trip state.
+      if (pathname === '/globe') {
+        setLockedTripState((prev) => (prev === null ? prev : null))
+      }
+      return
+    }
     setLockedTripState((prev) => {
       const target = trips.find((t) => t.slug.current === slugFromUrl)
       return target ? target._id : prev
     })
-  }, [searchParams, activeTripSlug, trips])
+  }, [searchParams, activeTripSlug, pathname, trips])
+
+  // --- Write-side URL sync for lockedTrip. Callers (Timeline label click,
+  // TripPanel close) already push the URL themselves; this effect is the
+  // safety net for any code path that flips `lockedTrip` without touching
+  // the URL.
+  //
+  // Only reacts to actual `lockedTrip` changes — not to incidental pathname /
+  // searchParams updates. Triggering on URL changes would re-push `?trip=`
+  // during back-nav (when the URL has already dropped `?trip=` but the
+  // read-side hasn't yet flushed lockedTrip to null in the same commit),
+  // trapping history.
+  //
+  // Only runs on the base /globe pathname — /trip/<slug> and /globe/<slug>
+  // own their own URLs and must not have ?trip= injected beneath them.
+  const prevLockedTripRef = useRef(lockedTrip)
+  useEffect(() => {
+    const prev = prevLockedTripRef.current
+    prevLockedTripRef.current = lockedTrip
+    if (prev === lockedTrip) return
+    if (pathname !== '/globe') return
+    const currentTripQuery = searchParams.get('trip')
+    const currentPinQuery = searchParams.get('pin')
+    const lockedTripSlug = lockedTrip
+      ? (trips.find((t) => t._id === lockedTrip)?.slug.current ?? null)
+      : null
+    // Strip `?pin=` whenever a trip is locked — they're mutually exclusive in
+    // state (`setLockedTrip` clears `selectedPin`). This also covers the
+    // deep-link case `/globe?pin=X&trip=Y` where the slug matches but the
+    // stale `?pin=` would otherwise linger in the URL.
+    if (lockedTripSlug && (lockedTripSlug !== currentTripQuery || currentPinQuery)) {
+      const next = new URLSearchParams(searchParams.toString())
+      next.set('trip', lockedTripSlug)
+      next.delete('pin')
+      router.push(`/globe?${next.toString()}`, { scroll: false })
+    } else if (!lockedTripSlug && currentTripQuery) {
+      const next = new URLSearchParams(searchParams.toString())
+      next.delete('trip')
+      const query = next.toString()
+      router.push(query ? `/globe?${query}` : '/globe', { scroll: false })
+    }
+  }, [lockedTrip, pathname, searchParams, router, trips])
+
+  // --- Deep-link pin resolution: URL ?pin=<slug-or-id> → select pin.
+  // Matches on either `location.slug.current` or `location._id` so the
+  // write side can fall back to _id when a location has no slug. Only runs
+  // on the base /globe path — article routes own their own selection logic.
+  useEffect(() => {
+    if (pathname !== '/globe') return
+    const queryPin = searchParams.get('pin')
+    if (!queryPin) return
+    setSelectedPin((prev) => {
+      const target = pins.find(
+        (p) => p.location.slug?.current === queryPin || p.location._id === queryPin,
+      )
+      return target ? target.location._id : prev
+    })
+  }, [searchParams, pathname, pins])
 
   // --- Selected-pin screen-Y polling (preserved). Deep-link case where
   // selectedPin was set by the article effect before the pin projected.
