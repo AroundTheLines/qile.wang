@@ -6,6 +6,7 @@ import { buildCompressedMap, type TripRange, type CompressedMap } from '@/lib/ti
 import { dragPan, pinchZoom, wheelPan, wheelZoom, type ZoomWindow } from '@/lib/timelineZoom'
 import TimelineSegment from './TimelineSegment'
 import TimelineAxis from './TimelineAxis'
+import TimelinePinBands from './TimelinePinBands'
 import { GlobeContext } from './GlobeContext'
 
 type TimelineTrip = TripRange & {
@@ -731,6 +732,14 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
               isActive={activeId === trip.id}
             />
           ))}
+
+        {width > 0 && (
+          <TimelinePinBands
+            compressed={compressed}
+            zoomWindow={zoomWindow}
+            containerWidth={innerWidth}
+          />
+        )}
       </div>
 
       {renderTodayMarker()}

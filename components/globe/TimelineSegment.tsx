@@ -1,6 +1,7 @@
 'use client'
 
 import type { CompressedMap, TripRange } from '@/lib/timelineCompression'
+import TimelineVisitTicks from './TimelineVisitTicks'
 
 interface Props {
   trip: TripRange & { title?: string }
@@ -9,6 +10,9 @@ interface Props {
   containerWidth: number
   isActive?: boolean
 }
+
+/** Shared with B6 dot-render on playhead crossing. */
+export const MIN_SEGMENT_WIDTH_PX = 12
 
 export default function TimelineSegment({
   trip,
@@ -27,7 +31,11 @@ export default function TimelineSegment({
 
   const leftPx = projX0 * containerWidth
   const widthPx = Math.max(2, (projX1 - projX0) * containerWidth)
-  const isDot = widthPx < 12
+  const isDot = widthPx < MIN_SEGMENT_WIDTH_PX
+
+  // Clip cue when the trip extends past the current zoom window on either side.
+  const clippedLeft = projX0 < 0
+  const clippedRight = projX1 > 1
 
   const fillBase = 'transition-colors duration-150 ease-out'
   const fillColor = isActive
@@ -45,7 +53,30 @@ export default function TimelineSegment({
           style={{ left: 0, transform: 'translate(-50%, -50%)' }}
         />
       ) : (
-        <div className={`absolute inset-0 ${fillBase} ${fillColor}`} />
+        <>
+          <div className={`absolute inset-0 ${fillBase} ${fillColor}`} />
+          {isActive && (
+            <TimelineVisitTicks
+              tripId={trip.id}
+              compressed={compressed}
+              zoomWindow={zoomWindow}
+              containerWidth={containerWidth}
+              segmentLeftPx={leftPx}
+            />
+          )}
+          {clippedLeft && (
+            <div
+              data-no-skeleton
+              className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-2 bg-black/40 dark:bg-white/40 pointer-events-none"
+            />
+          )}
+          {clippedRight && (
+            <div
+              data-no-skeleton
+              className="absolute right-0 top-1/2 -translate-y-1/2 w-0.5 h-2 bg-black/40 dark:bg-white/40 pointer-events-none"
+            />
+          )}
+        </>
       )}
     </div>
   )
