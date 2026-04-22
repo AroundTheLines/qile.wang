@@ -229,11 +229,11 @@ export default function GlobeProvider({
       // resolve the slug (the URL at this point is /trip/<slug>, but we
       // prefer the state's lockedTrip to stay consistent with the panel).
       const trip = trips.find((t) => t._id === lockedTrip)
-      if (trip) {
-        router.push(`/globe?trip=${encodeURIComponent(trip.slug.current)}`, { scroll: false })
-      } else {
-        router.push('/globe', { scroll: false })
-      }
+      // Fall back to activeTripSlug (from the URL) if lockedTrip hasn't
+      // resolved yet — happens on cold-load /trip/<slug> + immediate
+      // Escape before the deep-link effect populates lockedTrip.
+      const slug = trip?.slug.current ?? activeTripSlug
+      router.push(`/globe?trip=${encodeURIComponent(slug)}`, { scroll: false })
     }
   }, [activeArticleSlug, activeTripSlug, router, trips, lockedTrip])
 
