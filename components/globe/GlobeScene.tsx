@@ -28,7 +28,7 @@ type RotateState = {
 
 export default function GlobeScene() {
   const controlsRef = useRef<OrbitControlsImpl>(null)
-  const { pins, selectedPin, layoutState, isMobile } = useGlobe()
+  const { pins, selectedPin, layoutState, isMobile, activeTripSlug, tripsWithVisits } = useGlobe()
   const { camera } = useThree()
 
   // Reactive enabled state — avoids the "React re-renders and reapplies
@@ -120,17 +120,30 @@ export default function GlobeScene() {
 
   const pendingArticleZoom = useRef(false)
 
+  // Resolve the pin to zoom to for the currently open article. Pin articles
+  // use the currently selected pin; trip articles (§8.1) target the first
+  // (earliest) visit of the trip.
+  const resolveArticleZoomPinId = useCallback((): string | null => {
+    if (selectedPin) return selectedPin
+    if (activeTripSlug) {
+      const trip = tripsWithVisits.find((t) => t.slug.current === activeTripSlug)
+      if (trip && trip.visits.length > 0) return trip.visits[0].location._id
+    }
+    return null
+  }, [selectedPin, activeTripSlug, tripsWithVisits])
+
   // Article open/close → drive a camera zoom animation and disable controls.
   useEffect(() => {
     const prev = prevLayoutState.current
     prevLayoutState.current = layoutState
 
     if (layoutState === 'article-open' && prev !== 'article-open') {
-      if (!entranceDone.current || !selectedPin) {
+      const zoomPin = resolveArticleZoomPinId()
+      if (!entranceDone.current || !zoomPin) {
         pendingArticleZoom.current = true
         return
       }
-      startArticleZoom(selectedPin)
+      startArticleZoom(zoomPin)
       return
     }
 
@@ -147,16 +160,18 @@ export default function GlobeScene() {
       }
       preArticleCameraPos.current = null
     }
-  }, [layoutState, selectedPin, camera, startArticleZoom])
+  }, [layoutState, camera, startArticleZoom, resolveArticleZoomPinId])
 
-  // When selectedPin resolves after a deep-link, trigger the pending zoom.
+  // When selectedPin / trip data resolves after a deep-link, trigger the pending zoom.
   useEffect(() => {
     if (!pendingArticleZoom.current) return
     if (!entranceDone.current) return
-    if (layoutState !== 'article-open' || !selectedPin) return
+    if (layoutState !== 'article-open') return
+    const zoomPin = resolveArticleZoomPinId()
+    if (!zoomPin) return
     pendingArticleZoom.current = false
-    startArticleZoom(selectedPin)
-  }, [selectedPin, layoutState, startArticleZoom])
+    startArticleZoom(zoomPin)
+  }, [selectedPin, activeTripSlug, tripsWithVisits, layoutState, startArticleZoom, resolveArticleZoomPinId])
 
   // On any pin selection (initial click OR switch between pins), rotate
   // the camera so the pin sits at the center of the canvas. With the
@@ -208,9 +223,12 @@ export default function GlobeScene() {
         entranceDone.current = true
         setControlsEnabled(true)
         setTimeout(() => setAutoRotate(true), 500)
-        if (pendingArticleZoom.current && layoutState === 'article-open' && selectedPin) {
-          pendingArticleZoom.current = false
-          startArticleZoom(selectedPin)
+        if (pendingArticleZoom.current && layoutState === 'article-open') {
+          const zoomPin = resolveArticleZoomPinId()
+          if (zoomPin) {
+            pendingArticleZoom.current = false
+            startArticleZoom(zoomPin)
+          }
         }
       }
       return
