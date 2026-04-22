@@ -52,7 +52,9 @@
       "Bash(lsof -ti:3000)",
       "Bash(ps:*)",
       "Bash(git mv *)",
-      "Bash(ln -s /Users/qilewang/GithubRepos/personal-site/.env.local ./.env.local)"
+      "Bash(ln -s /Users/qilewang/GithubRepos/personal-site/.env.local .env.local)",
+      "Bash(ln -s /Users/qilewang/GithubRepos/personal-site/.env.local ./.env.local)",
+      "Bash(gh api repos/AroundTheLines/qile.wang/pulls/40/reviews -X POST -F commit_id=c192e759127e53fe30532471a54c36ca2a4185ad -F event=COMMENT -F 'body= *)"
     ]
   }
 }

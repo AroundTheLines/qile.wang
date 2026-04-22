@@ -1,4 +1,15 @@
-import type { PinWithVisits, VisitSummary } from './types'
+import type { Coordinates, PinWithVisits, VisitSummary } from './types'
+
+// --- Scene constants ---
+
+/**
+ * Globe mesh radius. Referenced by anything that needs to place objects
+ * on/near the sphere surface, project screen positions, or compute camera
+ * framing. Previously duplicated in `GlobeMesh.tsx`, `GlobePins.tsx`,
+ * `GlobePositionBridge.tsx`, and `GlobeScene.tsx` — consolidated here so
+ * tweaking the globe size doesn't require a multi-file hunt.
+ */
+export const GLOBE_RADIUS = 2
 
 // --- Layout constants ---
 
@@ -32,6 +43,94 @@ export function clampPanelTop(pinY: number | null, viewportHeight: number): numb
   // Align panel top ~60px above the pin (so pin visually connects to header)
   const desired = pinY - 60
   return Math.max(24, Math.min(desired, viewportHeight - 400))
+}
+
+// --- Camera framing (C5) ---
+
+/**
+ * Compute the camera position (relative to globe origin) that frames all
+ * `coords` of a trip inside the viewport. Returns a position along the
+ * centroid direction at a distance clamped to [minDistance, maxDistance].
+ *
+ * Derivation (see §17.3 and the C5 shipped notes for full context):
+ *   At camera distance D from globe center, a pin at angular offset θ
+ *   from the centroid direction projects to screen half-angle φ where
+ *     tan(φ) = R · sin(θ) / (D − R · cos(θ))
+ *   Solving for D:
+ *     D = R · cos(θ) + R · sin(θ) / tan(φ)
+ *   Choosing φ so that a hemisphere-spread trip (θ = π/2) lands exactly
+ *   at `maxDistance` gives tan(φ) = R / maxDistance, which simplifies to
+ *     D = R · cos(θ) + maxDistance · sin(θ)
+ *
+ * This yields a smooth gradient: tight clusters land at `minDistance`
+ * (clamped), mid-spread trips land proportionally further back, and
+ * hemisphere-straddling trips naturally approach `maxDistance` without
+ * a separate singularity branch. Antipodal pairs fall back to the first
+ * visit's direction (centroid sum ≈ 0).
+ */
+export interface ComputeFitCameraOpts {
+  /** Globe radius in the same units as min/maxDistance. */
+  globeRadius: number
+  /** Floor distance — tight clusters clamp to this. */
+  minDistance: number
+  /** Ceiling — hemisphere-straddling trips land at this. */
+  maxDistance: number
+}
+
+export function computeFitCamera(
+  coords: Coordinates[],
+  opts: ComputeFitCameraOpts,
+): { x: number; y: number; z: number; distance: number } {
+  if (coords.length === 0) {
+    return {
+      x: 0,
+      y: 0,
+      z: opts.minDistance,
+      distance: opts.minDistance,
+    }
+  }
+  const vectors = coords.map((c) => sphericalToCartesian(c.lat, c.lng, 1))
+
+  let cx = 0
+  let cy = 0
+  let cz = 0
+  for (const [x, y, z] of vectors) {
+    cx += x
+    cy += y
+    cz += z
+  }
+  let clen = Math.hypot(cx, cy, cz)
+  if (clen < 1e-6) {
+    // Antipodal — fall back to the first visit's direction.
+    ;[cx, cy, cz] = vectors[0]
+    clen = Math.hypot(cx, cy, cz)
+  }
+  cx /= clen
+  cy /= clen
+  cz /= clen
+
+  let maxAngle = 0
+  for (const [vx, vy, vz] of vectors) {
+    const dot = Math.min(1, Math.max(-1, cx * vx + cy * vy + cz * vz))
+    const a = Math.acos(dot)
+    if (a > maxAngle) maxAngle = a
+  }
+
+  // `rawDistance` is exact on θ ∈ [0, π/2]. Past π/2 the cos term goes
+  // negative and the curve starts bending back down — at θ=π it
+  // evaluates to −R. That's outside the formula's meaningful domain;
+  // the outer clamp to [minDistance, maxDistance] is what actually
+  // guarantees a sane output for degenerate-spread inputs. Antipodal
+  // inputs never reach this branch because the centroid fallback above
+  // picks the first visit direction (θ=0) instead.
+  const rawDistance =
+    opts.globeRadius * Math.cos(maxAngle) + opts.maxDistance * Math.sin(maxAngle)
+  const distance = Math.min(
+    opts.maxDistance,
+    Math.max(opts.minDistance, rawDistance),
+  )
+
+  return { x: cx * distance, y: cy * distance, z: cz * distance, distance }
 }
 
 export function sphericalToCartesian(
