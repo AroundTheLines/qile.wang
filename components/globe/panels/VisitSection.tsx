@@ -55,7 +55,7 @@ export default function VisitSection({
       }`}
     >
       <header
-        className={`px-4 py-3 bg-white dark:bg-black ${sticky ? 'sticky top-0 z-10' : ''}`}
+        className={`px-4 py-3 bg-white dark:bg-black border-b border-gray-100 dark:border-gray-900 ${sticky ? 'sticky top-0 z-10' : ''}`}
       >
         <div className="flex items-baseline justify-between gap-2">
           <div className="min-w-0">

@@ -420,3 +420,44 @@ And delete the prop usage on both sides.
 6. Click "View trip article" on a trip without body (Weekend in Lisbon fixture) — button is grayed; hover shows tooltip.
 7. Click X close — panel closes. `selectedPin` null. `pinSubregionHighlight` also null (via C1/C2 effect).
 8. Dark mode: add `.dark` to `<html>`. Colors swap.
+
+---
+
+## Shipped implementation notes (2026-04-22, PR #36)
+
+Decisions and deviations from the original plan, recorded so C4/C7/F1 don't have to re-derive them from the diff.
+
+### Decisions taken
+
+- **`GlobeDetailItem` prop: full migration to `VisitItemSummary`** (spec option (a)). Removed `locationLabel` and `year` render entirely — the visit section's sticky header conveys both, so item cards only show title + "Post" badge now. Consequence: item cards are visually leaner inside expanded sections than they were in the pre-C3 flat list.
+- **`GlobePinItem` adapter type deleted** from `lib/globe.ts`. Nothing else consumed it; `GlobeDetailItem` now imports `VisitItemSummary` from `lib/types.ts` directly.
+- **Trip variant of the dispatcher returns `null`** (not the `"Trip panel pending (C4)"` placeholder the spec draft showed). Rationale from review: B4 already wires trip-lock plumbing, and a visible placeholder can surface mid-integration. C4 will replace the `null` branch with `<TripPanel />`.
+- **`Skeleton` wrapper is installed around `PinPanel`** with `name="pin-panel-multi"`, `loading={false}`, no `fixture` yet. F1 adds the fixture prop without needing to touch `PinPanel` structurally.
+- **Sticky headers carry their own `border-b`** (not just the parent `<section>`'s bottom border). Without this the stuck header sits flush against scrolling content with no divider as the section's own bottom border scrolls away.
+- **Pin visits are NOT re-sorted inside the component.** `aggregatePins` in `lib/globe.ts:~136` already sorts descending by `startDate`. `PinPanel` just maps in order. If the sort contract changes, update `aggregatePins`, not the panel.
+
+### `VisitSection` API shape (for C4/C7)
+
+Finalized props:
+- `visit: VisitSummary | VisitInTrip` — either shape works. When `visit` has a `trip` ref (i.e. it's a `VisitSummary` from the pin panel), the "View trip article" button uses it. When it doesn't (a `VisitInTrip` from the trip panel), that button is omitted regardless of `showViewTripArticleLink`.
+- `showViewTripArticleLink: boolean` — pin panels pass `true`, trip panels pass `false`.
+- `sticky?: boolean` — pass `true` inside scrollable panel lists.
+- `secondaryLabel?: string` — optional override for the line under the date. Pin panels leave this unset and let the component fall back to `visit.trip.title`. **Trip panels should pass `secondaryLabel={visit.location.name}`** since `VisitInTrip` has no trip back-ref.
+- `onRef?: (el, visitId) => void` — set by C7 to register each section's DOM node for auto-scroll targeting. Not memoised inside the component; callers should wrap their handler in `useCallback` to avoid re-registration on every render.
+- `pulsing?: boolean` — C7 sets this to trigger the background-tint pulse.
+
+Known follow-up for C4/C7: the `VisitLike` union type inside `VisitSection.tsx` is intentionally loose (`VisitInTrip & { trip?: … }`) to keep the component agnostic today. If the union becomes awkward once C4 lands, promote `tripRef` to a separate optional prop and narrow `visit` to the base visit shape.
+
+### Gotchas confirmed in implementation
+
+- **`'trip' in visit` guard** — used instead of runtime tagging because both `VisitSummary` and `VisitInTrip` have distinct structural signatures. Works today; revisit if type surface grows.
+- **`disabled` + `onClick`** — the browser really does suppress clicks on disabled buttons, so the `if (!hasArticle) return` guard in `handleViewArticle` is belt-and-braces and can be dropped if someone wants to lean on HTML semantics.
+- **Sticky stacking order** — browser swaps sticky headers naturally as they scroll past each other. No explicit `z-index` arithmetic required; one `z-10` per header is enough.
+
+### Tests added
+
+- `lib/formatDates.test.ts` — covers all three `formatDateRange` branches (single day, same-month, cross-month) plus `formatMonthYear` and `formatFullDate`.
+
+### Verification deferred
+
+Interactive panel behavior (sticky-header swap on scroll, expand/collapse, disabled "View trip article" tooltip) was not auto-verified in CI — the R3F raycaster doesn't fire on synthesized pointer events from a headless harness. Human smoke test required on first `/globe` load with the multi-visit Berlin fixture.
