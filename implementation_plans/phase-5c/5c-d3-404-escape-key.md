@@ -233,6 +233,53 @@ Escape handler improves keyboard users' experience. Not screen-reader focused, b
 
 - Nothing new. Escape handler and 404 finalize the URL/routing story.
 
+## Shipped decisions (2026-04-22)
+
+Record of decisions made during implementation, for future reference.
+
+### 1. `/globe?trip=<invalid>` is a silent redirect, no message
+
+As anticipated in the Ambiguities section. Implemented in `GlobeProvider` as a `useEffect` that calls `router.replace('/globe', { scroll: false })` when `searchParams.get('trip')` doesn't match any trip. No toast, no delay.
+
+**Hydration guard**: the effect returns early if `trips.length === 0` so the client doesn't redirect before SSR data is available. This also doubles as a `fetchError` guard — if the SSR fetch failed, `trips` is `[]` and we correctly decline to invalidate a URL we can't verify.
+
+### 2. `/trip/<invalid>` renders the 404 message for 1.5s, then `router.replace`s to `/globe`
+
+`TripNotFoundRedirect` is a client component. It renders the "Trip not found." text immediately on mount and sets a 1500ms timer that calls `router.replace('/globe')`. `replace` (not `push`) keeps the invalid URL out of history.
+
+### 3. Latent D1 bug fixed alongside: `trip._id` guard in `page.tsx`
+
+The GROQ query `*[_type == "trip" && slug.current == $slug][0] { ... }` returns an all-null *object* (not `null`) when the slug doesn't match, because GROQ projects `null { a, b }` into `{ a: null, b: null }`. Consequently the original `if (!trip) return notFound()` guard never fired, so `not-found.tsx` was unreachable and D3's entire `/trip/<invalid>` flow depended on it.
+
+Fixed by also checking `!trip._id`. **If you're writing a similar page for a different doc type, apply the same guard** — this affects any route using the `*[...][0] { ... }` pattern.
+
+### 4. Escape key layered dismiss order (final)
+
+Implemented in `GlobeProvider` as a single `window.addEventListener('keydown', ...)`. Order, first match wins:
+
+1. `activeArticleSlug || activeTripSlug` → `closeArticle()`
+2. `previewTrip` → `setPreviewTrip(null)` (E3 mobile preview; no-op until E3 ships)
+3. `selectedPin` → `selectPin(null)`
+4. `lockedTrip` → `setLockedTrip(null)` + `router.push('/globe')`
+
+**`push` vs `replace` for layer 4**: deliberate `push`. The user explicitly dismissed — their browser-back should return to the locked-trip state. This contrasts with the silent-redirect case in #1, which uses `replace`.
+
+### 5. `closeArticle` falls back to `activeTripSlug` when `lockedTrip` is null
+
+Cold-load path `/trip/<slug>` + immediate Escape: the deep-link effect that populates `lockedTrip` is async, so on a fast Escape it may still be null. Original code fell through to `/globe` in that case, losing the user's trip context. Now falls back to `activeTripSlug` (parsed from the URL), which is always present on that route.
+
+### 6. No `e.preventDefault()` on the Escape handler
+
+Nothing else in the app listens for Escape today. Add `preventDefault()` if that changes (e.g. a modal library that intercepts Escape).
+
+### 7. Not addressed (intentional)
+
+- **Effect dep churn** — the Escape `useEffect` resubscribes on every state change in its dep list. Refactoring to a `useRef`-based stable handler is a micro-optimization; not worth the readability cost.
+- **SSR timing of the 1.5s timer** — `TripNotFoundRedirect`'s timer only starts on hydration, so on a slow client the message is visible for strictly longer than 1.5s. Acceptable per spec ("brief message"); would require server-side redirect to improve.
+- **A11y focus restoration after dismiss** — §13 defers full keyboard nav.
+
+---
+
 ## How to verify
 
 1. Navigate to `/trip/does-not-exist`. Message renders, then page replaces to `/globe`. Browser back goes to previous external page, not invalid URL.

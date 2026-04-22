@@ -229,11 +229,11 @@ export default function GlobeProvider({
       // resolve the slug (the URL at this point is /trip/<slug>, but we
       // prefer the state's lockedTrip to stay consistent with the panel).
       const trip = trips.find((t) => t._id === lockedTrip)
-      if (trip) {
-        router.push(`/globe?trip=${encodeURIComponent(trip.slug.current)}`, { scroll: false })
-      } else {
-        router.push('/globe', { scroll: false })
-      }
+      // Fall back to activeTripSlug (from the URL) if lockedTrip hasn't
+      // resolved yet — happens on cold-load /trip/<slug> + immediate
+      // Escape before the deep-link effect populates lockedTrip.
+      const slug = trip?.slug.current ?? activeTripSlug
+      router.push(`/globe?trip=${encodeURIComponent(slug)}`, { scroll: false })
     }
   }, [activeArticleSlug, activeTripSlug, router, trips, lockedTrip])
 
@@ -321,6 +321,54 @@ export default function GlobeProvider({
       router.push(query ? `/globe?${query}` : '/globe', { scroll: false })
     }
   }, [lockedTrip, pathname, searchParams, router, trips])
+
+  // --- Invalid ?trip=<slug> on /globe → silently replace to /globe.
+  // /trip/<invalid> is handled by the route's not-found.tsx. Here we guard
+  // against trips.length === 0 so we don't redirect while data is hydrating.
+  useEffect(() => {
+    if (pathname !== '/globe') return
+    const slug = searchParams.get('trip')
+    if (!slug) return
+    if (trips.length === 0) return
+    const exists = trips.some((t) => t.slug.current === slug)
+    if (!exists) router.replace('/globe', { scroll: false })
+  }, [pathname, searchParams, trips, router])
+
+  // --- Escape key: layered dismiss (sliver → preview → panel → nothing).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (activeArticleSlug || activeTripSlug) {
+        closeArticle()
+        return
+      }
+      if (previewTrip) {
+        setPreviewTrip(null)
+        return
+      }
+      if (selectedPin) {
+        selectPin(null)
+        return
+      }
+      if (lockedTrip) {
+        setLockedTrip(null)
+        router.push('/globe', { scroll: false })
+        return
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [
+    activeArticleSlug,
+    activeTripSlug,
+    previewTrip,
+    selectedPin,
+    lockedTrip,
+    closeArticle,
+    selectPin,
+    setLockedTrip,
+    router,
+  ])
 
   // --- Deep-link pin resolution: URL ?pin=<slug-or-id> → select pin.
   // Matches on either `location.slug.current` or `location._id` so the
