@@ -260,17 +260,67 @@ export default function GlobeProvider({
     })
   }, [activeArticleSlug, pins])
 
-  // --- Deep-link trip resolution: URL ?trip=<slug> or /trip/<slug> → lock trip.
-  // Read-only; D2 owns the write side.
+  // --- Deep-link trip resolution: URL ?trip=<slug> or /trip/<slug> ↔ lockedTrip.
+  // Clears the lock when the URL no longer encodes a trip so back-nav from
+  // `/globe?trip=<slug>` → `/globe` settles correctly (otherwise the write-side
+  // effect sees stale state and re-pushes `?trip=`, trapping history).
   useEffect(() => {
     const queryTripSlug = searchParams.get('trip')
     const slugFromUrl = queryTripSlug ?? activeTripSlug
-    if (!slugFromUrl) return
+    if (!slugFromUrl) {
+      // On base /globe with no ?trip=, unlock. Article routes (/globe/<slug>)
+      // keep the current lock untouched — they don't own trip state.
+      if (pathname === '/globe') {
+        setLockedTripState((prev) => (prev === null ? prev : null))
+      }
+      return
+    }
     setLockedTripState((prev) => {
       const target = trips.find((t) => t.slug.current === slugFromUrl)
       return target ? target._id : prev
     })
-  }, [searchParams, activeTripSlug, trips])
+  }, [searchParams, activeTripSlug, pathname, trips])
+
+  // --- Write-side URL sync for lockedTrip. Callers (Timeline label click,
+  // TripPanel close) already push the URL themselves; this effect is the
+  // safety net for any code path that flips `lockedTrip` without touching
+  // the URL.
+  //
+  // Only reacts to actual `lockedTrip` changes — not to incidental pathname /
+  // searchParams updates. Triggering on URL changes would re-push `?trip=`
+  // during back-nav (when the URL has already dropped `?trip=` but the
+  // read-side hasn't yet flushed lockedTrip to null in the same commit),
+  // trapping history.
+  //
+  // Only runs on the base /globe pathname — /trip/<slug> and /globe/<slug>
+  // own their own URLs and must not have ?trip= injected beneath them.
+  const prevLockedTripRef = useRef(lockedTrip)
+  useEffect(() => {
+    const prev = prevLockedTripRef.current
+    prevLockedTripRef.current = lockedTrip
+    if (prev === lockedTrip) return
+    if (pathname !== '/globe') return
+    const currentTripQuery = searchParams.get('trip')
+    const currentPinQuery = searchParams.get('pin')
+    const lockedTripSlug = lockedTrip
+      ? (trips.find((t) => t._id === lockedTrip)?.slug.current ?? null)
+      : null
+    // Strip `?pin=` whenever a trip is locked — they're mutually exclusive in
+    // state (`setLockedTrip` clears `selectedPin`). This also covers the
+    // deep-link case `/globe?pin=X&trip=Y` where the slug matches but the
+    // stale `?pin=` would otherwise linger in the URL.
+    if (lockedTripSlug && (lockedTripSlug !== currentTripQuery || currentPinQuery)) {
+      const next = new URLSearchParams(searchParams.toString())
+      next.set('trip', lockedTripSlug)
+      next.delete('pin')
+      router.push(`/globe?${next.toString()}`, { scroll: false })
+    } else if (!lockedTripSlug && currentTripQuery) {
+      const next = new URLSearchParams(searchParams.toString())
+      next.delete('trip')
+      const query = next.toString()
+      router.push(query ? `/globe?${query}` : '/globe', { scroll: false })
+    }
+  }, [lockedTrip, pathname, searchParams, router, trips])
 
   // --- Deep-link pin resolution: URL ?pin=<slug-or-id> → select pin.
   // Matches on either `location.slug.current` or `location._id` so the
