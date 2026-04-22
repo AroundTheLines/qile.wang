@@ -120,17 +120,26 @@ export default function GlobeScene() {
 
   const pendingArticleZoom = useRef(false)
 
+  // Keep `tripsWithVisits` in a ref so resolver identity (and the effects
+  // that depend on it) don't re-fire when the layout re-renders with a new
+  // array reference but equivalent data — which would otherwise re-trigger
+  // the article-open zoom mid-view.
+  const tripsWithVisitsRef = useRef(tripsWithVisits)
+  useEffect(() => {
+    tripsWithVisitsRef.current = tripsWithVisits
+  }, [tripsWithVisits])
+
   // Resolve the pin to zoom to for the currently open article. Pin articles
   // use the currently selected pin; trip articles (§8.1) target the first
   // (earliest) visit of the trip.
   const resolveArticleZoomPinId = useCallback((): string | null => {
     if (selectedPin) return selectedPin
     if (activeTripSlug) {
-      const trip = tripsWithVisits.find((t) => t.slug.current === activeTripSlug)
+      const trip = tripsWithVisitsRef.current.find((t) => t.slug.current === activeTripSlug)
       if (trip && trip.visits.length > 0) return trip.visits[0].location._id
     }
     return null
-  }, [selectedPin, activeTripSlug, tripsWithVisits])
+  }, [selectedPin, activeTripSlug])
 
   // Article open/close → drive a camera zoom animation and disable controls.
   useEffect(() => {

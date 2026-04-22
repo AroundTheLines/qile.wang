@@ -1,5 +1,8 @@
 export const dynamic = 'force-dynamic'
 
+// readClient (not `client`): this dataset denies anonymous reads for trip
+// docs, so the public client silently returns null and every slug 404s.
+// Matches app/(globe)/layout.tsx.
 import { readClient as client } from '@/lib/sanity'
 import { tripBySlugQuery } from '@/lib/queries'
 import type { TripWithVisits } from '@/lib/types'
