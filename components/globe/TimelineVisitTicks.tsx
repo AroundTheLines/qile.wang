@@ -22,21 +22,23 @@ export default function TimelineVisitTicks({
   segmentLeftPx,
 }: Props) {
   const ctx = useContext(GlobeContext)
+  // Destructure so the memo depends on the stable `pins` array rather than
+  // the whole ctx object, which the provider rebuilds every render (hover
+  // flips, frame-sub set churn). Matches the B4 shipped-notes dep pattern.
+  const pins = ctx?.pins
 
-  // Flatten visits for this trip once per pin set. At 50+ pins this runs every
-  // zoom tick otherwise — playback (B6) will amplify that.
   const visits = useMemo(() => {
-    if (!ctx) return []
+    if (!pins) return []
     const out: { _id: string; startDate: string; endDate: string }[] = []
-    for (const p of ctx.pins) {
+    for (const p of pins) {
       for (const v of p.visits) {
         if (v.trip._id === tripId) out.push(v)
       }
     }
     return out
-  }, [ctx, tripId])
+  }, [pins, tripId])
 
-  if (!ctx || visits.length === 0) return null
+  if (!pins || visits.length === 0) return null
   const zoomSpan = zoomWindow.end - zoomWindow.start
   if (zoomSpan <= 0) return null
 

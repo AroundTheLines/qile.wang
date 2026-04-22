@@ -2,6 +2,8 @@
 
 **Epic**: B. Timeline & Playback · **Owner**: Dev B · **Can be run by agent?**: Yes · **Estimated size**: M
 
+**Status**: ✅ Shipped (PR #37) — partial. Label-rotation path (§4.4) was explicitly **dropped**; only the pin-side polish landed. See [Implementation notes (as shipped)](#implementation-notes-as-shipped) for scope, deviations, and rationale downstream tickets should inherit.
+
 ## Dependencies
 
 ### Hard
@@ -354,3 +356,82 @@ Mount inside Timeline.tsx as an overlay on the full track.
 5. Click a pin on the globe (requires C2 + C3 merged) — bands appear on timeline at that pin's visit dates.
 6. Single-day trip (NYC Day Trip) — renders as dot; hover shows label.
 7. React Profiler during zoom-wheel: no unbounded re-renders from Timeline children.
+
+---
+
+## Implementation notes (as shipped)
+
+Trust this section over the sketch above if you're reading to build on B5. The shipped scope is narrower than the original ticket; the rationale below explains *why* so downstream tickets know what is and isn't solved.
+
+### Label rotation (§4.4) was intentionally dropped
+
+The original ticket called for capping label placement at 2 rows and falling back to a 45° rotate-to-reveal fallback for density-failure cases. This was implemented (prototype used `MAX_LABEL_ROWS = 2` + a rotated label branch in `renderLabels`) and then **reverted** during review.
+
+Reasons:
+- B2 already produced a polished multi-row label-stacking design with a short-token/full-title hover-expand pattern, and B4 inherited it. That design is what the design conversations in B2 settled on — the B5 ticket's §4.4 sketch predates B2/B4 and hadn't been reconciled with them.
+- Capping to 2 rows + rotation-on-overflow made the non-rotated rest-state read as more cramped (labels piled into fewer rows, with rotated overflow that requires hover to decode).
+- Hover affordance on rotated labels (opacity-0 with hover-reveal) felt regressed vs. B4's always-visible short tokens.
+
+**Downstream effect**: dense datasets can still produce N>2 rows (no cap). Acceptance criteria 1–2 from this ticket are **not** delivered. If a future pass wants a density cap, it should build on top of B4's short/full label system, not re-introduce the rotate-to-reveal pattern.
+
+### Dot rendering was already shipped in B2
+
+Acceptance criterion "Single-day trip renders as a dot" was already satisfied by B2's `widthPx < 12` check. B5 only formalized the threshold as the exported constant `MIN_SEGMENT_WIDTH_PX` so B6 can reuse it for playhead-crossing logic. No behavioral change.
+
+### Clipping cues are anchored to the track window, not the segment edges
+
+First-pass implementation placed the cues at `left: 0` / `right: 0` inside the segment div, matching the ticket sketch. That's wrong when a trip is actually clipped: the segment's own edges sit *off-track* (segment `leftPx` is negative when clipped-left), so the cue renders at the real trip start/end — invisible past the zoom window. The shipped implementation offsets the cue to the track's zoom-window boundary:
+
+```tsx
+const leftCueOffset = clippedLeft ? -leftPx : 0
+const rightCueOffset = clippedRight ? leftPx + widthPx - containerWidth : 0
+// <div style={{ left: leftCueOffset }} /> for the left cue
+// <div style={{ right: rightCueOffset }} /> for the right cue
+```
+
+If a future ticket moves the cues to the track layer (rendered alongside `TimelinePinBands`), the offset math becomes a no-op since track coords == window coords directly.
+
+### Visit ticks are filled bands, not vertical tick lines
+
+Spec §4.6 reads "subtle tick marks between visits." The shipped implementation renders each visit as a solid colored rectangle spanning the visit's date range (matching the B5 ticket's own code sketch). Visually it communicates the same information — "here's each visit within this trip" — but literal thin tick lines at the visit boundaries would be closer to the spec wording. Called out as a visual-pass follow-up.
+
+### Opacity stands in for "40% saturation"
+
+Spec §17.1/§17.2 says tick marks are "accent color at ~40% saturation." There is no `--accent` CSS token in the codebase yet, so the implementation uses `bg-black/40 dark:bg-white/40` for ticks and `bg-black/30 dark:bg-white/30` for pin bands. When an accent token lands (visual pass), swap both sites. Opacity and saturation aren't equivalent — this is a deliberate placeholder, not a literal match.
+
+### Memoization deps: `ctx?.pins`, not `ctx`
+
+Both `TimelineVisitTicks` and `TimelinePinBands` consume context via `useContext(GlobeContext)` (raw, not `useGlobe()`) so they also work under `/timeline-dev` (no provider). Their `useMemo` deps are **tightened** to the stable fields (`pins`, `pinSubregionHighlight`) rather than the whole `ctx` object — the provider rebuilds its value every render (hover flips, frame-sub set churn), so `[ctx, …]` would invalidate on every tick. Matches the dep-tightening pattern documented in B4's shipped notes.
+
+### `TimelineVisitTicks` mounts per segment; `TimelinePinBands` mounts once at the track
+
+Visit ticks live inside `TimelineSegment.tsx` (when `isActive`) and position themselves relative to the segment via a `segmentLeftPx` prop. This keeps the segment as the positioning context, which matches how the segment bar + its hover state are already structured.
+
+Pin bands, by contrast, span the full track (a pin's visits can straddle multiple trips — §7.5), so they mount as a sibling of all segments inside the track div and position themselves in track coords directly.
+
+**Positional coupling caveat**: if a future refactor changes `TimelineSegment`'s layout wrapper, `TimelineVisitTicks`'s `segmentLeftPx` math breaks silently. The prop name + the doc-comment on it are the only signals — no runtime assert.
+
+### `pinSubregionHighlight` was already added by C1
+
+The ticket flagged this as "may need to add here; coordinate with C1." C1 had already added it. No context changes required in B5.
+
+### `MIN_SEGMENT_WIDTH_PX` is now exported from `TimelineSegment`
+
+Shared constant for B6 (dot-render on playhead crossing). Import from `@/components/globe/TimelineSegment`, not from a new constants file — co-located with the dot-rendering logic that uses it primarily.
+
+### What this PR delivers (acceptance summary)
+
+Delivered (pin-side polish):
+- ✅ Clipping cues at zoom-window edges (correctly anchored to the window, not the segment).
+- ✅ Visit sub-region rendering inside the active trip segment (hover/lock reveals; clears on deselect).
+- ✅ Pin sub-region bands across the track on `pinSubregionHighlight` (clears when C2 clears).
+- ✅ `MIN_SEGMENT_WIDTH_PX` exported for B6.
+- ✅ `data-no-skeleton` on all new overlays.
+
+Not delivered (deferred / obsoleted by B2+B4):
+- ❌ Label collision + 45° rotate-to-reveal fallback (§4.4) — obsoleted by B4's multi-row label system. Re-open only if density genuinely regresses on real datasets.
+- ❌ Explicit "label hover via `group-hover` on segment" pattern from the ticket sketch — B4's interaction target is the label itself, not the segment. B5 didn't change that.
+
+### Environment note
+
+The `.claude/launch.json` in the worktree was updated with `"autoPort": true` so the preview server doesn't collide with a user dev server on 3000. Unrelated to B5 logic; kept in the PR because downstream worktrees branching off this one will want the same default.

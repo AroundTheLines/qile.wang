@@ -22,12 +22,15 @@ export default function TimelinePinBands({
   containerWidth,
 }: Props) {
   const ctx = useContext(GlobeContext)
+  // Destructure so the memo depends on stable fields rather than the whole
+  // ctx object (rebuilt every render by the provider).
+  const pins = ctx?.pins
   const highlight = ctx?.pinSubregionHighlight ?? null
 
   const pin = useMemo(() => {
-    if (!ctx || !highlight) return null
-    return ctx.pins.find((p) => p.location._id === highlight) ?? null
-  }, [ctx, highlight])
+    if (!pins || !highlight) return null
+    return pins.find((p) => p.location._id === highlight) ?? null
+  }, [pins, highlight])
 
   if (!pin) return null
   const zoomSpan = zoomWindow.end - zoomWindow.start

@@ -33,9 +33,15 @@ export default function TimelineSegment({
   const widthPx = Math.max(2, (projX1 - projX0) * containerWidth)
   const isDot = widthPx < MIN_SEGMENT_WIDTH_PX
 
-  // Clip cue when the trip extends past the current zoom window on either side.
+  // Clip cue when the trip extends past the current zoom window on either
+  // side. Cues are rendered inside the segment but anchored to the *track*'s
+  // zoom-window boundary, not the segment's edges — when a trip is clipped
+  // the segment's own edges sit off-track, so `left: 0` / `right: 0` would
+  // render the cue invisibly past the window.
   const clippedLeft = projX0 < 0
   const clippedRight = projX1 > 1
+  const leftCueOffset = clippedLeft ? -leftPx : 0
+  const rightCueOffset = clippedRight ? leftPx + widthPx - containerWidth : 0
 
   const fillBase = 'transition-colors duration-150 ease-out'
   const fillColor = isActive
@@ -67,13 +73,15 @@ export default function TimelineSegment({
           {clippedLeft && (
             <div
               data-no-skeleton
-              className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-2 bg-black/40 dark:bg-white/40 pointer-events-none"
+              className="absolute top-1/2 -translate-y-1/2 w-0.5 h-2 bg-black/40 dark:bg-white/40 pointer-events-none"
+              style={{ left: leftCueOffset }}
             />
           )}
           {clippedRight && (
             <div
               data-no-skeleton
-              className="absolute right-0 top-1/2 -translate-y-1/2 w-0.5 h-2 bg-black/40 dark:bg-white/40 pointer-events-none"
+              className="absolute top-1/2 -translate-y-1/2 w-0.5 h-2 bg-black/40 dark:bg-white/40 pointer-events-none"
+              style={{ right: rightCueOffset }}
             />
           )}
         </>
