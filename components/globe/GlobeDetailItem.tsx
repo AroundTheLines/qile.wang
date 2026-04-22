@@ -2,9 +2,9 @@
 
 import { useRouter } from 'next/navigation'
 import { urlFor } from '@/lib/sanity'
-import type { GlobePinItem } from '@/lib/globe'
+import type { VisitItemSummary } from '@/lib/types'
 
-export default function GlobeDetailItem({ item }: { item: GlobePinItem }) {
+export default function GlobeDetailItem({ item }: { item: VisitItemSummary }) {
   const router = useRouter()
 
   const handleClick = () => {
@@ -16,10 +16,9 @@ export default function GlobeDetailItem({ item }: { item: GlobePinItem }) {
 
   return (
     <button
-      className="flex gap-3 p-3 w-full text-left hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors cursor-pointer border-b border-gray-100 dark:border-gray-900 last:border-b-0"
+      className="flex gap-3 px-4 py-2 w-full text-left hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors cursor-pointer"
       onClick={handleClick}
     >
-      {/* Thumbnail */}
       <div className="w-16 h-20 flex-shrink-0 bg-gray-100 dark:bg-gray-900 overflow-hidden">
         {item.cover_image ? (
           <img
@@ -38,19 +37,10 @@ export default function GlobeDetailItem({ item }: { item: GlobePinItem }) {
         )}
       </div>
 
-      {/* Info */}
       <div className="flex flex-col justify-center min-w-0">
         <span className="text-xs tracking-widest uppercase font-light text-black dark:text-white truncate">
           {item.title}
         </span>
-        <span className="text-[10px] tracking-wide text-gray-400 dark:text-gray-500 mt-0.5">
-          {item.locationLabel}
-        </span>
-        {item.year && (
-          <span className="text-[10px] tracking-wide text-gray-300 dark:text-gray-600 mt-0.5">
-            {item.year}
-          </span>
-        )}
         {item.content_type === 'post' && (
           <span className="text-[8px] tracking-widest uppercase text-gray-300 dark:text-gray-600 mt-1 border border-gray-200 dark:border-gray-800 px-1 py-0.5 w-fit">
             Post

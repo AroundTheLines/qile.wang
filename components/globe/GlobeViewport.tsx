@@ -8,6 +8,7 @@ import { useGlobe } from './GlobeContext'
 import { clampPanelTop, NAVBAR_HEIGHT_PX } from '@/lib/globe'
 import GlobeFallbackSVG from './GlobeFallbackSVG'
 import GlobeDetailPanel from './GlobeDetailPanel'
+import GlobePinTriggers from './GlobePinTriggers'
 import GlobeTooltip from './GlobeTooltip'
 import GlobeHoverConnector from './GlobeHoverConnector'
 import GlobeClickConnector from './GlobeClickConnector'
@@ -115,6 +116,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
 
     return (
       <>
+        <GlobePinTriggers />
         <div className="fixed inset-0 w-screen h-screen" style={{ touchAction: 'none' }}>
           <motion.div
             className="relative w-full h-full"
@@ -182,7 +184,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
                   <div className="flex-1 min-h-0">{children}</div>
                 </div>
               ) : (
-                <GlobeDetailPanel pin={resolvedPin} />
+                <GlobeDetailPanel />
               )}
             </motion.div>
           )}
@@ -220,6 +222,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
     >
+      <GlobePinTriggers />
       <motion.div
         key={tier}
         className={
@@ -290,7 +293,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
               className="absolute left-0 w-full"
               style={{ top: panelTop, maxHeight: 'calc(100vh - 48px)' }}
             >
-              <GlobeDetailPanel pin={selectedPinData} />
+              <GlobeDetailPanel />
             </div>
           </motion.div>
         )}
