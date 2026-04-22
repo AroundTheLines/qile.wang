@@ -351,9 +351,26 @@ from code. Supersedes any conflicting guidance earlier in this document.
   §8 doesn't mandate it. If a reviewer wants one, add a "Visits on this trip"
   section to `TripArticleContent.tsx`.
 
-- **Scope of C7 / D2 / D3 in this PR**: none. URL-state write side, browser
-  history push tuning, escape-key handling, and the 404 auto-redirect are
-  explicitly out of scope.
+- **Scope of C7 / D2 / D3 in this PR**: mostly none. URL-state write side,
+  browser history push tuning, escape-key handling, and the 404 auto-redirect
+  are explicitly out of scope — with two user-requested exceptions below.
+
+- **Pin URL sync (partial D2)**: clicking a pin now mirrors into
+  `/globe?pin=<slug-or-id>` (write via `router.replace`, not `push`, to keep
+  history clean for casual pin-to-pin exploration). Cold-load of
+  `/globe?pin=<slug-or-id>` resolves via `location.slug.current` then falls
+  back to `location._id` so pins without slugs still link. URL writes only
+  fire on the base `/globe` path — article routes own their own URLs.
+  Deselection (`selectPin(null)`) strips the param. D2 still owns the fuller
+  URL contract (trip write side, history-push vs. replace semantics, combined
+  pin+trip param behavior, etc.).
+
+- **Timeline hidden on article pages**: extracted the layout's fixed timeline
+  block into `TimelineOverlay.tsx` (client component) that returns `null`
+  when `layoutState === 'article-open'`. Previously the z-40 timeline painted
+  over the top of the article body. The overlay renders the same markup as
+  before in panel-open / default states — no visible change off of article
+  routes.
 
 ## How to verify
 

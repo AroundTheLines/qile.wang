@@ -2,12 +2,12 @@ export const dynamic = 'force-dynamic'
 
 import { readClient as client } from '@/lib/sanity'
 import { allTripsQuery, allVisitsQuery, allTripsWithVisitsQuery } from '@/lib/queries'
-import { aggregatePins, NAVBAR_HEIGHT_PX } from '@/lib/globe'
+import { aggregatePins } from '@/lib/globe'
 import type { TripSummary, TripWithVisits, VisitSummary } from '@/lib/types'
 import GlobeProvider from '@/components/globe/GlobeProvider'
 import GlobeNavbar from '@/components/globe/GlobeNavbar'
 import GlobeViewport from '@/components/globe/GlobeViewport'
-import Timeline from '@/components/globe/Timeline'
+import TimelineOverlay from '@/components/globe/TimelineOverlay'
 
 export default async function GlobeLayout({
   children,
@@ -43,13 +43,9 @@ export default async function GlobeLayout({
       <GlobeNavbar />
       {/* Desktop/tablet only — spec §2. Mobile restructure (globe above
           timeline) is owned by E1. GlobeViewport uses `fixed inset-0`, so the
-          timeline sits in a fixed layer above it to remain visible. */}
-      <div
-        className="hidden md:block fixed left-0 right-0 z-40 px-4"
-        style={{ top: NAVBAR_HEIGHT_PX }}
-      >
-        <Timeline />
-      </div>
+          timeline sits in a fixed layer above it to remain visible. The
+          overlay hides itself while an article sliver is open. */}
+      <TimelineOverlay />
       <GlobeViewport>{children}</GlobeViewport>
     </GlobeProvider>
   )
