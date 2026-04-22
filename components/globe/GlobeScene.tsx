@@ -6,6 +6,7 @@ import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { useGlobe } from './GlobeContext'
 import { sphericalToCartesian } from '@/lib/globe'
+import type { Coordinates } from '@/lib/types'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 
 const ENTRANCE_DURATION = 0.75
@@ -18,6 +19,50 @@ const PIN_ROTATE_DURATION = 0.3
 const ARTICLE_ZOOM_DURATION = 0.4
 // When zoomed for article-open, pull camera closer than resting.
 const ARTICLE_CAMERA_DISTANCE = 4.2
+// Cinematic rotate-to-fit duration for trip lock (§17.3).
+const TRIP_FIT_DURATION = 0.8
+// Padding around max angular spread when fitting a trip.
+const TRIP_FIT_MARGIN = 0.15
+// Cap zoom-out for globe-spanning trips so the globe stays ~40% visible.
+const TRIP_FIT_MAX_DISTANCE = RESTING_DISTANCE * 2
+
+function computeFitCamera(
+  coords: Coordinates[],
+): THREE.Vector3 {
+  const vectors = coords.map((c) => {
+    const [x, y, z] = sphericalToCartesian(c.lat, c.lng, 1)
+    return new THREE.Vector3(x, y, z)
+  })
+
+  const centroid = new THREE.Vector3()
+  for (const v of vectors) centroid.add(v)
+  if (centroid.lengthSq() < 1e-6) {
+    // Antipodal degenerate — pick first visit's direction as fallback.
+    centroid.copy(vectors[0])
+  }
+  centroid.normalize()
+
+  let maxAngle = 0
+  for (const v of vectors) {
+    const a = centroid.angleTo(v)
+    if (a > maxAngle) maxAngle = a
+  }
+
+  const fitFov = maxAngle + TRIP_FIT_MARGIN
+  // Once spread >= ~90°, pins straddle the hemisphere and no camera
+  // distance can frame them all — `1/tan` goes negative past π/2.
+  // Fall back to the max cap so globe-spanning trips zoom out as far
+  // as we allow (§16 Q4 "~40% visible").
+  const distance =
+    fitFov >= Math.PI / 2 - 0.05
+      ? TRIP_FIT_MAX_DISTANCE
+      : Math.min(
+          TRIP_FIT_MAX_DISTANCE,
+          Math.max(RESTING_DISTANCE, (1 / Math.tan(fitFov)) * RESTING_DISTANCE),
+        )
+
+  return centroid.clone().multiplyScalar(distance)
+}
 
 type RotateState = {
   active: boolean
@@ -28,7 +73,7 @@ type RotateState = {
 
 export default function GlobeScene() {
   const controlsRef = useRef<OrbitControlsImpl>(null)
-  const { pins, selectedPin, layoutState, isMobile } = useGlobe()
+  const { pins, selectedPin, lockedTrip, layoutState, isMobile } = useGlobe()
   const { camera } = useThree()
 
   // Reactive enabled state — avoids the "React re-renders and reapplies
@@ -58,6 +103,19 @@ export default function GlobeScene() {
     duration: ARTICLE_ZOOM_DURATION,
   })
   const preArticleCameraPos = useRef<THREE.Vector3 | null>(null)
+
+  // Rotate-to-fit for locked trips (C5). Separate ref from rotateRef so
+  // pin-click and trip-lock can both be in-flight without clobbering each
+  // other's bookkeeping — the useFrame tick runs both; later write wins.
+  const rotateToFitTripRef = useRef<RotateState & { duration: number }>({
+    active: false,
+    elapsed: 0,
+    startPos: new THREE.Vector3(),
+    endPos: new THREE.Vector3(),
+    duration: TRIP_FIT_DURATION,
+  })
+  const prevLockedTripRef = useRef<string | null>(null)
+  const pendingTripFit = useRef(false)
   // Init to 'default' so a mount directly in article-open still detects
   // the transition and queues the zoom.
   const prevLayoutState = useRef<'default' | 'panel-open' | 'article-open'>(
@@ -173,6 +231,10 @@ export default function GlobeScene() {
 
     const pin = pins.find((p) => p.location._id === selectedPin)
     if (!pin) return
+    // C5/C7: if this pin belongs to the locked trip, skip pin-rotate.
+    // The trip-fit framing stays in place; C7 owns the panel-scroll
+    // behavior for in-trip pin clicks.
+    if (lockedTrip && pin.tripIds.includes(lockedTrip)) return
 
     const [x, y, z] = sphericalToCartesian(
       pin.coordinates.lat,
@@ -190,7 +252,51 @@ export default function GlobeScene() {
     }
     // Disable controls during programmatic rotation
     setControlsEnabled(false)
-  }, [selectedPin, pins, camera])
+  }, [selectedPin, pins, camera, lockedTrip])
+
+  // C5: rotate-to-fit when a trip locks. Runs when lockedTrip changes to a
+  // new non-null id. Pulls visit coordinates from the already-hydrated pins
+  // list — if pins haven't arrived yet, the effect re-fires once they do.
+  useEffect(() => {
+    const prev = prevLockedTripRef.current
+    if (!lockedTrip) {
+      prevLockedTripRef.current = null
+      return
+    }
+    if (prev === lockedTrip) return
+    if (!entranceDone.current) {
+      // Cold `?trip=…` URL: defer until entrance finishes. Mark pending
+      // but keep prevRef stale so this effect re-fires once state settles.
+      pendingTripFit.current = true
+      return
+    }
+    // Article-open owns its own camera state — don't stomp it.
+    if (layoutState === 'article-open') return
+    prevLockedTripRef.current = lockedTrip
+
+    const coords: Coordinates[] = []
+    for (const p of pins) {
+      for (const v of p.visits) {
+        if (v.trip._id === lockedTrip) {
+          coords.push(p.coordinates)
+          break
+        }
+      }
+    }
+    if (coords.length === 0) return
+
+    const endPos = computeFitCamera(coords)
+
+    rotateToFitTripRef.current = {
+      active: true,
+      elapsed: 0,
+      startPos: camera.position.clone(),
+      endPos,
+      duration: TRIP_FIT_DURATION,
+    }
+    setAutoRotate(false)
+    setControlsEnabled(false)
+  }, [lockedTrip, pins, layoutState, camera])
 
   // Single useFrame driving entrance + programmatic rotation
   useFrame((_, delta) => {
@@ -211,6 +317,31 @@ export default function GlobeScene() {
         if (pendingArticleZoom.current && layoutState === 'article-open' && selectedPin) {
           pendingArticleZoom.current = false
           startArticleZoom(selectedPin)
+        }
+        if (pendingTripFit.current && lockedTrip && layoutState !== 'article-open') {
+          pendingTripFit.current = false
+          // Collect coords and kick off fit directly — same as the main effect.
+          const coords: Coordinates[] = []
+          for (const p of pins) {
+            for (const v of p.visits) {
+              if (v.trip._id === lockedTrip) {
+                coords.push(p.coordinates)
+                break
+              }
+            }
+          }
+          if (coords.length > 0) {
+            prevLockedTripRef.current = lockedTrip
+            rotateToFitTripRef.current = {
+              active: true,
+              elapsed: 0,
+              startPos: camera.position.clone(),
+              endPos: computeFitCamera(coords),
+              duration: TRIP_FIT_DURATION,
+            }
+            setAutoRotate(false)
+            setControlsEnabled(false)
+          }
         }
       }
       return
@@ -236,7 +367,29 @@ export default function GlobeScene() {
       }
     }
 
-    // 3) Article zoom (in / out)
+    // 3) Trip rotate-to-fit (C5) — cinematic ease-in-out, 800ms.
+    const tripFit = rotateToFitTripRef.current
+    if (tripFit.active) {
+      tripFit.elapsed += delta
+      const t = Math.min(tripFit.elapsed / tripFit.duration, 1)
+      const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+      camera.position.lerpVectors(tripFit.startPos, tripFit.endPos, eased)
+      camera.lookAt(0, 0, 0)
+
+      if (t >= 1) {
+        tripFit.active = false
+        // Re-enable controls so the user can drag-to-take-over (§9.3).
+        // We don't snap back on release — OrbitControls just owns the
+        // camera from here until the trip unlocks or another lock fires.
+        if (layoutState !== 'article-open') setControlsEnabled(true)
+        if (controlsRef.current) {
+          controlsRef.current.target.set(0, 0, 0)
+          controlsRef.current.update()
+        }
+      }
+    }
+
+    // 4) Article zoom (in / out)
     const zoom = articleZoomRef.current
     if (zoom.active) {
       zoom.elapsed += delta
@@ -294,7 +447,7 @@ export default function GlobeScene() {
         enablePan={false}
         enableZoom={true}
         minDistance={4}
-        maxDistance={11}
+        maxDistance={TRIP_FIT_MAX_DISTANCE}
         enableDamping={true}
         dampingFactor={0.05}
         rotateSpeed={0.5}
