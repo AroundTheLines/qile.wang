@@ -499,6 +499,16 @@ This ticket wires exactly ONE pause reason: `'playback-floating-label-hover'`. A
 
 On label click, we remove the hover pause reason explicitly before calling `setLockedTrip` — otherwise a click that toggles between locking and unlocking would leak the hover pause if the user then moved off without a pointerleave firing.
 
+### Lock-to-seek behavior (added post-initial-ship)
+
+Clicking an inline timeline label (or any other path that sets `ctx.lockedTrip`) now seeks the playhead to the **midpoint** of that trip. Playback is already paused while locked (`isPaused` contains `lockedTrip !== null`). When the lock is released, the RAF loop restarts and sweeping resumes from that same position — the playhead is NOT teleported back to the right edge.
+
+Implementation: `PlaybackController.seekTo(x)` clamps to `[0,1]`, forces `phase = 'sweeping'`, resets `holdElapsedMs`, and notifies. `TimelinePlayhead` has a `useEffect` on `ctx.lockedTrip` that looks up the trip in `playbackTrips` and calls `seekTo((xStart + xEnd) / 2)`.
+
+Midpoint (not xStart) because a short trip's midpoint is visually centered on the segment; seeking to xStart would park the playhead right on the start edge and feel like it "fell short." For trips where the sweep already overlaps the trip (e.g. clicking the floating label for the currently-highlighted trip), the jump is usually small.
+
+"Unless the scrubber has moved somewhere else" from product: naturally satisfied — the seek effect only fires when `lockedTrip` transitions, so subsequent lock→different-trip paths override. If the user never re-locks, the playhead stays parked until sweep resumes and moves it naturally.
+
 ### What's intentionally NOT done here
 
 - **Zoom reset on playback resume**: B7.

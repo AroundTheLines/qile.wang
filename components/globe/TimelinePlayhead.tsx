@@ -177,6 +177,22 @@ export default function TimelinePlayhead({
     controllerRef.current?.setXPerSecond(xPerSecond)
   }, [xPerSecond])
 
+  // Seek the playhead to a locked trip's midpoint. Fires whenever
+  // lockedTrip transitions to a non-null id (label click, URL deep-link,
+  // or panel re-selection). Once the lock is released, the playhead is
+  // left where we parked it so sweeping resumes from that trip — per
+  // product: "resume from where the label was clicked."
+  const lockedTrip = ctx?.lockedTrip ?? null
+  useEffect(() => {
+    if (!lockedTrip) return
+    const c = controllerRef.current
+    if (!c) return
+    const t = playbackTrips.find((p) => p.id === lockedTrip)
+    if (!t) return
+    const midpoint = (t.xStart + t.xEnd) / 2
+    c.seekTo(midpoint)
+  }, [lockedTrip, playbackTrips])
+
   // Re-project the playhead/label to the latest zoom without requiring a tick.
   useEffect(() => {
     const s = lastStateRef.current

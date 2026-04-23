@@ -21,6 +21,9 @@ export interface PlaybackController {
   tick(dtSec: number): void
   setTrips(trips: PlaybackTrip[]): void
   setXPerSecond(v: number): void
+  /** Jump the playhead to `x` (clamped to [0,1]) and exit any hold phase
+      so sweeping resumes from there on the next tick. */
+  seekTo(x: number): void
   subscribe(fn: (s: PlaybackState) => void): () => void
 }
 
@@ -106,6 +109,13 @@ export function createPlaybackController(cfg: PlaybackConfig): PlaybackControlle
     },
     setXPerSecond(v) {
       xPerSecond = v
+    },
+    seekTo(x) {
+      const clamped = Math.min(1, Math.max(0, x))
+      playheadX = clamped
+      phase = 'sweeping'
+      holdElapsedMs = 0
+      recomputeAndNotify()
     },
     subscribe(fn) {
       subs.add(fn)
