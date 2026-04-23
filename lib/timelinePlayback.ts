@@ -18,8 +18,12 @@ export interface PlaybackConfig {
   loopHoldMs?: number
   /** Multiplier applied to `xPerSecond` while the playhead is in a gap
       between trips. >1 fast-forwards dead time; keep the gaps readable
-      by not going so fast the user can't register the jump. Default 4. */
+      by not going so fast the user can't register the jump. Default 7. */
   gapMultiplier?: number
+  /** Multiplier applied to `xPerSecond` while the playhead is inside a
+      trip. <1 slows trips down so the reader has time to register them.
+      Default 0.6. */
+  tripMultiplier?: number
   /** Lower bound on how long the playhead dwells inside a trip, in
       seconds. Short trips (day trips — `xEnd - xStart` tiny) would
       otherwise flash past faster than the eye can register. Caps
@@ -40,8 +44,9 @@ export interface PlaybackController {
 }
 
 const DEFAULT_HOLD_MS = 5000
-const DEFAULT_GAP_MULTIPLIER = 4
-const DEFAULT_MIN_TRIP_DURATION_SEC = 0.8
+const DEFAULT_GAP_MULTIPLIER = 7
+const DEFAULT_TRIP_MULTIPLIER = 0.75
+const DEFAULT_MIN_TRIP_DURATION_SEC = 1.0
 // Short trips (especially day trips where `xStart === xEnd`) need a
 // non-zero range so the playhead can dwell visibly inside them. We pad
 // symmetrically so the pad doesn't shift the highlight entry point
@@ -59,6 +64,7 @@ export function createPlaybackController(cfg: PlaybackConfig): PlaybackControlle
   let xPerSecond = cfg.xPerSecond
   const loopHoldMs = cfg.loopHoldMs ?? DEFAULT_HOLD_MS
   const gapMultiplier = cfg.gapMultiplier ?? DEFAULT_GAP_MULTIPLIER
+  const tripMultiplier = cfg.tripMultiplier ?? DEFAULT_TRIP_MULTIPLIER
   const minTripDurationSec = cfg.minTripDurationSec ?? DEFAULT_MIN_TRIP_DURATION_SEC
 
   // Sweep starts at present (x=1), moves left to past (x=0).
@@ -139,9 +145,10 @@ export function createPlaybackController(cfg: PlaybackConfig): PlaybackControlle
             const span = hi - lo
             if (span < minEffSpan) minEffSpan = span
           }
+          const tripBase = xPerSecond * tripMultiplier
           const dwellCap =
-            minEffSpan === Infinity ? xPerSecond : minEffSpan / minTripDurationSec
-          velocity = Math.min(xPerSecond, dwellCap)
+            minEffSpan === Infinity ? tripBase : minEffSpan / minTripDurationSec
+          velocity = Math.min(tripBase, dwellCap)
         } else {
           velocity = xPerSecond * gapMultiplier
         }
@@ -151,10 +158,15 @@ export function createPlaybackController(cfg: PlaybackConfig): PlaybackControlle
         // to the trip's right edge so the next tick sees `inTrip = true`
         // and the dwell cap kicks in.
         if (!inTrip) {
+          // Clamp to the top edge whenever the step would cross INTO a
+          // trip's effective range from above. Covers both the full-skip
+          // case (nextX < lo < hi < playheadX) and the barely-landed-inside
+          // case (lo <= nextX < hi < playheadX) that floating-point drift
+          // otherwise leaves with no dwell lane.
           let clampTo: number | null = null
           for (const t of trips) {
-            const [lo, hi] = effectiveRange(t)
-            if (hi < playheadX && lo > nextX) {
+            const [, hi] = effectiveRange(t)
+            if (hi < playheadX && hi > nextX) {
               if (clampTo === null || hi > clampTo) clampTo = hi
             }
           }

@@ -514,9 +514,23 @@ Tuning knobs in [`lib/timelinePlayback.ts`](../../lib/timelinePlayback.ts): `EFF
 
 ### Variable sweep speed (updated post-initial-ship)
 
-The controller now applies a `gapMultiplier` (default 4) to `xPerSecond` when the playhead is in a gap between trips (i.e. `highlightedTripIds.length === 0` during sweep). Inside a trip's range the base rate applies. Rationale: dead time between trips is not the interesting content — a 4× fast-forward keeps the loop feeling active without making the gap skip so fast the reader can't register "we're between trips." Base rate is still spec §5.3's "5s per half-year" so the in-trip feel is unchanged.
+Three knobs shape the sweep's tempo relative to the base `xPerSecond` (spec §5.3's "5s per half-year"):
 
-Tuning point: `DEFAULT_GAP_MULTIPLIER` in [`lib/timelinePlayback.ts`](../../lib/timelinePlayback.ts). Expose as a prop/config if the feel needs per-page tuning; not worth the API surface for the single current consumer.
+| Knob | Default | Effect |
+| --- | --- | --- |
+| `gapMultiplier` | **7** | Multiplies velocity while in gaps between trips. Dead time fast-forwards so loops feel active without crushing legibility. |
+| `tripMultiplier` | **0.75** | Multiplies velocity while inside a trip. <1 slows trips so the reader registers them; target in-trip/gap ratio is ~10×. |
+| `minTripDurationSec` | **1.0** | Floor on how long the playhead dwells crossing a trip. Caps velocity to `effSpan / minTripDurationSec`, so short trips (especially day trips) can't flash past. |
+
+The in-trip velocity is `min(xPerSecond × tripMultiplier, effSpan / minTripDurationSec)`. For multi-day trips the first term wins (the dwell cap is above the base); only day trips hit the cap.
+
+Tuning history (for the next person who touches the feel):
+- v1 shipped at `gapMultiplier=4` + uniform base rate.
+- v2 added `minTripDurationSec=0.8` for day-trip dwell.
+- v3 differentiated in-trip vs gap with `tripMultiplier=0.6` + `gapMultiplier=7` + `minTripDurationSec=1.2` — too slow in normal trips on review.
+- v4 (current) sped normal trips back up: `tripMultiplier=0.75`, `minTripDurationSec=1.0`. Gap stays at 7.
+
+Tuning point: constants at the top of [`lib/timelinePlayback.ts`](../../lib/timelinePlayback.ts). Config overrides also exposed on `createPlaybackController` if per-page tuning is ever needed.
 
 ### Floating label suppressed while trip is locked (updated post-initial-ship)
 
