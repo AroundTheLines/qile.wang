@@ -54,7 +54,7 @@ function Pin({
     setPinSubregionHighlight,
     lockedTrip,
     setLockedTrip,
-    setPinToScrollTo,
+    requestPinScroll,
     showHover,
     isDesktop,
     addPauseReason,
@@ -209,7 +209,7 @@ function Pin({
           // Pin belongs to the locked trip — keep the lock, don't open a
           // pin panel, and signal TripPanel to scroll to this visit + pulse.
           setHoveredPin(null)
-          setPinToScrollTo(locationId)
+          requestPinScroll(locationId)
           return
         }
         // Outside the locked trip — release the lock and open pin panel.
@@ -234,7 +234,7 @@ function Pin({
       setLockedTrip,
       setHoveredPin,
       setPinSubregionHighlight,
-      setPinToScrollTo,
+      requestPinScroll,
       isDesktop,
       removePauseReason,
     ],

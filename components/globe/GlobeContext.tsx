@@ -42,10 +42,15 @@ export interface GlobeContextValue {
   pinSubregionHighlight: string | null
   setPinSubregionHighlight: Dispatch<SetStateAction<string | null>>
   /** Pin whose visit section should be scrolled to in the open trip panel.
+   *  Carries a nonce so repeat clicks on the same pin are distinguishable —
+   *  identical-id setState would bail out and the pulse wouldn't replay.
    *  Consumed by TripPanel; cleared by TripPanel after scroll completes,
    *  or by the provider when lockedTrip clears. (C7) */
-  pinToScrollTo: string | null
-  setPinToScrollTo: (id: string | null) => void
+  pinToScrollTo: { id: string; nonce: number } | null
+  /** Request a pin-scroll. Always bumps the nonce so the consumer's effect
+   *  re-fires even if the same pin is clicked twice in a row. */
+  requestPinScroll: (id: string) => void
+  clearPinScroll: () => void
 
   // --- Trip selection (new in 5C) ---
   lockedTrip: string | null

@@ -17,7 +17,7 @@ const PULSE_DURATION_MS = 600
 
 export default function TripPanel({ trip }: Props) {
   const router = useRouter()
-  const { setLockedTrip, pinToScrollTo, setPinToScrollTo, hoveredPin } = useGlobe()
+  const { setLockedTrip, pinToScrollTo, clearPinScroll, hoveredPin } = useGlobe()
 
   // Refs to each visit's section element, keyed by visit id, so the
   // scroll-to-visit effect can target the right node.
@@ -33,20 +33,23 @@ export default function TripPanel({ trip }: Props) {
   const [pulse, setPulse] = useState<{ visitId: string; nonce: number } | null>(null)
 
   // C7: when a pin in this trip is clicked, scroll to its visit section
-  // and pulse it. The signal is `pinToScrollTo` set by GlobePins.
+  // and pulse it. The signal is `pinToScrollTo` (an {id, nonce} object) set
+  // by GlobePins. The nonce changes on every click, including repeat clicks
+  // on the same pin, so this effect re-fires reliably and the pulse always
+  // tracks the user's action.
   useEffect(() => {
     if (!pinToScrollTo) return
-    const visit = trip.visits.find((v) => v.location._id === pinToScrollTo)
+    const visit = trip.visits.find((v) => v.location._id === pinToScrollTo.id)
     if (!visit) return
     const el = sectionRefs.current.get(visit._id)
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    setPulse((prev) => ({ visitId: visit._id, nonce: (prev?.nonce ?? 0) + 1 }))
+    setPulse({ visitId: visit._id, nonce: pinToScrollTo.nonce })
     const timer = setTimeout(() => {
-      setPulse((cur) => (cur && cur.visitId === visit._id ? null : cur))
-      setPinToScrollTo(null)
+      setPulse((cur) => (cur && cur.nonce === pinToScrollTo.nonce ? null : cur))
+      clearPinScroll()
     }, PULSE_DURATION_MS)
     return () => clearTimeout(timer)
-  }, [pinToScrollTo, trip.visits, setPinToScrollTo])
+  }, [pinToScrollTo, trip.visits, clearPinScroll])
 
   // Pin-hover → tint the matching visit section (desktop §7.4).
   const hoveredVisitId = useMemo(() => {

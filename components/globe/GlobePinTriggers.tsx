@@ -28,7 +28,7 @@ export default function GlobePinTriggers() {
     lockedTrip,
     setLockedTrip,
     setPinSubregionHighlight,
-    setPinToScrollTo,
+    requestPinScroll,
   } = useGlobe()
 
   if (pins.length === 0) return null
@@ -41,7 +41,7 @@ export default function GlobePinTriggers() {
       const pin = pins.find((p) => p.location._id === locationId)
       const inLockedTrip = pin?.tripIds.includes(lockedTrip) ?? false
       if (inLockedTrip) {
-        setPinToScrollTo(locationId)
+        requestPinScroll(locationId)
         return
       }
       setLockedTrip(null)

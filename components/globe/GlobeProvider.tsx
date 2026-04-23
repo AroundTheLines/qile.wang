@@ -57,7 +57,13 @@ export default function GlobeProvider({
   const [selectedPin, setSelectedPin] = useState<string | null>(null)
   const [hoveredPin, setHoveredPin] = useState<string | null>(null)
   const [pinSubregionHighlight, setPinSubregionHighlight] = useState<string | null>(null)
-  const [pinToScrollTo, setPinToScrollTo] = useState<string | null>(null)
+  const [pinToScrollTo, setPinToScrollTo] = useState<{ id: string; nonce: number } | null>(null)
+  const requestPinScroll = useCallback((id: string) => {
+    setPinToScrollTo((prev) => ({ id, nonce: (prev?.nonce ?? 0) + 1 }))
+  }, [])
+  const clearPinScroll = useCallback(() => {
+    setPinToScrollTo(null)
+  }, [])
   const [selectedPinScreenY, setSelectedPinScreenY] = useState<number | null>(null)
 
   // --- Trip state ---
@@ -445,7 +451,8 @@ export default function GlobeProvider({
         pinSubregionHighlight,
         setPinSubregionHighlight,
         pinToScrollTo,
-        setPinToScrollTo,
+        requestPinScroll,
+        clearPinScroll,
         lockedTrip,
         setLockedTrip,
         hoveredTrip,

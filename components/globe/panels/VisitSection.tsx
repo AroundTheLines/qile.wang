@@ -75,7 +75,9 @@ export default function VisitSection({
       }`}
     >
       <header
-        className={`px-4 pt-3 pb-2 bg-white dark:bg-black ${sticky ? 'sticky top-0 z-10' : ''}`}
+        className={`px-4 pt-3 pb-2 transition-colors duration-200 ${
+          hovered ? 'bg-[rgb(232,238,254)] dark:bg-[rgb(20,29,56)]' : 'bg-white dark:bg-black'
+        } ${sticky ? 'sticky top-0 z-10' : ''}`}
       >
         <div className="flex items-baseline justify-between gap-2">
           <div className="min-w-0">
