@@ -1,6 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+// Pulse handling lives inside VisitSection now (imperative replay so it
+// preserves the section's local `expanded` state); TripPanel just forwards
+// the nonce coming off `pinToScrollTo`.
 import { useRouter } from 'next/navigation'
 import { Skeleton } from 'boneyard-js/react'
 import PanelChrome from './PanelChrome'
@@ -27,16 +30,15 @@ export default function TripPanel({ trip }: Props) {
     else sectionRefs.current.delete(visitId)
   }, [])
 
-  // Track an incrementing nonce so the same visit can be re-pulsed on a
-  // repeat click. The DOM key combines visit id + nonce, so React sees a
-  // fresh element and the CSS animation replays from frame 0.
+  // Resolved pulse target. We forward the incoming nonce straight to the
+  // matching VisitSection so it can replay its keyframe imperatively (no
+  // remount → preserves the section's `expanded` state).
   const [pulse, setPulse] = useState<{ visitId: string; nonce: number } | null>(null)
 
   // C7: when a pin in this trip is clicked, scroll to its visit section
-  // and pulse it. The signal is `pinToScrollTo` (an {id, nonce} object) set
-  // by GlobePins. The nonce changes on every click, including repeat clicks
-  // on the same pin, so this effect re-fires reliably and the pulse always
-  // tracks the user's action.
+  // and pulse it. `pinToScrollTo` is `{id, nonce}` — the nonce changes on
+  // every click (including repeat clicks on the same pin) so this effect
+  // re-fires deterministically and the pulse always tracks the user action.
   useEffect(() => {
     if (!pinToScrollTo) return
     const visit = trip.visits.find((v) => v.location._id === pinToScrollTo.id)
@@ -45,7 +47,6 @@ export default function TripPanel({ trip }: Props) {
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
     setPulse({ visitId: visit._id, nonce: pinToScrollTo.nonce })
     const timer = setTimeout(() => {
-      setPulse((cur) => (cur && cur.nonce === pinToScrollTo.nonce ? null : cur))
       clearPinScroll()
     }, PULSE_DURATION_MS)
     return () => clearTimeout(timer)
@@ -96,16 +97,13 @@ export default function TripPanel({ trip }: Props) {
             Query already orders visits by startDate asc. */}
         {trip.visits.map((visit) => (
           <VisitSection
-            // Re-key on pulse nonce so a repeat click on the same visit
-            // remounts the section's animated child element and replays
-            // the CSS keyframe from the start.
-            key={pulse?.visitId === visit._id ? `${visit._id}-${pulse.nonce}` : visit._id}
+            key={visit._id}
             visit={visit}
             showViewTripArticleLink={false}
             sticky
             secondaryLabel={visit.location.name}
             onRef={handleSectionRef}
-            pulsing={pulse?.visitId === visit._id}
+            pulseNonce={pulse?.visitId === visit._id ? pulse.nonce : null}
             hovered={hoveredVisitId === visit._id}
           />
         ))}

@@ -333,6 +333,76 @@ Actually: in the C7 flow, clicking a pin-in-locked-trip doesn't change `selected
 - Pin-rotate guard — added in GlobeScene here; reinforces C5's behavior.
 - No F-series dependencies.
 
+## Shipped notes — implementation decisions (post-merge log)
+
+These are decisions made during the actual build that diverged from or refined the spec above. Future implementers reading this ticket should treat them as the source of truth alongside the spec.
+
+### `pinToScrollTo` shape: `{ id, nonce } | null` (not `string | null`)
+
+The spec sketches `pinToScrollTo: string | null` with a setter. **Shipped**: the field carries an `{ id: string; nonce: number }` object, written through a `requestPinScroll(id)` action that always increments the nonce (and a `clearPinScroll()` for the cleanup path).
+
+**Why**: identical-id `setState` is a no-op in React, so a second click on the same pin within the 600ms pulse window did nothing — the consumer effect saw the same value and skipped. The visible result was a pulse that fired only once per ~half-second of clicking, with the animation visibly disconnected from the action. The nonce makes every click a referentially-fresh value.
+
+**Where**:
+- `components/globe/GlobeContext.tsx` — type + actions
+- `components/globe/GlobeProvider.tsx` — `requestPinScroll` / `clearPinScroll` callbacks
+- `components/globe/GlobePins.tsx`, `components/globe/GlobePinTriggers.tsx` — call `requestPinScroll` on click
+- `components/globe/panels/TripPanel.tsx` — depends on the whole `pinToScrollTo` object so the effect sees a new identity each time
+
+### Pulse animation: imperative replay inside `VisitSection` (not React remount)
+
+The spec's keyframe approach is correct, but how to *replay* it on a repeat click is a real implementation question. Two attempts:
+
+1. **First attempt** (rejected after review): drive replay by re-keying `<VisitSection key={visit._id + nonce}>` so React remounts and the keyframe starts at frame 0. Worked, but **discarded the section's local `expanded` state on every pulse** — collapsing the items list and then clicking the pin re-expanded it.
+2. **Shipped**: `VisitSection` accepts a `pulseNonce: number | null` prop. An internal `useEffect` on `pulseNonce` toggles `data-pulsing` off, forces a reflow (`void el.offsetWidth`), then sets it back on, restarting the CSS animation in-place. No remount — `expanded` and any future local state survives.
+
+**Why**: spec §7.4 + §17.3 only mandate the visual outcome (600ms pulse), not the React structure. Preserving local UI state across cross-interactions is the user-visible win. Future state added to `VisitSection` is automatically safe.
+
+**Where**: `components/globe/panels/VisitSection.tsx`. `TripPanel` just forwards the nonce; the orchestration timer in `TripPanel` exists only to call `clearPinScroll()` after the animation window.
+
+### Sticky header pulses + tints together with the section body
+
+The spec says "section background tint" without specifying whether the sticky header is part of the tinted region. Initially the header had an opaque `bg-white dark:bg-black` to cover scrolling content — which **fully obscured the section-level tint**, so the visit name didn't visually highlight on hover or pulse.
+
+**Shipped**: the header takes its own tint when `hovered` (opaque blue-ish so it can sit over scrolling content as a sticky), and is included in the pulse animation via a CSS descendant rule:
+
+```css
+.visit-section[data-pulsing="true"],
+.visit-section[data-pulsing="true"] .visit-section-header {
+  animation: visit-section-pulse 600ms ease-in-out;
+}
+```
+
+The header gets an explicit `.visit-section-header` class (not a `> header` descendant selector) so the rule survives any future markup nesting changes.
+
+**Why**: per direct UX feedback — "When the pin is clicked within the trip, not only the accordion should be highlighted, also the header that has the name of the visit should also be highlighted."
+
+**Where**: `app/globals.css` (keyframe + selector), `components/globe/panels/VisitSection.tsx` (header className).
+
+### Accent color is hardcoded as `rgba(37, 99, 235, ...)`
+
+The spec example uses `bg-[var(--accent)]/10` — but `--accent` was never defined in the codebase. Rather than introduce a new CSS variable mid-ticket, the literal blue `rgb(37, 99, 235)` (matching `ACCENT_COLOR` in `components/globe/TripArcs.tsx`) is duplicated in `app/globals.css` (pulse keyframe) and in two Tailwind arbitrary-value utilities in `VisitSection.tsx` (hover tint on section + header).
+
+**Why**: keeps this ticket's blast radius small. **Known tech debt**: if the globe accent ever changes, two places need updating in lockstep with `TripArcs.tsx`. A future cleanup should hoist the accent into a `--globe-accent` CSS custom property defined once at the layout root.
+
+### Out-of-trip pin click: URL flows through `/globe` then `/globe?pin=…`
+
+Spec §8 acknowledges this transition. **Shipped**: the click handler in `GlobePins.tsx` calls `setLockedTrip(null)` then `selectPin(locationId)`, which results in two router pushes — first to `/globe`, then to `/globe?pin=<slug>`. Back-button history grows by 2 entries per out-of-trip click.
+
+**Status**: not addressed. Acceptable per the spec's URL flow; flagged for a possible later pass that uses `router.replace` for the intermediate.
+
+### Pin-rotate guard in `GlobeScene.tsx`
+
+Already in place from C5/C6 (`if (lockedTrip && pin?.tripIds.includes(lockedTrip)) return`). C7 doesn't add a new guard — verified the existing one still fires on the new dispatch path. Spec section "GlobeScene pin-rotate guard" is satisfied by prior tickets; no change needed here.
+
+### Accessibility / headless mirror
+
+`GlobePinTriggers.tsx` (sr-only `<button data-pin-trigger="…">` per pin) is updated to mirror the new `requestPinScroll` dispatch. Both keyboard-AT activation and headless-test selectors (`preview_click [data-pin-trigger=...]`) trigger the same code path as a real R3F canvas click.
+
+**Known duplication**: the locked-trip branching is now copied into both `GlobePins.handleClick` and `GlobePinTriggers.handleActivate`. Worth extracting into a `dispatchPinActivation(locationId, ctx)` helper in a future cleanup.
+
+---
+
 ## How to verify
 
 1. `/globe` — click Japan Spring '22 label. Trip panel opens with Tokyo / Kyoto / Osaka sections.

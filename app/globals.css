@@ -36,6 +36,6 @@ body {
   100% { background-color: rgba(37, 99, 235, 0); }
 }
 .visit-section[data-pulsing="true"],
-.visit-section[data-pulsing="true"] > header {
+.visit-section[data-pulsing="true"] .visit-section-header {
   animation: visit-section-pulse 600ms ease-in-out;
 }
