@@ -5,6 +5,7 @@ import { Canvas } from '@react-three/fiber'
 import GlobeScene from './GlobeScene'
 import GlobeMesh from './GlobeMesh'
 import GlobePins from './GlobePins'
+import TripArcs from './TripArcs'
 import GlobePositionBridge from './GlobePositionBridge'
 import { useGlobe } from './GlobeContext'
 
@@ -43,6 +44,7 @@ export default function GlobeCanvas({
         <GlobeScene />
         <GlobeMesh />
         <GlobePins />
+        <TripArcs />
         <GlobePositionBridge />
       </Canvas>
     </div>
