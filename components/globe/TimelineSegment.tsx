@@ -9,6 +9,9 @@ interface Props {
   zoomWindow: { start: number; end: number }
   containerWidth: number
   isActive?: boolean
+  /** Lit by the playback sweep (§5). Tints accent without expanding
+      visit ticks so the reader still knows hover/lock is distinct. */
+  isPlaybackHighlighted?: boolean
 }
 
 /** Shared with B6 dot-render on playhead crossing. */
@@ -20,6 +23,7 @@ export default function TimelineSegment({
   zoomWindow,
   containerWidth,
   isActive = false,
+  isPlaybackHighlighted = false,
 }: Props) {
   const x0 = compressed.dateToX(trip.startDate)
   const x1 = compressed.dateToX(trip.endDate)
@@ -44,7 +48,8 @@ export default function TimelineSegment({
   const rightCueOffset = clippedRight ? leftPx + widthPx - containerWidth : 0
 
   const fillBase = 'transition-colors duration-150 ease-out'
-  const fillColor = isActive
+  const emphasized = isActive || isPlaybackHighlighted
+  const fillColor = emphasized
     ? 'bg-black/70 dark:bg-white/80'
     : 'bg-black/20 dark:bg-white/[.18]'
 
