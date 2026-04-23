@@ -563,6 +563,26 @@ Midpoint (not xStart) because a short trip's midpoint is visually centered on th
 - **Arc fade-in/out from playback**: C6 reads `playbackHighlightedTripIds` directly (already wired at merge time).
 - **Mobile preview on floating-label tap**: E3.
 
+### Unit tests (added post-review)
+
+`lib/timelinePlayback.test.ts` covers the controller in isolation — no React, no DOM, no preview dependency. Nine cases:
+
+- sweep direction is right → left, x strictly non-increasing
+- reaches x=0 → enters `holding` with empty highlights → teleports back to x=1 on next sweep
+- overlapping trips highlight together, chronologically (via `seekTo` into the overlap band — deterministic without depending on tick budget)
+- zero-span day trip dwells for ~`minTripDurationSec` with ±10% tolerance
+- clamp entry catches the floating-point drift case where `nextX` lands just inside a trip's effective range rather than past it (regression guard for the bug fixed in commit 79214c2)
+- gap vs in-trip velocity ratio exceeds 5× under default multipliers
+- `seekTo` clamps to [0,1] and exits hold phase
+- ctor sorts trips by `xStart` so overlap highlight order is chronological regardless of input order
+- `subscribe` fires immediately with the current state on registration
+
+Prefer `seekTo` over "tick until we arrive" when testing specific positions — avoids flakiness when tuning knobs change.
+
+### Follow-ups spawned
+
+- **Auto-rotate not restored after article close**: `startArticleZoom` still calls `setAutoRotate(false)` without a matching restore. Out of scope for B6 (tracked as a separate task). Same fix pattern as the B6 trip-lock path: remove the explicit disable; the `layoutState === 'default'` gate on OrbitControls handles suppression while the article is open.
+
 ### Known small compromises
 
 - **`dt` clamp at 100ms**: on a main-thread stall ≥ 2s, the playhead advances 100ms of motion in one frame — a visible hop. Considered acceptable; the alternative of accumulating the missed time and teleporting is worse.
