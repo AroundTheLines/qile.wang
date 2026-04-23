@@ -22,9 +22,36 @@ import { useGlobe } from './GlobeContext'
  * to the A11y polish pass (F-series).
  */
 export default function GlobePinTriggers() {
-  const { pins, selectPin } = useGlobe()
+  const {
+    pins,
+    selectPin,
+    lockedTrip,
+    setLockedTrip,
+    setPinSubregionHighlight,
+    requestPinScroll,
+  } = useGlobe()
 
   if (pins.length === 0) return null
+
+  const handleActivate = (locationId: string) => {
+    // Mirror the R3F canvas click dispatch (GlobePins.handleClick) so
+    // keyboard / AT / headless testing paths behave identically to a
+    // real pointer click on the pin.
+    if (lockedTrip) {
+      const pin = pins.find((p) => p.location._id === locationId)
+      const inLockedTrip = pin?.tripIds.includes(lockedTrip) ?? false
+      if (inLockedTrip) {
+        requestPinScroll(locationId)
+        return
+      }
+      setLockedTrip(null)
+      selectPin(locationId)
+      setPinSubregionHighlight(locationId)
+      return
+    }
+    selectPin(locationId)
+    setPinSubregionHighlight(locationId)
+  }
 
   return (
     <ul className="sr-only" aria-label="Pin locations">
@@ -34,7 +61,7 @@ export default function GlobePinTriggers() {
             type="button"
             data-pin-trigger={pin.location._id}
             data-pin-name={pin.location.name}
-            onClick={() => selectPin(pin.location._id)}
+            onClick={() => handleActivate(pin.location._id)}
           >
             Open panel for {pin.location.name}
           </button>

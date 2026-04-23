@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useRouter } from 'next/navigation'
 import { useGlobe } from '../GlobeContext'
@@ -27,15 +27,22 @@ interface Props {
    */
   onRef?: (el: HTMLElement | null, visitId: string) => void
   /**
-   * Is this section receiving a cross-interaction pulse? (C7)
-   *
-   * NOTE: the pulse style below uses `bg-[var(--accent)]/10`, which requires
-   * `--accent` to be defined as space-separated RGB channels for the `/10`
-   * alpha-suffix to work. C7 owns defining `--accent` (or switching this to an
-   * explicit rgba/overlay). Until then the prop is inert.
+   * Monotonically-increasing nonce that triggers a 600ms keyframe pulse
+   * (spec §17.3 — fade up, hold, fade down). Each new value replays the
+   * animation imperatively (toggle `data-pulsing` + force reflow), so the
+   * section is NOT remounted and local state (e.g. `expanded`) survives.
+   * Pass `null` for "not pulsing."
    */
-  pulsing?: boolean
+  pulseNonce?: number | null
+  /**
+   * Hover-driven accent tint (C7). Persists for the duration of a pin
+   * hover when this section's visit matches the hovered pin and a trip
+   * is locked. Held tint, no animation.
+   */
+  hovered?: boolean
 }
+
+const PULSE_DURATION_MS = 600
 
 export default function VisitSection({
   visit,
@@ -43,11 +50,32 @@ export default function VisitSection({
   sticky,
   secondaryLabel,
   onRef,
-  pulsing,
+  pulseNonce,
+  hovered,
 }: Props) {
   const router = useRouter()
   const { trips } = useGlobe()
   const [expanded, setExpanded] = useState(true)
+  const sectionRef = useRef<HTMLElement | null>(null)
+
+  // Imperatively replay the pulse keyframe each time `pulseNonce` changes.
+  // Why imperative: toggling a `pulsing` boolean prop and re-keying the
+  // section to remount it would replay the animation, but it would also
+  // throw away `expanded` (and any future local state). Restarting via
+  // attribute toggle + forced reflow keeps the same DOM node.
+  useEffect(() => {
+    if (pulseNonce == null) return
+    const el = sectionRef.current
+    if (!el) return
+    el.removeAttribute('data-pulsing')
+    // Force reflow so the next attribute set is treated as an animation start.
+    void el.offsetWidth
+    el.setAttribute('data-pulsing', 'true')
+    const t = setTimeout(() => {
+      el.removeAttribute('data-pulsing')
+    }, PULSE_DURATION_MS)
+    return () => clearTimeout(t)
+  }, [pulseNonce])
 
   const tripRef = 'trip' in visit ? visit.trip : undefined
   const tripMeta = tripRef ? trips.find((t) => t._id === tripRef._id) : undefined
@@ -63,13 +91,18 @@ export default function VisitSection({
 
   return (
     <section
-      ref={(el) => onRef?.(el, visit._id)}
-      className={`border-b border-gray-200 dark:border-gray-800 last:border-b-0 transition-colors duration-[600ms] ${
-        pulsing ? 'bg-[var(--accent)]/10' : 'bg-transparent'
+      ref={(el) => {
+        sectionRef.current = el
+        onRef?.(el, visit._id)
+      }}
+      className={`visit-section border-b border-gray-200 dark:border-gray-800 last:border-b-0 transition-colors duration-200 ${
+        hovered ? 'bg-[rgba(37,99,235,0.10)]' : 'bg-transparent'
       }`}
     >
       <header
-        className={`px-4 pt-3 pb-2 bg-white dark:bg-black ${sticky ? 'sticky top-0 z-10' : ''}`}
+        className={`visit-section-header px-4 pt-3 pb-2 transition-colors duration-200 ${
+          hovered ? 'bg-[rgb(232,238,254)] dark:bg-[rgb(20,29,56)]' : 'bg-white dark:bg-black'
+        } ${sticky ? 'sticky top-0 z-10' : ''}`}
       >
         <div className="flex items-baseline justify-between gap-2">
           <div className="min-w-0">

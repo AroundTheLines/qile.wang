@@ -1,5 +1,9 @@
 'use client'
 
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+// Pulse handling lives inside VisitSection now (imperative replay so it
+// preserves the section's local `expanded` state); TripPanel just forwards
+// the nonce coming off `pinToScrollTo`.
 import { useRouter } from 'next/navigation'
 import { Skeleton } from 'boneyard-js/react'
 import PanelChrome from './PanelChrome'
@@ -12,9 +16,48 @@ interface Props {
   trip: TripWithVisits
 }
 
+const PULSE_DURATION_MS = 600
+
 export default function TripPanel({ trip }: Props) {
   const router = useRouter()
-  const { setLockedTrip } = useGlobe()
+  const { setLockedTrip, pinToScrollTo, clearPinScroll, hoveredPin } = useGlobe()
+
+  // Refs to each visit's section element, keyed by visit id, so the
+  // scroll-to-visit effect can target the right node.
+  const sectionRefs = useRef<Map<string, HTMLElement>>(new Map())
+  const handleSectionRef = useCallback((el: HTMLElement | null, visitId: string) => {
+    if (el) sectionRefs.current.set(visitId, el)
+    else sectionRefs.current.delete(visitId)
+  }, [])
+
+  // Resolved pulse target. We forward the incoming nonce straight to the
+  // matching VisitSection so it can replay its keyframe imperatively (no
+  // remount → preserves the section's `expanded` state).
+  const [pulse, setPulse] = useState<{ visitId: string; nonce: number } | null>(null)
+
+  // C7: when a pin in this trip is clicked, scroll to its visit section
+  // and pulse it. `pinToScrollTo` is `{id, nonce}` — the nonce changes on
+  // every click (including repeat clicks on the same pin) so this effect
+  // re-fires deterministically and the pulse always tracks the user action.
+  useEffect(() => {
+    if (!pinToScrollTo) return
+    const visit = trip.visits.find((v) => v.location._id === pinToScrollTo.id)
+    if (!visit) return
+    const el = sectionRefs.current.get(visit._id)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setPulse({ visitId: visit._id, nonce: pinToScrollTo.nonce })
+    const timer = setTimeout(() => {
+      clearPinScroll()
+    }, PULSE_DURATION_MS)
+    return () => clearTimeout(timer)
+  }, [pinToScrollTo, trip.visits, clearPinScroll])
+
+  // Pin-hover → tint the matching visit section (desktop §7.4).
+  const hoveredVisitId = useMemo(() => {
+    if (!hoveredPin) return null
+    const visit = trip.visits.find((v) => v.location._id === hoveredPin)
+    return visit?._id ?? null
+  }, [hoveredPin, trip.visits])
 
   const subtitle = `${formatDateRange(trip.startDate, trip.endDate)} · ${trip.visitCount} ${trip.visitCount === 1 ? 'visit' : 'visits'}`
 
@@ -59,6 +102,9 @@ export default function TripPanel({ trip }: Props) {
             showViewTripArticleLink={false}
             sticky
             secondaryLabel={visit.location.name}
+            onRef={handleSectionRef}
+            pulseNonce={pulse?.visitId === visit._id ? pulse.nonce : null}
+            hovered={hoveredVisitId === visit._id}
           />
         ))}
       </PanelChrome>

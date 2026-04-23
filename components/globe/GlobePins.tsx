@@ -46,11 +46,15 @@ function Pin({
   lng: number
 }) {
   const {
+    pins,
     selectedPin,
     selectPin,
     hoveredPin,
     setHoveredPin,
     setPinSubregionHighlight,
+    lockedTrip,
+    setLockedTrip,
+    requestPinScroll,
     showHover,
     isDesktop,
     addPauseReason,
@@ -194,18 +198,43 @@ function Pin({
   const handleClick = useCallback(
     (e: ThreeEvent<MouseEvent>) => {
       e.stopPropagation()
+      // Clear any lingering hover-pause; pointerOut may race with click.
+      if (isDesktop) removePauseReason('pin-hover')
+
+      // §9.2: context-aware dispatch when a trip is locked.
+      if (lockedTrip) {
+        const pin = pins.find((p) => p.location._id === locationId)
+        const inLockedTrip = pin?.tripIds.includes(lockedTrip) ?? false
+        if (inLockedTrip) {
+          // Pin belongs to the locked trip — keep the lock, don't open a
+          // pin panel, and signal TripPanel to scroll to this visit + pulse.
+          setHoveredPin(null)
+          requestPinScroll(locationId)
+          return
+        }
+        // Outside the locked trip — release the lock and open pin panel.
+        setLockedTrip(null)
+        selectPin(locationId)
+        setHoveredPin(null)
+        setPinSubregionHighlight(locationId)
+        return
+      }
+
+      // No lock — standard pin selection.
       selectPin(locationId)
       setHoveredPin(null)
       // §7.5: click keeps sub-region bands lit while the panel is open.
       setPinSubregionHighlight(locationId)
-      // Clear any lingering hover-pause; pointerOut may race with click.
-      if (isDesktop) removePauseReason('pin-hover')
     },
     [
+      pins,
+      lockedTrip,
       locationId,
       selectPin,
+      setLockedTrip,
       setHoveredPin,
       setPinSubregionHighlight,
+      requestPinScroll,
       isDesktop,
       removePauseReason,
     ],
