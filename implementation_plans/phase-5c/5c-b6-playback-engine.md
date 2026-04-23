@@ -499,6 +499,19 @@ This ticket wires exactly ONE pause reason: `'playback-floating-label-hover'`. A
 
 On label click, we remove the hover pause reason explicitly before calling `setLockedTrip` — otherwise a click that toggles between locking and unlocking would leak the hover pause if the user then moved off without a pointerleave firing.
 
+### Day-trip dwell (updated post-initial-ship)
+
+Day trips have `startDate === endDate`, which means `xEnd - xStart = 0` in compressed-x. Without special handling, the playhead would flash through them in a single tick (or, with the naive "dwellCap = span / dwellTime" version, get pinned at velocity=0 forever).
+
+Two pieces work together:
+
+1. `effectiveRange(t)` pads short trips symmetrically to at least `EFFECTIVE_SPAN_FLOOR = 0.008` in compressed-x. This widened range is used for both the highlight membership check (`computeHighlighted`) and the gap-overshoot clamp, so the playhead has a visible "lane" to dwell in.
+2. `dwellCap = effSpan / minTripDurationSec` (default 0.8s). Inside a day trip the velocity is capped so crossing the padded range takes at least `minTripDurationSec`. For multi-day trips the cap is well above the base rate and `min(base, cap) = base`, so normal trips are unaffected.
+
+Verified with NYC Day Trip fixture (2024-01-20 only): sweep slows to ~13px/s through the dot (vs ~46px/s through surrounding gaps — ~3.5× slower, matching the gap-multiplier-relative ratio).
+
+Tuning knobs in [`lib/timelinePlayback.ts`](../../lib/timelinePlayback.ts): `EFFECTIVE_SPAN_FLOOR` (widens the dwell lane), `DEFAULT_MIN_TRIP_DURATION_SEC` (dwell target).
+
 ### Variable sweep speed (updated post-initial-ship)
 
 The controller now applies a `gapMultiplier` (default 4) to `xPerSecond` when the playhead is in a gap between trips (i.e. `highlightedTripIds.length === 0` during sweep). Inside a trip's range the base rate applies. Rationale: dead time between trips is not the interesting content — a 4× fast-forward keeps the loop feeling active without making the gap skip so fast the reader can't register "we're between trips." Base rate is still spec §5.3's "5s per half-year" so the in-trip feel is unchanged.

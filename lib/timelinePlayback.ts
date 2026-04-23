@@ -20,6 +20,12 @@ export interface PlaybackConfig {
       between trips. >1 fast-forwards dead time; keep the gaps readable
       by not going so fast the user can't register the jump. Default 4. */
   gapMultiplier?: number
+  /** Lower bound on how long the playhead dwells inside a trip, in
+      seconds. Short trips (day trips — `xEnd - xStart` tiny) would
+      otherwise flash past faster than the eye can register. Caps
+      velocity to `span / minTripDurationSec` while inside a trip.
+      Default 0.8s. */
+  minTripDurationSec?: number
 }
 
 export interface PlaybackController {
@@ -35,6 +41,12 @@ export interface PlaybackController {
 
 const DEFAULT_HOLD_MS = 5000
 const DEFAULT_GAP_MULTIPLIER = 4
+const DEFAULT_MIN_TRIP_DURATION_SEC = 0.8
+// Short trips (especially day trips where `xStart === xEnd`) need a
+// non-zero range so the playhead can dwell visibly inside them. We pad
+// symmetrically so the pad doesn't shift the highlight entry point
+// earlier by a large fraction of the compressed axis.
+const EFFECTIVE_SPAN_FLOOR = 0.008
 
 function sortByXStart(trips: PlaybackTrip[]): PlaybackTrip[] {
   // Ensures `highlightedTripIds` is chronological when the playhead crosses
@@ -47,6 +59,7 @@ export function createPlaybackController(cfg: PlaybackConfig): PlaybackControlle
   let xPerSecond = cfg.xPerSecond
   const loopHoldMs = cfg.loopHoldMs ?? DEFAULT_HOLD_MS
   const gapMultiplier = cfg.gapMultiplier ?? DEFAULT_GAP_MULTIPLIER
+  const minTripDurationSec = cfg.minTripDurationSec ?? DEFAULT_MIN_TRIP_DURATION_SEC
 
   // Sweep starts at present (x=1), moves left to past (x=0).
   let playheadX = 1
@@ -56,10 +69,21 @@ export function createPlaybackController(cfg: PlaybackConfig): PlaybackControlle
 
   const subs = new Set<(s: PlaybackState) => void>()
 
+  // Widen short trips symmetrically so the playhead can dwell inside
+  // them long enough to register. For trips wider than the floor the
+  // effective range is identical to the declared range.
+  const effectiveRange = (t: PlaybackTrip): [number, number] => {
+    const span = t.xEnd - t.xStart
+    if (span >= EFFECTIVE_SPAN_FLOOR) return [t.xStart, t.xEnd]
+    const pad = (EFFECTIVE_SPAN_FLOOR - span) / 2
+    return [t.xStart - pad, t.xEnd + pad]
+  }
+
   const computeHighlighted = (): string[] => {
     const out: string[] = []
     for (const t of trips) {
-      if (playheadX >= t.xStart && playheadX <= t.xEnd) out.push(t.id)
+      const [lo, hi] = effectiveRange(t)
+      if (playheadX >= lo && playheadX <= hi) out.push(t.id)
     }
     return out
   }
@@ -97,8 +121,46 @@ export function createPlaybackController(cfg: PlaybackConfig): PlaybackControlle
         // that crosses a boundary uses the rate of the range it started
         // in, which is fine at RAF-rate dt ≈ 16ms.
         const inTrip = highlightedTripIds.length > 0
-        const velocity = inTrip ? xPerSecond : xPerSecond * gapMultiplier
-        playheadX -= velocity * dtSec
+        let velocity: number
+        if (inTrip) {
+          // Cap velocity so a short trip (day trip) takes at least
+          // `minTripDurationSec` to traverse. For typical multi-day trips
+          // the cap is well above the base rate and `min(base, cap)` =
+          // base — unchanged. Only day trips are slowed.
+          // Dwell cap uses the EFFECTIVE span (widened by the floor for
+          // short trips), matching the widened range the highlight check
+          // uses — otherwise a zero-span day trip would pin velocity to 0
+          // and the playhead would never leave.
+          let minEffSpan = Infinity
+          for (const tid of highlightedTripIds) {
+            const t = trips.find((x) => x.id === tid)
+            if (!t) continue
+            const [lo, hi] = effectiveRange(t)
+            const span = hi - lo
+            if (span < minEffSpan) minEffSpan = span
+          }
+          const dwellCap =
+            minEffSpan === Infinity ? xPerSecond : minEffSpan / minTripDurationSec
+          velocity = Math.min(xPerSecond, dwellCap)
+        } else {
+          velocity = xPerSecond * gapMultiplier
+        }
+        let nextX = playheadX - velocity * dtSec
+        // Guard: at gap velocity, a single tick can overshoot a very short
+        // trip entirely (`nextX < xStart` while `playheadX > xEnd`). Clamp
+        // to the trip's right edge so the next tick sees `inTrip = true`
+        // and the dwell cap kicks in.
+        if (!inTrip) {
+          let clampTo: number | null = null
+          for (const t of trips) {
+            const [lo, hi] = effectiveRange(t)
+            if (hi < playheadX && lo > nextX) {
+              if (clampTo === null || hi > clampTo) clampTo = hi
+            }
+          }
+          if (clampTo !== null) nextX = clampTo
+        }
+        playheadX = nextX
         if (playheadX <= 0) {
           playheadX = 0
           phase = 'holding'
