@@ -7,6 +7,7 @@ import { dragPan, pinchZoom, wheelPan, wheelZoom, type ZoomWindow } from '@/lib/
 import TimelineSegment from './TimelineSegment'
 import TimelineAxis from './TimelineAxis'
 import TimelinePinBands from './TimelinePinBands'
+import TimelinePlayhead from './TimelinePlayhead'
 import { GlobeContext } from './GlobeContext'
 
 type TimelineTrip = TripRange & {
@@ -348,6 +349,11 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
     }
     attachWindowListeners()
   }
+
+  const playbackHighlightSet = useMemo(
+    () => new Set(ctx?.playbackHighlightedTripIds ?? []),
+    [ctx?.playbackHighlightedTripIds],
+  )
 
   const displayLabels = useMemo(() => computeDisplayLabels(trips), [trips])
 
@@ -730,6 +736,7 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
               zoomWindow={zoomWindow}
               containerWidth={innerWidth}
               isActive={activeId === trip.id}
+              isPlaybackHighlighted={playbackHighlightSet.has(trip.id)}
             />
           ))}
 
@@ -744,6 +751,19 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
 
       {renderTodayMarker()}
       {renderLabels()}
+
+      {width > 0 && ctx && (
+        <TimelinePlayhead
+          compressed={compressed}
+          zoomWindow={zoomWindow}
+          containerWidth={innerWidth}
+          leftOffsetPx={TRACK_INSET_X}
+          trackTopPx={TRACK_Y}
+          playheadTopPx={YEAR_AXIS_Y}
+          playheadHeightPx={Math.max(0, TRACK_Y + 8 - YEAR_AXIS_Y)}
+          trips={trips}
+        />
+      )}
     </div>
   )
 }

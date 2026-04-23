@@ -435,6 +435,161 @@ const onLabelClick = () => {
 - `TimelinePlayhead` component — mounted in Timeline.tsx.
 - `lib/timelinePlayback.ts` controller — pure module; could be unit-tested independently (not required but welcome).
 
+## Shipped decisions (2026-04-22, PR #44)
+
+Record of what was actually built and why — so future implementers (retirement of timeline-dev, performance pass, mobile variant) don't have to excavate the code.
+
+### Resolved ambiguities
+
+- **Sweep direction**: present → past (right → left). Confirmed via spec §5.4 mechanics. Implemented as `playheadX -= xPerSecond * dt` starting from 1.
+- **§5.4 loop**: hold at `x = 0` for `loopHoldMs = 5000`, clear `highlightedTripIds` during hold (the "fully neutral" read), teleport `playheadX = 1`, resume.
+- **"Segment + label turn accent color"** (acceptance criterion): interpreted as **segment only**. The inline trip label on the timeline is NOT re-styled during playback. Reason: the inline label's hover state expands to a white pill + full title; triggering that every few seconds as the sweep passes would be distracting. The floating label above the playhead is the primary "what is currently highlighted" signal.
+- **Multi-trip overlap click on the floating label**: locks the **first id in `highlightedTripIds`**, which is now **chronologically earliest** because `createPlaybackController` sorts `trips` by `xStart` on construction and on `setTrips`. Do not assume the caller passes sorted input.
+- **Mobile click on floating label**: no-op here. E3 owns mobile preview behavior. Gated via `ctx.isMobile`.
+- **Loop hold UX**: globe's passive spin + trip-arc ambient animation continue during hold. Only `playbackHighlightedTripIds` is cleared. "Fully neutral" in §5.4 was read as "no playback highlight overlay," not "all motion stops."
+
+### State machine shape
+
+`lib/timelinePlayback.ts` is a pure controller, no React. Consumers supply `trips: { id, xStart, xEnd }[]` already projected through `CompressedMap.dateToX`. Keeps the controller testable and decoupled from compression changes.
+
+Public API:
+
+```ts
+interface PlaybackController {
+  getState(): PlaybackState          // { playheadX, highlightedTripIds, phase }
+  tick(dtSec: number): void          // caller drives via RAF
+  setTrips(trips: PlaybackTrip[]): void
+  setXPerSecond(v: number): void     // in-place update, no re-sub
+  subscribe(fn: (s) => void): () => void  // fires immediately on subscribe
+}
+```
+
+`subscribe` immediately fires with the current state — callers that do DOM writes in the subscriber rely on this to paint the initial playhead position without waiting for the first tick.
+
+### `xPerSecond` derivation
+
+Spec §5.3 ("~5 seconds per half-year of trips") is in REAL time, but the compression map distorts real-time spacing. The speed is computed in **compressed-x per second** by projecting a 6-month window through `CompressedMap.dateToX`:
+
+```ts
+const halfYearCompressedX = compressed.dateToX(end) - compressed.dateToX(subMonths(end, 6))
+const xPerSecond = Math.max(0.01, halfYearCompressedX) / 5
+```
+
+The `max(0.01, …)` floor guards against pathological cases where the 6-month window in compressed-x is ~0 (empty gap preceding "today"), which would freeze the playhead.
+
+### React integration pattern
+
+- **Imperative DOM writes**, not state. `TimelinePlayhead` owns refs to both the playhead div and floating-label div; `applyDom(state)` mutates `.style.left/.style.opacity/.textContent` directly. Keeps Timeline off the per-frame commit path.
+- **Context setter via ref**, not effect dep. `GlobeProvider` rebuilds its context object every render, so using `ctx.setPlaybackHighlightedTripIds` in the effect deps would recreate the controller continuously (this was the initial bug — playhead pinned at x=1). The setter is threaded through `setHighlightedIdsRef.current` which is updated on each render but read lazily from the subscriber.
+- **Effect keyed on `playbackTrips`**, the memoized `{id, xStart, xEnd}[]`. Controller is recreated only when trip ranges change (which requires either compression change or a data reload).
+- **RAF loop keyed on `playbackActive`** (already gated in `GlobeProvider` — folds in pause reasons, locked trip, open article, and the 5s idle-resume ramp). `lastFrameRef` preserves null-on-teardown so the first tick after resume has dt=0 rather than the paused elapsed time.
+- **Highlight dedup**: the subscriber compares `highlightedTripIds` contents to a local ref before calling `setPlaybackHighlightedTripIds`, so Timeline commits only on actual trip-boundary crossings (~once per sweep across each trip), not per frame.
+
+### Floating label position
+
+`labelTopPx = 0` — the label sits in the same top row as the `today` marker label, **above** the year axis (y=16–28). Earlier attempt used `trackTopPx - 14 = 18` which overlapped the year axis. The today label and sweep label only visually collide at the single frame when the loop teleports back to x=1, which is below the "not worth fixing" threshold.
+
+Label width is clamped to `max-w-[240px]` with `truncate` (CSS-only) so overlap text like `"SF Q4 '23 · Seattle Q4 '23"` that overflows is ellipsized at the style layer without JS measurement work per frame.
+
+Horizontal position is recomputed imperatively each emit: anchor the center on the playhead, then clamp to `[leftOffset + 4, leftOffset + w - labelWidth - 4]` so the label never clips off either end of the track.
+
+### Pause reasons
+
+This ticket wires exactly ONE pause reason: `'playback-floating-label-hover'`. All other pause sources (hover any trip segment/arc/pin, locked trip, open article, zoom interaction) are wired by other tickets that feed into `GlobeProvider`'s pause-reasons set.
+
+On label click, we remove the hover pause reason explicitly before calling `setLockedTrip` — otherwise a click that toggles between locking and unlocking would leak the hover pause if the user then moved off without a pointerleave firing.
+
+### Day-trip dwell (updated post-initial-ship)
+
+Day trips have `startDate === endDate`, which means `xEnd - xStart = 0` in compressed-x. Without special handling, the playhead would flash through them in a single tick (or, with the naive "dwellCap = span / dwellTime" version, get pinned at velocity=0 forever).
+
+Two pieces work together:
+
+1. `effectiveRange(t)` pads short trips symmetrically to at least `EFFECTIVE_SPAN_FLOOR = 0.008` in compressed-x. This widened range is used for both the highlight membership check (`computeHighlighted`) and the gap-overshoot clamp, so the playhead has a visible "lane" to dwell in.
+2. `dwellCap = effSpan / minTripDurationSec` (default 0.8s). Inside a day trip the velocity is capped so crossing the padded range takes at least `minTripDurationSec`. For multi-day trips the cap is well above the base rate and `min(base, cap) = base`, so normal trips are unaffected.
+
+Verified with NYC Day Trip fixture (2024-01-20 only): sweep slows to ~13px/s through the dot (vs ~46px/s through surrounding gaps — ~3.5× slower, matching the gap-multiplier-relative ratio).
+
+Tuning knobs in [`lib/timelinePlayback.ts`](../../lib/timelinePlayback.ts): `EFFECTIVE_SPAN_FLOOR` (widens the dwell lane), `DEFAULT_MIN_TRIP_DURATION_SEC` (dwell target).
+
+### Variable sweep speed (updated post-initial-ship)
+
+Three knobs shape the sweep's tempo relative to the base `xPerSecond` (spec §5.3's "5s per half-year"):
+
+| Knob | Default | Effect |
+| --- | --- | --- |
+| `gapMultiplier` | **7** | Multiplies velocity while in gaps between trips. Dead time fast-forwards so loops feel active without crushing legibility. |
+| `tripMultiplier` | **0.75** | Multiplies velocity while inside a trip. <1 slows trips so the reader registers them; target in-trip/gap ratio is ~10×. |
+| `minTripDurationSec` | **1.0** | Floor on how long the playhead dwells crossing a trip. Caps velocity to `effSpan / minTripDurationSec`, so short trips (especially day trips) can't flash past. |
+
+The in-trip velocity is `min(xPerSecond × tripMultiplier, effSpan / minTripDurationSec)`. For multi-day trips the first term wins (the dwell cap is above the base); only day trips hit the cap.
+
+Tuning history (for the next person who touches the feel):
+- v1 shipped at `gapMultiplier=4` + uniform base rate.
+- v2 added `minTripDurationSec=0.8` for day-trip dwell.
+- v3 differentiated in-trip vs gap with `tripMultiplier=0.6` + `gapMultiplier=7` + `minTripDurationSec=1.2` — too slow in normal trips on review.
+- v4 (current) sped normal trips back up: `tripMultiplier=0.75`, `minTripDurationSec=1.0`. Gap stays at 7.
+
+Tuning point: constants at the top of [`lib/timelinePlayback.ts`](../../lib/timelinePlayback.ts). Config overrides also exposed on `createPlaybackController` if per-page tuning is ever needed.
+
+### Floating label suppressed while trip is locked (updated post-initial-ship)
+
+When `ctx.lockedTrip !== null`, the floating label above the playhead is hidden. The inline timeline label already expands to a white pill showing the full trip title, so a second label naming the same trip is visual noise. `lockedTripRef` is read inside `applyDom` so the subscriber can evaluate the gate without re-subscribing; a separate effect re-runs `applyDom` when `lockedTrip` changes so the label hides immediately on lock even while RAF is paused.
+
+### Idle-resume timing (updated post-initial-ship)
+
+`IDLE_RESUME_MS` reduced from 5000 → 1500 in `GlobeProvider`. The original 5s felt like "did I break it?" between deselection and playback resuming. 1.5s is short enough that the user perceives continuity, still long enough that quick tap-to-lock-to-unlock-to-tap-again sequences don't re-trigger the sweep for no reason. Applies to all pause sources (label hover, pin/trip selection, article open).
+
+### Auto-rotate after trip deselect (fixed post-initial-ship)
+
+`kickOffTripFit` no longer calls `setAutoRotate(false)`. Previously, locking a trip set the `autoRotate` state variable to false and never restored it, so unlocking a trip left the globe stationary. Pins already worked correctly because the pin-rotate path only toggles `controlsEnabled`, not `autoRotate`.
+
+The OrbitControls `autoRotate` prop is already computed as `layoutState === 'default' && autoRotate && controlsEnabled`, so the layout gate alone handles lock-time suppression. Removing the explicit disable makes trip-deselect match pin-deselect behavior: globe resumes passive spin automatically.
+
+### Lock-to-seek behavior (added post-initial-ship)
+
+Clicking an inline timeline label (or any other path that sets `ctx.lockedTrip`) now seeks the playhead to the **midpoint** of that trip. Playback is already paused while locked (`isPaused` contains `lockedTrip !== null`). When the lock is released, the RAF loop restarts and sweeping resumes from that same position — the playhead is NOT teleported back to the right edge.
+
+Implementation: `PlaybackController.seekTo(x)` clamps to `[0,1]`, forces `phase = 'sweeping'`, resets `holdElapsedMs`, and notifies. `TimelinePlayhead` has a `useEffect` on `ctx.lockedTrip` that looks up the trip in `playbackTrips` and calls `seekTo((xStart + xEnd) / 2)`.
+
+Midpoint (not xStart) because a short trip's midpoint is visually centered on the segment; seeking to xStart would park the playhead right on the start edge and feel like it "fell short." For trips where the sweep already overlaps the trip (e.g. clicking the floating label for the currently-highlighted trip), the jump is usually small.
+
+"Unless the scrubber has moved somewhere else" from product: naturally satisfied — the seek effect only fires when `lockedTrip` transitions, so subsequent lock→different-trip paths override. If the user never re-locks, the playhead stays parked until sweep resumes and moves it naturally.
+
+### What's intentionally NOT done here
+
+- **Zoom reset on playback resume**: B7.
+- **Pin highlights from playback**: C2 reads `playbackHighlightedTripIds` directly.
+- **Arc fade-in/out from playback**: C6 reads `playbackHighlightedTripIds` directly (already wired at merge time).
+- **Mobile preview on floating-label tap**: E3.
+
+### Unit tests (added post-review)
+
+`lib/timelinePlayback.test.ts` covers the controller in isolation — no React, no DOM, no preview dependency. Nine cases:
+
+- sweep direction is right → left, x strictly non-increasing
+- reaches x=0 → enters `holding` with empty highlights → teleports back to x=1 on next sweep
+- overlapping trips highlight together, chronologically (via `seekTo` into the overlap band — deterministic without depending on tick budget)
+- zero-span day trip dwells for ~`minTripDurationSec` with ±10% tolerance
+- clamp entry catches the floating-point drift case where `nextX` lands just inside a trip's effective range rather than past it (regression guard for the bug fixed in commit 79214c2)
+- gap vs in-trip velocity ratio exceeds 5× under default multipliers
+- `seekTo` clamps to [0,1] and exits hold phase
+- ctor sorts trips by `xStart` so overlap highlight order is chronological regardless of input order
+- `subscribe` fires immediately with the current state on registration
+
+Prefer `seekTo` over "tick until we arrive" when testing specific positions — avoids flakiness when tuning knobs change.
+
+### Follow-ups spawned
+
+- **Auto-rotate not restored after article close**: `startArticleZoom` still calls `setAutoRotate(false)` without a matching restore. Out of scope for B6 (tracked as a separate task). Same fix pattern as the B6 trip-lock path: remove the explicit disable; the `layoutState === 'default'` gate on OrbitControls handles suppression while the article is open.
+
+### Known small compromises
+
+- **`dt` clamp at 100ms**: on a main-thread stall ≥ 2s, the playhead advances 100ms of motion in one frame — a visible hop. Considered acceptable; the alternative of accumulating the missed time and teleporting is worse.
+- **Loop teleport collision with `today` label**: sweep label at x=1 overlaps the static "today" label for one frame per loop iteration. Not worth the extra positioning logic to avoid.
+
+---
+
 ## How to verify
 
 1. `/globe` — watch for 5s. Playhead should start sweeping left.
