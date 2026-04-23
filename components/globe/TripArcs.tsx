@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, type Ref } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Line } from '@react-three/drei'
 import * as THREE from 'three'
@@ -134,6 +134,21 @@ interface ArcLineProps {
   arcTotalLength: number
 }
 
+// drei's <Line> exposes a Line2 whose material is a LineMaterial (from
+// three-stdlib) with color / opacity / linewidth / dash uniforms. The union
+// below lets us touch those uniforms without pulling three-stdlib types in.
+type LineMat = THREE.Material & {
+  color?: THREE.Color
+  opacity: number
+  linewidth?: number
+  transparent: boolean
+  dashSize?: number
+  gapSize?: number
+  dashOffset?: number
+  dashScale?: number
+}
+type LineRef = THREE.Object3D & { material: LineMat }
+
 function ArcLine({
   points,
   idleColor,
@@ -144,7 +159,7 @@ function ArcLine({
   tripPhaseOffset,
   arcTotalLength,
 }: ArcLineProps) {
-  const baseRef = useRef<THREE.Object3D & { material: THREE.Material }>(null)
+  const baseRef = useRef<LineRef>(null)
   const baseOpacity = useRef(
     isHighlighted ? BASE_OPACITY_ACTIVE : BASE_OPACITY_INACTIVE,
   )
@@ -153,7 +168,7 @@ function ArcLine({
   )
   const baseColorBlend = useRef(isHighlighted ? BASE_ACTIVE_ACCENT_BLEND : 0)
   const baseScratchColor = useRef(new THREE.Color())
-  const overlayRef = useRef<THREE.Object3D & { material: THREE.Material }>(null)
+  const overlayRef = useRef<LineRef>(null)
   const overlayOpacity = useRef(
     isHighlighted ? OVERLAY_ACTIVE_OPACITY : OVERLAY_INACTIVE_OPACITY,
   )
@@ -164,6 +179,13 @@ function ArcLine({
   const scratchColor = useRef(new THREE.Color())
   const idleColorObj = useRef(new THREE.Color(idleColor))
   const accentColorObj = useRef(new THREE.Color(ACCENT_COLOR))
+
+  // Theme toggle reactivity — re-seed the stored idle color so live
+  // dark/light switches repaint arcs on the next frame. Without this the
+  // tween lerps from a stale source color until the component remounts.
+  useEffect(() => {
+    idleColorObj.current.set(idleColor)
+  }, [idleColor])
 
   // Draw phase + hold + retract phase + rest — two equal-length symmetric
   // phases with a brief pause at the top and a rest at the bottom.
@@ -177,16 +199,7 @@ function ArcLine({
   useFrame(({ clock }, delta) => {
     const obj = overlayRef.current
     if (!obj) return
-    const mat = obj.material as THREE.Material & {
-      color?: THREE.Color
-      opacity: number
-      linewidth?: number
-      transparent: boolean
-      dashSize?: number
-      gapSize?: number
-      dashOffset?: number
-      dashScale?: number
-    }
+    const mat = obj.material
 
     const period = isHighlighted ? activePeriod : inactivePeriod
     const t =
@@ -238,11 +251,7 @@ function ArcLine({
     baseColorBlend.current += (targetBaseBlend - baseColorBlend.current) * k
     const baseObj = baseRef.current
     if (baseObj) {
-      const baseMat = baseObj.material as THREE.Material & {
-        opacity: number
-        linewidth?: number
-        color?: THREE.Color
-      }
+      const baseMat = baseObj.material
       baseMat.opacity = baseOpacity.current
       if ('linewidth' in baseMat && typeof baseMat.linewidth === 'number') {
         baseMat.linewidth = baseWidth.current
@@ -299,8 +308,7 @@ function ArcLine({
       {/* Base layer — always visible; brightens when its trip is highlighted
           so the path remains legible in the gaps between overlay sweeps. */}
       <Line
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ref={baseRef as any}
+        ref={baseRef as Ref<LineRef>}
         points={points}
         color={idleColor}
         lineWidth={BASE_WIDTH_INACTIVE}
@@ -313,8 +321,7 @@ function ArcLine({
           Paints on top of the base so the traversal reads as a highlight
           sliding over the persistent path. */}
       <Line
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ref={overlayRef as any}
+        ref={overlayRef as Ref<LineRef>}
         points={points}
         color={idleColor}
         lineWidth={OVERLAY_INACTIVE_WIDTH}
@@ -340,8 +347,8 @@ function phaseFromId(id: string): number {
     h ^= id.charCodeAt(i)
     h = Math.imul(h, 16777619)
   }
-  // Unsigned → fraction in [0, 1).
-  return ((h >>> 0) % 1000) / 1000
+  // Unsigned 32-bit → fraction in [0, 1). Full 2^32 buckets; no quantisation.
+  return (h >>> 0) / 0x100000000
 }
 
 export default function TripArcs() {
@@ -357,6 +364,11 @@ export default function TripArcs() {
       for (let i = 0; i < trip.visits.length - 1; i++) {
         const a = trip.visits[i].location
         const b = trip.visits[i + 1].location
+        // Dedup by unordered pair — also silently handles consecutive
+        // same-location visits (pair `A|A` is generated once, arc would be
+        // degenerate) by skipping the dedup-hit on the second occurrence.
+        // We still skip explicitly here so `greatCircleArcPoints` isn't
+        // called with identical endpoints.
         if (a._id === b._id) continue
         const pair =
           a._id < b._id ? `${a._id}|${b._id}` : `${b._id}|${a._id}`

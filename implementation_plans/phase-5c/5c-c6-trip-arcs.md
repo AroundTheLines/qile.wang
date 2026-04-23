@@ -342,3 +342,85 @@ Arcs are 3D canvas elements, not DOM. Boneyard operates on DOM, so `data-no-skel
 6. Rotate globe so Japan pins go behind — their arcs hide (depth occlusion working).
 7. DevTools Performance tab: record 10s. Arc rendering should have no significant CPU contribution.
 8. React Profiler: no Timeline or panel re-renders when arc colors transition.
+
+---
+
+## Shipped implementation notes (as-built)
+
+The ticket spec above describes a single-line per-arc design with state-driven color/width tweens. In practice, design iteration during implementation pushed this toward a **two-layer** rendering model with a looping traversal animation. Future implementers: the code in `components/globe/TripArcs.tsx` reflects the decisions below — the spec body is the original intent, this section is what actually shipped.
+
+### Two-layer rendering (base + overlay)
+
+Each arc renders **two** drei `<Line>` components inside a shared `<ArcLine>` wrapper:
+
+1. **Base line** — non-dashed, always visible, one per arc. Tells the reader where every trip goes even when no animation is crossing it. Tweens opacity/width/color-blend on state change:
+   - Inactive: opacity 0.15, width 1.5, idle color (white in dark, black in light).
+   - Active (hovered / locked / playback-lit): opacity 0.5, width 2.5, 35% blend toward accent.
+2. **Overlay line** — dashed, one per arc. `dashSize` and `dashOffset` on `LineMaterial` are driven per frame to render a moving head→tail "comet" along the trip path. `gapSize` is set to `arcTotalLength × 4` so the dash never repeats within one arc.
+
+The base is what consumers "read" the map with; the overlay is the animated highlight on top. When the overlay is in its rest phase (invisible between cycles), the base still tells you the trip exists. Setting `mat.opacity = 0` on the overlay (rather than `mat.visible = false`) avoids drei/Line2 state thrash.
+
+### Traversal animation
+
+Instead of a "fade in/out on highlight" per spec §17.3, every arc runs a continuous **per-trip traversal loop**:
+
+```
+draw → hold → retract → rest → loop
+ |       |       |        |
+ head   head=1  tail      invisible
+ 0→1    tail=0  0→1
+```
+
+- `drawFrac`, `retractEnd` fractions are computed from `TRIP_PAUSE_FRAC` and `TRIP_REST_FRAC` (both 0.02 — minimal gap between cycles; earlier iterations at 0.08 felt "stop-and-go").
+- For multi-arc trips, the head and tail are expressed in **trip-path space** `[0, 1]` and mapped to each arc's local slot `[arcIndex / tripArcCount, (arcIndex + 1) / tripArcCount]`. The comet crosses arc boundaries without stalling.
+- The `<Line>` geometry is 33 points; `dashOffset = -localTail × arcTotalLength` and `dashSize = (localHead - localTail) × arcTotalLength` express the visible segment in world units.
+- The spec's locked-state "2s breathing pulse" is still applied to the overlay's final opacity when `isLocked` is true.
+
+### Active vs inactive speed
+
+Per iteration feedback, active trips got fast and inactive trips got *much* slower and dimmer so ambient motion doesn't compete with focus state:
+
+- `ACTIVE_SECONDS_PER_ARC = 5` → active period = `5 × 2 × tripArcCount` seconds.
+- `INACTIVE_SLOWDOWN = 3` → inactive period = active period × 3.
+- `OVERLAY_INACTIVE_OPACITY = 0.18` (only slightly brighter than the 0.15 base — intentional; an obvious second line is distracting).
+- `OVERLAY_ACTIVE_OPACITY = 1`, `OVERLAY_ACTIVE_WIDTH = 2.5`, color blends 100% toward accent.
+
+State transitions snap the phase timer because `activePeriod ≠ inactivePeriod`. The hop is brief and visually tolerable; if users complain later, the fix is to accumulate active/inactive phases on separate clocks.
+
+### Per-trip phase desync
+
+Multiple simultaneous trips would drumbeat in sync without an offset. Trip id is hashed (FNV-1a 32-bit) to a deterministic fraction in `[0, 1)`, multiplied by the current period, and added before the `% period` step:
+
+```ts
+const t = ((clock.elapsedTime + tripPhaseOffset * period) % period) / period
+```
+
+This keeps Japan Spring '22 and Round-the-World out of lockstep even when both are visible on the same hemisphere. Full 2³² buckets (no quantisation).
+
+### Dedup
+
+Spec §6.2 example "A → B → A → C" is interpreted as **unordered-pair dedup within a trip** — yields 2 unique arcs (A-B, A-C). A `Set<string>` keyed by `min(id1, id2)|max(id1, id2)` enforces it. A consecutive same-location guard (`a._id === b._id`) is kept as an explicit short-circuit before the dedup check to avoid calling `greatCircleArcPoints` with degenerate endpoints.
+
+### Render-order band
+
+`renderOrder={RENDER_ORDER_ARC = 0}` on both base and overlay. Same bucket as wireframe + country borders. Back-hemisphere arcs get depth-culled by the `-2` depth-only occluder in `GlobeMesh`. Pin dots (band `-1`) paint first, arcs paint over them — preserves README §4.3 invariant 2.
+
+### Accent color source
+
+Hardcoded `#2563eb` constant at the top of the file. C7 owns wiring a canonical `--accent` CSS token; when that lands, `ACCENT_COLOR` becomes `getComputedStyle(document.documentElement).getPropertyValue('--accent')` (or a theme prop on context). No code change needed to arcs' call-sites.
+
+### Theme reactivity
+
+The tween uses refs for idle/accent `THREE.Color` objects to avoid per-frame allocation. A `useEffect([idleColor])` re-seeds `idleColorObj.current` when light/dark toggles so arcs repaint on the next frame without waiting for component remount. (This was a bug caught in review — fixed pre-merge.)
+
+### Animation performance
+
+- 10–20 arcs in the current fixture. Two `<Line>` components per arc → ~40 draw calls. Trivial for WebGL.
+- One `useFrame` per `ArcLine` drives both materials; scalar lerps + ~6 material-uniform writes per frame per arc. No `THREE.Vector3` or `THREE.Color` allocations inside `useFrame`.
+- If arc count grows past ~100, the ticket-specified fallback (single `<Group>` + one `useFrame` walking a flat list) is the escape hatch.
+
+### Things left out vs spec
+
+- **Spec §17.3 "400ms fade in/out on playback highlight"**: superseded by the always-on traversal loop. A playback-highlighted trip uses the active period and accent palette; the "fade in" reads as the overlay ramping opacity via the tween (well under 400ms with `TWEEN_RATE = 6`).
+- **Single highlight color**: unchanged — accent-blue only; hover / lock / playback all use the same color.
+- **No arrowheads / directional indicator** — per spec §6.2.
