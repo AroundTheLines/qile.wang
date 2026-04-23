@@ -38,7 +38,7 @@ function useIsDark(): boolean {
 // panel-slide (300ms) and the pin-switch rotate-in-place (up to ~300ms)
 // with a small buffer.
 const PANEL_SETTLE_MS = 450
-const IDLE_RESUME_MS = 5000
+const IDLE_RESUME_MS = 1500
 
 export default function GlobeProvider({
   trips,

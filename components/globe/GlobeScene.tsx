@@ -306,7 +306,10 @@ export default function GlobeScene() {
         endPos: new THREE.Vector3(fit.x, fit.y, fit.z),
         duration: TRIP_FIT_DURATION,
       }
-      setAutoRotate(false)
+      // Don't touch `autoRotate` — the OrbitControls prop is already
+      // gated on `layoutState === 'default'`, so lock suppresses rotation
+      // without needing an explicit disable. Mirrors the pin-rotate path,
+      // so deselecting a trip returns to passive spin just like a pin.
       setControlsEnabled(false)
     },
     [pins, camera],

@@ -499,6 +499,16 @@ This ticket wires exactly ONE pause reason: `'playback-floating-label-hover'`. A
 
 On label click, we remove the hover pause reason explicitly before calling `setLockedTrip` — otherwise a click that toggles between locking and unlocking would leak the hover pause if the user then moved off without a pointerleave firing.
 
+### Idle-resume timing (updated post-initial-ship)
+
+`IDLE_RESUME_MS` reduced from 5000 → 1500 in `GlobeProvider`. The original 5s felt like "did I break it?" between deselection and playback resuming. 1.5s is short enough that the user perceives continuity, still long enough that quick tap-to-lock-to-unlock-to-tap-again sequences don't re-trigger the sweep for no reason. Applies to all pause sources (label hover, pin/trip selection, article open).
+
+### Auto-rotate after trip deselect (fixed post-initial-ship)
+
+`kickOffTripFit` no longer calls `setAutoRotate(false)`. Previously, locking a trip set the `autoRotate` state variable to false and never restored it, so unlocking a trip left the globe stationary. Pins already worked correctly because the pin-rotate path only toggles `controlsEnabled`, not `autoRotate`.
+
+The OrbitControls `autoRotate` prop is already computed as `layoutState === 'default' && autoRotate && controlsEnabled`, so the layout gate alone handles lock-time suppression. Removing the explicit disable makes trip-deselect match pin-deselect behavior: globe resumes passive spin automatically.
+
 ### Lock-to-seek behavior (added post-initial-ship)
 
 Clicking an inline timeline label (or any other path that sets `ctx.lockedTrip`) now seeks the playhead to the **midpoint** of that trip. Playback is already paused while locked (`isPaused` contains `lockedTrip !== null`). When the lock is released, the RAF loop restarts and sweeping resumes from that same position — the playhead is NOT teleported back to the right edge.
