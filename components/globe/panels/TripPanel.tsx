@@ -1,5 +1,6 @@
 'use client'
 
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Skeleton } from 'boneyard-js/react'
 import PanelChrome from './PanelChrome'
@@ -12,9 +13,47 @@ interface Props {
   trip: TripWithVisits
 }
 
+const PULSE_DURATION_MS = 600
+
 export default function TripPanel({ trip }: Props) {
   const router = useRouter()
-  const { setLockedTrip } = useGlobe()
+  const { setLockedTrip, pinToScrollTo, setPinToScrollTo, hoveredPin } = useGlobe()
+
+  // Refs to each visit's section element, keyed by visit id, so the
+  // scroll-to-visit effect can target the right node.
+  const sectionRefs = useRef<Map<string, HTMLElement>>(new Map())
+  const handleSectionRef = useCallback((el: HTMLElement | null, visitId: string) => {
+    if (el) sectionRefs.current.set(visitId, el)
+    else sectionRefs.current.delete(visitId)
+  }, [])
+
+  // Track an incrementing nonce so the same visit can be re-pulsed on a
+  // repeat click. The DOM key combines visit id + nonce, so React sees a
+  // fresh element and the CSS animation replays from frame 0.
+  const [pulse, setPulse] = useState<{ visitId: string; nonce: number } | null>(null)
+
+  // C7: when a pin in this trip is clicked, scroll to its visit section
+  // and pulse it. The signal is `pinToScrollTo` set by GlobePins.
+  useEffect(() => {
+    if (!pinToScrollTo) return
+    const visit = trip.visits.find((v) => v.location._id === pinToScrollTo)
+    if (!visit) return
+    const el = sectionRefs.current.get(visit._id)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setPulse((prev) => ({ visitId: visit._id, nonce: (prev?.nonce ?? 0) + 1 }))
+    const timer = setTimeout(() => {
+      setPulse((cur) => (cur && cur.visitId === visit._id ? null : cur))
+      setPinToScrollTo(null)
+    }, PULSE_DURATION_MS)
+    return () => clearTimeout(timer)
+  }, [pinToScrollTo, trip.visits, setPinToScrollTo])
+
+  // Pin-hover → tint the matching visit section (desktop §7.4).
+  const hoveredVisitId = useMemo(() => {
+    if (!hoveredPin) return null
+    const visit = trip.visits.find((v) => v.location._id === hoveredPin)
+    return visit?._id ?? null
+  }, [hoveredPin, trip.visits])
 
   const subtitle = `${formatDateRange(trip.startDate, trip.endDate)} · ${trip.visitCount} ${trip.visitCount === 1 ? 'visit' : 'visits'}`
 
@@ -54,11 +93,17 @@ export default function TripPanel({ trip }: Props) {
             Query already orders visits by startDate asc. */}
         {trip.visits.map((visit) => (
           <VisitSection
-            key={visit._id}
+            // Re-key on pulse nonce so a repeat click on the same visit
+            // remounts the section's animated child element and replays
+            // the CSS keyframe from the start.
+            key={pulse?.visitId === visit._id ? `${visit._id}-${pulse.nonce}` : visit._id}
             visit={visit}
             showViewTripArticleLink={false}
             sticky
             secondaryLabel={visit.location.name}
+            onRef={handleSectionRef}
+            pulsing={pulse?.visitId === visit._id}
+            hovered={hoveredVisitId === visit._id}
           />
         ))}
       </PanelChrome>

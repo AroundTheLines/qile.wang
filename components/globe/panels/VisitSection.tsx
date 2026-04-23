@@ -29,12 +29,16 @@ interface Props {
   /**
    * Is this section receiving a cross-interaction pulse? (C7)
    *
-   * NOTE: the pulse style below uses `bg-[var(--accent)]/10`, which requires
-   * `--accent` to be defined as space-separated RGB channels for the `/10`
-   * alpha-suffix to work. C7 owns defining `--accent` (or switching this to an
-   * explicit rgba/overlay). Until then the prop is inert.
+   * Drives a 600ms keyframe animation that fades the accent tint up,
+   * holds briefly, then fades it back down (spec §17.3).
    */
   pulsing?: boolean
+  /**
+   * Hover-driven accent tint (C7). Persists for the duration of a pin
+   * hover when this section's visit matches the hovered pin and a trip
+   * is locked. Held tint, no animation.
+   */
+  hovered?: boolean
 }
 
 export default function VisitSection({
@@ -44,6 +48,7 @@ export default function VisitSection({
   secondaryLabel,
   onRef,
   pulsing,
+  hovered,
 }: Props) {
   const router = useRouter()
   const { trips } = useGlobe()
@@ -64,8 +69,9 @@ export default function VisitSection({
   return (
     <section
       ref={(el) => onRef?.(el, visit._id)}
-      className={`border-b border-gray-200 dark:border-gray-800 last:border-b-0 transition-colors duration-[600ms] ${
-        pulsing ? 'bg-[var(--accent)]/10' : 'bg-transparent'
+      data-pulsing={pulsing ? 'true' : undefined}
+      className={`visit-section border-b border-gray-200 dark:border-gray-800 last:border-b-0 transition-colors duration-200 ${
+        hovered ? 'bg-[rgba(37,99,235,0.10)]' : 'bg-transparent'
       }`}
     >
       <header

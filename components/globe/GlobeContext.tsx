@@ -41,6 +41,11 @@ export interface GlobeContextValue {
   /** Pin id whose visit sub-regions should light up on the timeline. Set by C2. */
   pinSubregionHighlight: string | null
   setPinSubregionHighlight: Dispatch<SetStateAction<string | null>>
+  /** Pin whose visit section should be scrolled to in the open trip panel.
+   *  Consumed by TripPanel; cleared by TripPanel after scroll completes,
+   *  or by the provider when lockedTrip clears. (C7) */
+  pinToScrollTo: string | null
+  setPinToScrollTo: (id: string | null) => void
 
   // --- Trip selection (new in 5C) ---
   lockedTrip: string | null

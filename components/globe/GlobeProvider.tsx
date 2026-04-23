@@ -57,6 +57,7 @@ export default function GlobeProvider({
   const [selectedPin, setSelectedPin] = useState<string | null>(null)
   const [hoveredPin, setHoveredPin] = useState<string | null>(null)
   const [pinSubregionHighlight, setPinSubregionHighlight] = useState<string | null>(null)
+  const [pinToScrollTo, setPinToScrollTo] = useState<string | null>(null)
   const [selectedPinScreenY, setSelectedPinScreenY] = useState<number | null>(null)
 
   // --- Trip state ---
@@ -197,6 +198,14 @@ export default function GlobeProvider({
   useEffect(() => {
     if (selectedPin === null) setPinSubregionHighlight(null)
   }, [selectedPin, setPinSubregionHighlight])
+
+  // Defensive cleanup: if a pin click set `pinToScrollTo` but the trip panel
+  // unmounted before consuming it (e.g., the user clicked a pin outside the
+  // locked trip in the same tick), the signal would be stranded. Clearing on
+  // any lockedTrip → null transition keeps the field tidy.
+  useEffect(() => {
+    if (lockedTrip === null) setPinToScrollTo(null)
+  }, [lockedTrip])
 
   // --- Panel variant derivation ---
   const panelVariant: 'pin' | 'trip' | null =
@@ -435,6 +444,8 @@ export default function GlobeProvider({
         setHoveredPin,
         pinSubregionHighlight,
         setPinSubregionHighlight,
+        pinToScrollTo,
+        setPinToScrollTo,
         lockedTrip,
         setLockedTrip,
         hoveredTrip,
