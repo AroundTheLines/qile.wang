@@ -64,6 +64,10 @@ export default function TimelinePlayhead({
   // every render (GlobeProvider returns a fresh context object each render).
   const setHighlightedIdsRef = useRef<((ids: string[]) => void) | null>(null)
   setHighlightedIdsRef.current = ctx?.setPlaybackHighlightedTripIds ?? null
+  // Read lockedTrip through a ref so the DOM applier (called from the
+  // subscriber) always sees the current value without re-subscribing.
+  const lockedTripRef = useRef<string | null>(null)
+  lockedTripRef.current = ctx?.lockedTrip ?? null
 
   // Refs that stay current so the stable RAF callback reads the latest.
   const zoomRef = useRef(zoomWindow)
@@ -121,8 +125,15 @@ export default function TimelinePlayhead({
         label.textContent = text
         label.dataset.text = text
       }
+      // Suppress the floating label while a trip is locked — the inline
+      // timeline label has already expanded to show the full title, and
+      // two labels naming the same trip is visual noise.
       const shouldShow =
-        s.phase === 'sweeping' && text.length > 0 && projX >= 0 && projX <= 1
+        s.phase === 'sweeping' &&
+        text.length > 0 &&
+        projX >= 0 &&
+        projX <= 1 &&
+        !lockedTripRef.current
       label.style.opacity = shouldShow ? '1' : '0'
       if (shouldShow) {
         const labelWidth = label.getBoundingClientRect().width
@@ -194,10 +205,12 @@ export default function TimelinePlayhead({
   }, [lockedTrip, playbackTrips])
 
   // Re-project the playhead/label to the latest zoom without requiring a tick.
+  // Also re-runs when lockedTrip changes so the label hides/shows even while
+  // paused (RAF is off during lock, so the subscriber won't fire on its own).
   useEffect(() => {
     const s = lastStateRef.current
     if (s) applyDom(s)
-  }, [zoomWindow, containerWidth, leftOffsetPx])
+  }, [zoomWindow, containerWidth, leftOffsetPx, ctx?.lockedTrip])
 
   // RAF loop gated by playbackActive (which already folds in isPaused +
   // the 5s idle-resume ramp from GlobeProvider). The `last` timestamp

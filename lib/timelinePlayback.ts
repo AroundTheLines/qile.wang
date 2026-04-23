@@ -12,8 +12,14 @@ export interface PlaybackState {
 
 export interface PlaybackConfig {
   trips: PlaybackTrip[]
+  /** Base sweep rate (compressed-x per second) while the playhead is
+      inside a trip's range. */
   xPerSecond: number
   loopHoldMs?: number
+  /** Multiplier applied to `xPerSecond` while the playhead is in a gap
+      between trips. >1 fast-forwards dead time; keep the gaps readable
+      by not going so fast the user can't register the jump. Default 4. */
+  gapMultiplier?: number
 }
 
 export interface PlaybackController {
@@ -28,6 +34,7 @@ export interface PlaybackController {
 }
 
 const DEFAULT_HOLD_MS = 5000
+const DEFAULT_GAP_MULTIPLIER = 4
 
 function sortByXStart(trips: PlaybackTrip[]): PlaybackTrip[] {
   // Ensures `highlightedTripIds` is chronological when the playhead crosses
@@ -39,6 +46,7 @@ export function createPlaybackController(cfg: PlaybackConfig): PlaybackControlle
   let trips = sortByXStart(cfg.trips)
   let xPerSecond = cfg.xPerSecond
   const loopHoldMs = cfg.loopHoldMs ?? DEFAULT_HOLD_MS
+  const gapMultiplier = cfg.gapMultiplier ?? DEFAULT_GAP_MULTIPLIER
 
   // Sweep starts at present (x=1), moves left to past (x=0).
   let playheadX = 1
@@ -84,7 +92,13 @@ export function createPlaybackController(cfg: PlaybackConfig): PlaybackControlle
     getState: snapshot,
     tick(dtSec) {
       if (phase === 'sweeping') {
-        playheadX -= xPerSecond * dtSec
+        // Fast-forward through gaps between trips. Uses the current
+        // playhead position (pre-step) to pick the rate — a single tick
+        // that crosses a boundary uses the rate of the range it started
+        // in, which is fine at RAF-rate dt ≈ 16ms.
+        const inTrip = highlightedTripIds.length > 0
+        const velocity = inTrip ? xPerSecond : xPerSecond * gapMultiplier
+        playheadX -= velocity * dtSec
         if (playheadX <= 0) {
           playheadX = 0
           phase = 'holding'

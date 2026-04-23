@@ -499,6 +499,16 @@ This ticket wires exactly ONE pause reason: `'playback-floating-label-hover'`. A
 
 On label click, we remove the hover pause reason explicitly before calling `setLockedTrip` — otherwise a click that toggles between locking and unlocking would leak the hover pause if the user then moved off without a pointerleave firing.
 
+### Variable sweep speed (updated post-initial-ship)
+
+The controller now applies a `gapMultiplier` (default 4) to `xPerSecond` when the playhead is in a gap between trips (i.e. `highlightedTripIds.length === 0` during sweep). Inside a trip's range the base rate applies. Rationale: dead time between trips is not the interesting content — a 4× fast-forward keeps the loop feeling active without making the gap skip so fast the reader can't register "we're between trips." Base rate is still spec §5.3's "5s per half-year" so the in-trip feel is unchanged.
+
+Tuning point: `DEFAULT_GAP_MULTIPLIER` in [`lib/timelinePlayback.ts`](../../lib/timelinePlayback.ts). Expose as a prop/config if the feel needs per-page tuning; not worth the API surface for the single current consumer.
+
+### Floating label suppressed while trip is locked (updated post-initial-ship)
+
+When `ctx.lockedTrip !== null`, the floating label above the playhead is hidden. The inline timeline label already expands to a white pill showing the full trip title, so a second label naming the same trip is visual noise. `lockedTripRef` is read inside `applyDom` so the subscriber can evaluate the gate without re-subscribing; a separate effect re-runs `applyDom` when `lockedTrip` changes so the label hides immediately on lock even while RAF is paused.
+
 ### Idle-resume timing (updated post-initial-ship)
 
 `IDLE_RESUME_MS` reduced from 5000 → 1500 in `GlobeProvider`. The original 5s felt like "did I break it?" between deselection and playback resuming. 1.5s is short enough that the user perceives continuity, still long enough that quick tap-to-lock-to-unlock-to-tap-again sequences don't re-trigger the sweep for no reason. Applies to all pause sources (label hover, pin/trip selection, article open).
