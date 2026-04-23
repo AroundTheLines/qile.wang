@@ -435,6 +435,84 @@ const onLabelClick = () => {
 - `TimelinePlayhead` component — mounted in Timeline.tsx.
 - `lib/timelinePlayback.ts` controller — pure module; could be unit-tested independently (not required but welcome).
 
+## Shipped decisions (2026-04-22, PR #44)
+
+Record of what was actually built and why — so future implementers (retirement of timeline-dev, performance pass, mobile variant) don't have to excavate the code.
+
+### Resolved ambiguities
+
+- **Sweep direction**: present → past (right → left). Confirmed via spec §5.4 mechanics. Implemented as `playheadX -= xPerSecond * dt` starting from 1.
+- **§5.4 loop**: hold at `x = 0` for `loopHoldMs = 5000`, clear `highlightedTripIds` during hold (the "fully neutral" read), teleport `playheadX = 1`, resume.
+- **"Segment + label turn accent color"** (acceptance criterion): interpreted as **segment only**. The inline trip label on the timeline is NOT re-styled during playback. Reason: the inline label's hover state expands to a white pill + full title; triggering that every few seconds as the sweep passes would be distracting. The floating label above the playhead is the primary "what is currently highlighted" signal.
+- **Multi-trip overlap click on the floating label**: locks the **first id in `highlightedTripIds`**, which is now **chronologically earliest** because `createPlaybackController` sorts `trips` by `xStart` on construction and on `setTrips`. Do not assume the caller passes sorted input.
+- **Mobile click on floating label**: no-op here. E3 owns mobile preview behavior. Gated via `ctx.isMobile`.
+- **Loop hold UX**: globe's passive spin + trip-arc ambient animation continue during hold. Only `playbackHighlightedTripIds` is cleared. "Fully neutral" in §5.4 was read as "no playback highlight overlay," not "all motion stops."
+
+### State machine shape
+
+`lib/timelinePlayback.ts` is a pure controller, no React. Consumers supply `trips: { id, xStart, xEnd }[]` already projected through `CompressedMap.dateToX`. Keeps the controller testable and decoupled from compression changes.
+
+Public API:
+
+```ts
+interface PlaybackController {
+  getState(): PlaybackState          // { playheadX, highlightedTripIds, phase }
+  tick(dtSec: number): void          // caller drives via RAF
+  setTrips(trips: PlaybackTrip[]): void
+  setXPerSecond(v: number): void     // in-place update, no re-sub
+  subscribe(fn: (s) => void): () => void  // fires immediately on subscribe
+}
+```
+
+`subscribe` immediately fires with the current state — callers that do DOM writes in the subscriber rely on this to paint the initial playhead position without waiting for the first tick.
+
+### `xPerSecond` derivation
+
+Spec §5.3 ("~5 seconds per half-year of trips") is in REAL time, but the compression map distorts real-time spacing. The speed is computed in **compressed-x per second** by projecting a 6-month window through `CompressedMap.dateToX`:
+
+```ts
+const halfYearCompressedX = compressed.dateToX(end) - compressed.dateToX(subMonths(end, 6))
+const xPerSecond = Math.max(0.01, halfYearCompressedX) / 5
+```
+
+The `max(0.01, …)` floor guards against pathological cases where the 6-month window in compressed-x is ~0 (empty gap preceding "today"), which would freeze the playhead.
+
+### React integration pattern
+
+- **Imperative DOM writes**, not state. `TimelinePlayhead` owns refs to both the playhead div and floating-label div; `applyDom(state)` mutates `.style.left/.style.opacity/.textContent` directly. Keeps Timeline off the per-frame commit path.
+- **Context setter via ref**, not effect dep. `GlobeProvider` rebuilds its context object every render, so using `ctx.setPlaybackHighlightedTripIds` in the effect deps would recreate the controller continuously (this was the initial bug — playhead pinned at x=1). The setter is threaded through `setHighlightedIdsRef.current` which is updated on each render but read lazily from the subscriber.
+- **Effect keyed on `playbackTrips`**, the memoized `{id, xStart, xEnd}[]`. Controller is recreated only when trip ranges change (which requires either compression change or a data reload).
+- **RAF loop keyed on `playbackActive`** (already gated in `GlobeProvider` — folds in pause reasons, locked trip, open article, and the 5s idle-resume ramp). `lastFrameRef` preserves null-on-teardown so the first tick after resume has dt=0 rather than the paused elapsed time.
+- **Highlight dedup**: the subscriber compares `highlightedTripIds` contents to a local ref before calling `setPlaybackHighlightedTripIds`, so Timeline commits only on actual trip-boundary crossings (~once per sweep across each trip), not per frame.
+
+### Floating label position
+
+`labelTopPx = 0` — the label sits in the same top row as the `today` marker label, **above** the year axis (y=16–28). Earlier attempt used `trackTopPx - 14 = 18` which overlapped the year axis. The today label and sweep label only visually collide at the single frame when the loop teleports back to x=1, which is below the "not worth fixing" threshold.
+
+Label width is clamped to `max-w-[240px]` with `truncate` (CSS-only) so overlap text like `"SF Q4 '23 · Seattle Q4 '23"` that overflows is ellipsized at the style layer without JS measurement work per frame.
+
+Horizontal position is recomputed imperatively each emit: anchor the center on the playhead, then clamp to `[leftOffset + 4, leftOffset + w - labelWidth - 4]` so the label never clips off either end of the track.
+
+### Pause reasons
+
+This ticket wires exactly ONE pause reason: `'playback-floating-label-hover'`. All other pause sources (hover any trip segment/arc/pin, locked trip, open article, zoom interaction) are wired by other tickets that feed into `GlobeProvider`'s pause-reasons set.
+
+On label click, we remove the hover pause reason explicitly before calling `setLockedTrip` — otherwise a click that toggles between locking and unlocking would leak the hover pause if the user then moved off without a pointerleave firing.
+
+### What's intentionally NOT done here
+
+- **Zoom reset on playback resume**: B7.
+- **Pin highlights from playback**: C2 reads `playbackHighlightedTripIds` directly.
+- **Arc fade-in/out from playback**: C6 reads `playbackHighlightedTripIds` directly (already wired at merge time).
+- **Mobile preview on floating-label tap**: E3.
+
+### Known small compromises
+
+- **`dt` clamp at 100ms**: on a main-thread stall ≥ 2s, the playhead advances 100ms of motion in one frame — a visible hop. Considered acceptable; the alternative of accumulating the missed time and teleporting is worse.
+- **Loop teleport collision with `today` label**: sweep label at x=1 overlaps the static "today" label for one frame per loop iteration. Not worth the extra positioning logic to avoid.
+
+---
+
 ## How to verify
 
 1. `/globe` — watch for 5s. Playhead should start sweeping left.

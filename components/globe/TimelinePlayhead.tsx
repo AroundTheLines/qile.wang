@@ -184,15 +184,21 @@ export default function TimelinePlayhead({
   }, [zoomWindow, containerWidth, leftOffsetPx])
 
   // RAF loop gated by playbackActive (which already folds in isPaused +
-  // the 5s idle-resume ramp from GlobeProvider).
+  // the 5s idle-resume ramp from GlobeProvider). The `last` timestamp
+  // resets to null on teardown so the first tick after resume sees dt=0
+  // instead of the elapsed paused duration.
   const playbackActive = ctx?.playbackActive ?? true
+  const lastFrameRef = useRef<number | null>(null)
   useEffect(() => {
-    if (!playbackActive) return
+    if (!playbackActive) {
+      lastFrameRef.current = null
+      return
+    }
     let raf = 0
-    let last = performance.now()
     const loop = (t: number) => {
-      const dt = Math.min(0.1, (t - last) / 1000)
-      last = t
+      const prev = lastFrameRef.current
+      lastFrameRef.current = t
+      const dt = prev === null ? 0 : Math.min(0.1, (t - prev) / 1000)
       controllerRef.current?.tick(dt)
       raf = requestAnimationFrame(loop)
     }
@@ -237,7 +243,10 @@ export default function TimelinePlayhead({
     }
   }
 
-  const labelTopPx = Math.max(0, trackTopPx - 14)
+  // Sit in the same top row as the `today` marker label (above the year
+  // axis). They only visually collide at the instant the loop resets past
+  // the present edge, for a single frame.
+  const labelTopPx = 0
 
   return (
     <>

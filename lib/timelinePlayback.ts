@@ -26,8 +26,14 @@ export interface PlaybackController {
 
 const DEFAULT_HOLD_MS = 5000
 
+function sortByXStart(trips: PlaybackTrip[]): PlaybackTrip[] {
+  // Ensures `highlightedTripIds` is chronological when the playhead crosses
+  // overlapping trips — callers (e.g. floating-label click) rely on order.
+  return [...trips].sort((a, b) => a.xStart - b.xStart)
+}
+
 export function createPlaybackController(cfg: PlaybackConfig): PlaybackController {
-  let trips = cfg.trips
+  let trips = sortByXStart(cfg.trips)
   let xPerSecond = cfg.xPerSecond
   const loopHoldMs = cfg.loopHoldMs ?? DEFAULT_HOLD_MS
 
@@ -95,7 +101,7 @@ export function createPlaybackController(cfg: PlaybackConfig): PlaybackControlle
       }
     },
     setTrips(t) {
-      trips = t
+      trips = sortByXStart(t)
       recomputeAndNotify()
     },
     setXPerSecond(v) {
