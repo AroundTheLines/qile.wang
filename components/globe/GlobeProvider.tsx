@@ -45,14 +45,20 @@ function useViewportTier(): ViewportTier {
 }
 
 // Same pattern for dark-mode preference: read synchronously from matchMedia,
-// subscribe to changes without touching state in an effect.
+// subscribe to changes without touching state in an effect. The
+// MediaQueryList is cached at module scope and lazy-initialized on first
+// client call so repeated getSnapshot/subscribe invocations reuse the same
+// instance (SSR never reaches the getter — getServerSnapshot returns first).
+let _darkMql: MediaQueryList | null = null
+const getDarkMql = (): MediaQueryList =>
+  (_darkMql ??= window.matchMedia('(prefers-color-scheme: dark)'))
 function subscribeIsDark(callback: () => void): () => void {
-  const mq = window.matchMedia('(prefers-color-scheme: dark)')
+  const mq = getDarkMql()
   mq.addEventListener('change', callback)
   return () => mq.removeEventListener('change', callback)
 }
 function getIsDark(): boolean {
-  return window.matchMedia('(prefers-color-scheme: dark)').matches
+  return getDarkMql().matches
 }
 function getIsDarkServer(): boolean {
   return false
