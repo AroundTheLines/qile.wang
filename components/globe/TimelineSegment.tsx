@@ -1,5 +1,6 @@
 'use client'
 
+import { memo } from 'react'
 import type { CompressedMap, TripRange } from '@/lib/timelineCompression'
 import TimelineVisitTicks from './TimelineVisitTicks'
 
@@ -17,7 +18,7 @@ interface Props {
 /** Shared with B6 dot-render on playhead crossing. */
 export const MIN_SEGMENT_WIDTH_PX = 12
 
-export default function TimelineSegment({
+function TimelineSegment({
   trip,
   compressed,
   zoomWindow,
@@ -94,3 +95,5 @@ export default function TimelineSegment({
     </div>
   )
 }
+
+export default memo(TimelineSegment)

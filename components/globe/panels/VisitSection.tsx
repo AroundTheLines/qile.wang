@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useRouter } from 'next/navigation'
-import { useGlobe } from '../GlobeContext'
+import { useGlobeData } from '../GlobeContext'
 import GlobeDetailItem from '../GlobeDetailItem'
 import { formatDateRange } from '@/lib/formatDates'
 import type { VisitSummary, VisitInTrip } from '@/lib/types'
@@ -44,7 +44,7 @@ interface Props {
 
 const PULSE_DURATION_MS = 600
 
-export default function VisitSection({
+function VisitSection({
   visit,
   showViewTripArticleLink,
   sticky,
@@ -54,7 +54,7 @@ export default function VisitSection({
   hovered,
 }: Props) {
   const router = useRouter()
-  const { trips } = useGlobe()
+  const { trips } = useGlobeData()
   const [expanded, setExpanded] = useState(true)
   const sectionRef = useRef<HTMLElement | null>(null)
 
@@ -176,3 +176,5 @@ export default function VisitSection({
     </section>
   )
 }
+
+export default memo(VisitSection)

@@ -1,6 +1,6 @@
 'use client'
 
-import { useGlobe } from './GlobeContext'
+import { useGlobeData, useGlobePin, useGlobeTrip } from './GlobeContext'
 
 /**
  * Screen-reader-accessible list of "open panel for {location}" buttons,
@@ -22,14 +22,9 @@ import { useGlobe } from './GlobeContext'
  * to the A11y polish pass (F-series).
  */
 export default function GlobePinTriggers() {
-  const {
-    pins,
-    selectPin,
-    lockedTrip,
-    setLockedTrip,
-    setPinSubregionHighlight,
-    requestPinScroll,
-  } = useGlobe()
+  const { pins } = useGlobeData()
+  const { selectPin, setPinSubregionHighlight, requestPinScroll } = useGlobePin()
+  const { lockedTrip, setLockedTrip } = useGlobeTrip()
 
   if (pins.length === 0) return null
 

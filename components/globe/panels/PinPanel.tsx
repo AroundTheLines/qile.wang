@@ -3,7 +3,7 @@
 import { Skeleton } from 'boneyard-js/react'
 import PanelChrome from './PanelChrome'
 import VisitSection from './VisitSection'
-import { useGlobe } from '../GlobeContext'
+import { useGlobePin } from '../GlobeContext'
 import type { PinWithVisits } from '@/lib/types'
 
 interface Props {
@@ -11,7 +11,7 @@ interface Props {
 }
 
 export default function PinPanel({ pin }: Props) {
-  const { selectPin } = useGlobe()
+  const { selectPin } = useGlobePin()
 
   const subtitle =
     pin.visits.length > 1 ? `${pin.visits.length} visits` : undefined

@@ -8,7 +8,7 @@ import { useRouter } from 'next/navigation'
 import { Skeleton } from 'boneyard-js/react'
 import PanelChrome from './PanelChrome'
 import VisitSection from './VisitSection'
-import { useGlobe } from '../GlobeContext'
+import { useGlobePin, useGlobeTrip } from '../GlobeContext'
 import { formatDateRange } from '@/lib/formatDates'
 import type { TripWithVisits } from '@/lib/types'
 
@@ -20,7 +20,8 @@ const PULSE_DURATION_MS = 600
 
 export default function TripPanel({ trip }: Props) {
   const router = useRouter()
-  const { setLockedTrip, pinToScrollTo, clearPinScroll, hoveredPin } = useGlobe()
+  const { pinToScrollTo, clearPinScroll, hoveredPin } = useGlobePin()
+  const { setLockedTrip } = useGlobeTrip()
 
   // Refs to each visit's section element, keyed by visit id, so the
   // scroll-to-visit effect can target the right node.

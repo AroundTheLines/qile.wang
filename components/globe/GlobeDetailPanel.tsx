@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { useGlobe } from './GlobeContext'
+import { useGlobeData, useGlobePin, useGlobeTrip, useGlobeUI } from './GlobeContext'
 import PinPanel from './panels/PinPanel'
 import TripPanel from './panels/TripPanel'
 
@@ -26,7 +26,10 @@ import TripPanel from './panels/TripPanel'
 const FADE_MS = 200
 
 export default function GlobeDetailPanel() {
-  const { panelVariant, pins, selectedPin, lockedTrip, tripsWithVisits } = useGlobe()
+  const { pins, tripsWithVisits } = useGlobeData()
+  const { selectedPin } = useGlobePin()
+  const { lockedTrip } = useGlobeTrip()
+  const { panelVariant } = useGlobeUI()
 
   const pin =
     panelVariant === 'pin' && selectedPin

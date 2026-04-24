@@ -1,37 +1,64 @@
 'use client'
 
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { GlobeContext, type ScreenPosition, type ViewportTier } from './GlobeContext'
+import {
+  GlobeDataContext,
+  GlobePinContext,
+  GlobeTripContext,
+  GlobePlaybackContext,
+  GlobeUIContext,
+  GlobeRouteContext,
+  type GlobeDataContextValue,
+  type GlobePinContextValue,
+  type GlobeTripContextValue,
+  type GlobePlaybackContextValue,
+  type GlobeUIContextValue,
+  type GlobeRouteContextValue,
+  type ScreenPosition,
+  type ViewportTier,
+} from './GlobeContext'
 import type { PinWithVisits, TripSummary, TripWithVisits } from '@/lib/types'
 import type { GlobeScreenCircle } from '@/lib/globe'
 
+// External-store subscription for window width tier. Using
+// useSyncExternalStore avoids the `setState in effect` pattern the lint rule
+// flags: the current tier is derived synchronously from window.innerWidth,
+// and React re-subscribes only on subscribe-function identity changes (stable
+// via module-scope reference).
+function subscribeViewportTier(callback: () => void): () => void {
+  window.addEventListener('resize', callback)
+  return () => window.removeEventListener('resize', callback)
+}
+function getViewportTier(): ViewportTier {
+  const w = window.innerWidth
+  if (w >= 1024) return 'desktop'
+  if (w >= 768) return 'tablet'
+  return 'mobile'
+}
+function getViewportTierServer(): ViewportTier {
+  // SSR default matches the pre-F2 initial state so hydration is stable.
+  return 'desktop'
+}
 function useViewportTier(): ViewportTier {
-  const [tier, setTier] = useState<ViewportTier>('desktop')
-  useEffect(() => {
-    const compute = () => {
-      const w = window.innerWidth
-      if (w >= 1024) setTier('desktop')
-      else if (w >= 768) setTier('tablet')
-      else setTier('mobile')
-    }
-    compute()
-    window.addEventListener('resize', compute)
-    return () => window.removeEventListener('resize', compute)
-  }, [])
-  return tier
+  return useSyncExternalStore(subscribeViewportTier, getViewportTier, getViewportTierServer)
 }
 
+// Same pattern for dark-mode preference: read synchronously from matchMedia,
+// subscribe to changes without touching state in an effect.
+function subscribeIsDark(callback: () => void): () => void {
+  const mq = window.matchMedia('(prefers-color-scheme: dark)')
+  mq.addEventListener('change', callback)
+  return () => mq.removeEventListener('change', callback)
+}
+function getIsDark(): boolean {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+}
+function getIsDarkServer(): boolean {
+  return false
+}
 function useIsDark(): boolean {
-  const [isDark, setIsDark] = useState(false)
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    setIsDark(mq.matches)
-    const handler = (e: MediaQueryListEvent) => setIsDark(e.matches)
-    mq.addEventListener('change', handler)
-    return () => mq.removeEventListener('change', handler)
-  }, [])
-  return isDark
+  return useSyncExternalStore(subscribeIsDark, getIsDark, getIsDarkServer)
 }
 
 // Total delay before the connector re-draws. Covers both the initial
@@ -129,6 +156,12 @@ export default function GlobeProvider({
       if (id === null) {
         setSelectedPin(null)
         setSelectedPinScreenY(null)
+        // C2 contract: the pin sub-region highlight stays lit while the
+        // panel is open (hover-out doesn't clear it); the other half of
+        // that contract — clearing on panel-close — lives here so the
+        // transition is part of the setter rather than an effect reacting
+        // to `selectedPin === null`.
+        setPinSubregionHighlight(null)
       } else {
         const pos = pinPositionRef.current[id]
         if (pos) setSelectedPinScreenY(pos.y)
@@ -152,12 +185,17 @@ export default function GlobeProvider({
   // spec §7.3.2, locking a trip swaps variants rather than stacking panels.
   // Trip panels don't use selectedPinScreenY (their Y is a fixed anchor in
   // GlobeViewport), so clearing it here keeps state tidy for the next
-  // pin selection.
+  // pin selection. Also clears `pinToScrollTo` on unlock so a stranded
+  // scroll signal from a just-closed trip panel doesn't leak into the next
+  // one.
   const setLockedTrip = useCallback((id: string | null) => {
     setLockedTripState(id)
     if (id !== null) {
       setSelectedPin(null)
       setSelectedPinScreenY(null)
+      setPinSubregionHighlight(null)
+    } else {
+      setPinToScrollTo(null)
     }
   }, [])
 
@@ -183,6 +221,11 @@ export default function GlobeProvider({
 
   // --- Playback active: true on first mount (instant start per product call),
   // false while paused, flips back to true IDLE_RESUME_MS after unpause.
+  // This is a genuine state machine with a timer-driven transition — the
+  // IDLE_RESUME_MS delay can't be expressed as a render-time derivation, so
+  // the effect-plus-setState pattern is canonical. The react-hooks rule's
+  // "cascading render" warning doesn't apply: the transition is async
+  // (timeout-gated), not synchronous on every render.
   const [playbackActive, setPlaybackActive] = useState(true)
   const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
@@ -191,6 +234,7 @@ export default function GlobeProvider({
         clearTimeout(resumeTimerRef.current)
         resumeTimerRef.current = null
       }
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- timer-driven state machine
       setPlaybackActive(false)
       return
     }
@@ -223,22 +267,14 @@ export default function GlobeProvider({
     }
   }, [hoveredPin, tier, addPauseReason, removePauseReason])
 
-  // --- Clear the pin-subregion highlight when the pin panel closes.
-  // C2 keeps the highlight set on hover-out if the pin is selected so
-  // the timeline bands stay lit while the panel is open; this effect is
-  // the other half of that contract — once selectedPin goes null (panel
-  // closed, trip locked, etc.) the bands should disappear.
-  useEffect(() => {
-    if (selectedPin === null) setPinSubregionHighlight(null)
-  }, [selectedPin, setPinSubregionHighlight])
-
-  // Defensive cleanup: if a pin click set `pinToScrollTo` but the trip panel
-  // unmounted before consuming it (e.g., the user clicked a pin outside the
-  // locked trip in the same tick), the signal would be stranded. Clearing on
-  // any lockedTrip → null transition keeps the field tidy.
-  useEffect(() => {
-    if (lockedTrip === null) setPinToScrollTo(null)
-  }, [lockedTrip])
+  // Pin sub-region highlight clears inside `selectPin` (above) when the
+  // pin goes null, and inside `setLockedTrip` when a trip locks. No
+  // effect-based clear is needed — the invariant is enforced at the
+  // setter boundary.
+  //
+  // Likewise, `pinToScrollTo` is cleared inside `setLockedTrip(null)` so
+  // a stranded signal from a just-closed trip panel doesn't leak into the
+  // next lock cycle.
 
   // --- Panel variant derivation ---
   const panelVariant: 'pin' | 'trip' | null =
@@ -252,9 +288,14 @@ export default function GlobeProvider({
         ? 'panel-open'
         : 'default'
 
-  // --- Panel-open slideComplete timer (preserved from Phase 5A/5B) ---
+  // --- Panel-open slideComplete timer (preserved from Phase 5A/5B).
+  // Timer-gated transition: flip to true after PANEL_SETTLE_MS so the
+  // connector logic downstream knows the panel has finished animating in.
+  // Like playbackActive above, this is a canonical async state machine
+  // and the set-state-in-effect rule overfits.
   useEffect(() => {
     if (!panelVariant) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- timer-driven panel-settle state
       setSlideComplete(false)
       return
     }
@@ -283,8 +324,14 @@ export default function GlobeProvider({
   // pattern is load-bearing: items are cross-listed across pins, and we
   // prefer the current selection when it still matches so the user's pin
   // choice isn't silently overwritten mid-navigation.
+  //
+  // This is a canonical external-source → React-state sync (URL pathname
+  // is the external source). The rule flags the setState, but the
+  // cascade-render concern doesn't apply: the setState only fires when
+  // activeArticleSlug or pins change, not on every render.
   useEffect(() => {
     if (!activeArticleSlug) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- URL → state sync
     setSelectedPin((prev) => {
       const currentPin = prev ? pins.find((p) => p.location._id === prev) : null
       const keepCurrent =
@@ -312,16 +359,24 @@ export default function GlobeProvider({
     if (!slugFromUrl) {
       // On base /globe with no ?trip=, unlock. Article routes (/globe/<slug>)
       // keep the current lock untouched — they don't own trip state.
+      //
+      // Route through the wrapper (not the raw setter) so the null-case
+      // cleanup — clearing `pinToScrollTo` so a stranded scroll signal
+      // doesn't leak into the next lock — stays consistent regardless of
+      // which code path drives the unlock. If `lockedTrip` is already null
+      // this collapses to a no-op (React bails on identical state).
       if (pathname === '/globe') {
-        setLockedTripState((prev) => (prev === null ? prev : null))
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- URL → state sync
+        setLockedTrip(null)
       }
       return
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- URL → state sync
     setLockedTripState((prev) => {
       const target = trips.find((t) => t.slug.current === slugFromUrl)
       return target ? target._id : prev
     })
-  }, [searchParams, activeTripSlug, pathname, trips])
+  }, [searchParams, activeTripSlug, pathname, trips, setLockedTrip])
 
   // --- Write-side URL sync for lockedTrip. Callers (Timeline label click,
   // TripPanel close) already push the URL themselves; this effect is the
@@ -420,6 +475,7 @@ export default function GlobeProvider({
     if (pathname !== '/globe') return
     const queryPin = searchParams.get('pin')
     if (!queryPin) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- URL → state sync
     setSelectedPin((prev) => {
       const target = pins.find(
         (p) => p.location.slug?.current === queryPin || p.location._id === queryPin,
@@ -463,55 +519,129 @@ export default function GlobeProvider({
   const isDesktop = tier === 'desktop'
   const isTablet = tier === 'tablet'
   const isMobile = tier === 'mobile'
+  const showHover = !isMobile
+  const showConnectors = isDesktop
+
+  // --- Memoized context values, one per split context. Refs are included in
+  // the object but omitted from dep arrays: their .current mutates but the
+  // ref object identity is stable for the component's lifetime.
+  const dataValue = useMemo<GlobeDataContextValue>(
+    () => ({
+      trips,
+      pins,
+      tripsWithVisits,
+      fetchError,
+      pinPositionRef,
+      globeScreenRef,
+      frameSubscribersRef,
+    }),
+    [trips, pins, tripsWithVisits, fetchError],
+  )
+
+  const pinValue = useMemo<GlobePinContextValue>(
+    () => ({
+      selectedPin,
+      selectPin,
+      hoveredPin,
+      setHoveredPin,
+      pinSubregionHighlight,
+      setPinSubregionHighlight,
+      pinToScrollTo,
+      requestPinScroll,
+      clearPinScroll,
+      selectedPinScreenY,
+    }),
+    [
+      selectedPin,
+      selectPin,
+      hoveredPin,
+      pinSubregionHighlight,
+      pinToScrollTo,
+      requestPinScroll,
+      clearPinScroll,
+      selectedPinScreenY,
+    ],
+  )
+
+  const tripValue = useMemo<GlobeTripContextValue>(
+    () => ({
+      lockedTrip,
+      setLockedTrip,
+      hoveredTrip,
+      setHoveredTrip,
+      previewTrip,
+      setPreviewTrip,
+    }),
+    [lockedTrip, setLockedTrip, hoveredTrip, previewTrip],
+  )
+
+  const playbackValue = useMemo<GlobePlaybackContextValue>(
+    () => ({
+      playbackHighlightedTripIds,
+      setPlaybackHighlightedTripIds,
+      playbackActive,
+      addPauseReason,
+      removePauseReason,
+      isPaused,
+    }),
+    [
+      playbackHighlightedTripIds,
+      playbackActive,
+      addPauseReason,
+      removePauseReason,
+      isPaused,
+    ],
+  )
+
+  const uiValue = useMemo<GlobeUIContextValue>(
+    () => ({
+      tier,
+      isDesktop,
+      isTablet,
+      isMobile,
+      showHover,
+      showConnectors,
+      isDark,
+      layoutState,
+      slideComplete,
+      panelVariant,
+    }),
+    [
+      tier,
+      isDesktop,
+      isTablet,
+      isMobile,
+      showHover,
+      showConnectors,
+      isDark,
+      layoutState,
+      slideComplete,
+      panelVariant,
+    ],
+  )
+
+  const routeValue = useMemo<GlobeRouteContextValue>(
+    () => ({
+      activeArticleSlug,
+      activeTripSlug,
+      closeArticle,
+    }),
+    [activeArticleSlug, activeTripSlug, closeArticle],
+  )
 
   return (
-    <GlobeContext.Provider
-      value={{
-        trips,
-        pins,
-        tripsWithVisits,
-        fetchError,
-        selectedPin,
-        selectPin,
-        hoveredPin,
-        setHoveredPin,
-        pinSubregionHighlight,
-        setPinSubregionHighlight,
-        pinToScrollTo,
-        requestPinScroll,
-        clearPinScroll,
-        lockedTrip,
-        setLockedTrip,
-        hoveredTrip,
-        setHoveredTrip,
-        previewTrip,
-        setPreviewTrip,
-        playbackHighlightedTripIds,
-        setPlaybackHighlightedTripIds,
-        playbackActive,
-        addPauseReason,
-        removePauseReason,
-        isPaused,
-        layoutState,
-        slideComplete,
-        selectedPinScreenY,
-        pinPositionRef,
-        globeScreenRef,
-        frameSubscribersRef,
-        activeArticleSlug,
-        activeTripSlug,
-        closeArticle,
-        tier,
-        isDesktop,
-        isTablet,
-        isMobile,
-        showHover: !isMobile,
-        showConnectors: isDesktop,
-        isDark,
-        panelVariant,
-      }}
-    >
-      {children}
-    </GlobeContext.Provider>
+    <GlobeDataContext.Provider value={dataValue}>
+      <GlobeUIContext.Provider value={uiValue}>
+        <GlobeRouteContext.Provider value={routeValue}>
+          <GlobeTripContext.Provider value={tripValue}>
+            <GlobePinContext.Provider value={pinValue}>
+              <GlobePlaybackContext.Provider value={playbackValue}>
+                {children}
+              </GlobePlaybackContext.Provider>
+            </GlobePinContext.Provider>
+          </GlobeTripContext.Provider>
+        </GlobeRouteContext.Provider>
+      </GlobeUIContext.Provider>
+    </GlobeDataContext.Provider>
   )
 }
