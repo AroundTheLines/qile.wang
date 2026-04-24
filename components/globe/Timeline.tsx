@@ -16,8 +16,6 @@ type TimelineTrip = TripRange & {
 }
 
 export interface TimelineProps {
-  /** Override used by /timeline-dev with mocks. In production, omit and Timeline reads from context. */
-  trips?: TimelineTrip[]
   className?: string
   now?: string
 }
@@ -111,7 +109,7 @@ type GestureState =
     }
   | null
 
-export default function Timeline({ trips: tripsProp, className, now }: TimelineProps) {
+export default function Timeline({ className, now }: TimelineProps) {
   const ctx = useContext(GlobeContext)
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -135,13 +133,13 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
       }))
   }, [ctxTripsSource])
 
-  const trips: TimelineTrip[] = tripsProp ?? ctxTrips ?? []
+  const trips: TimelineTrip[] = ctxTrips ?? []
 
   const wrapperRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   const [labelWidths, setLabelWidths] = useState<Record<string, LabelWidths>>({})
-  // Fallback active id when there is no provider (e.g. /timeline-dev).
+  // Fallback active id when there is no provider.
   const [localActiveId, setLocalActiveId] = useState<string | null>(null)
   const activeId = ctx ? (ctx.hoveredTrip ?? ctx.lockedTrip) : localActiveId
   // Mobile opens slightly zoomed-in so the edge fades (below) read as "more
