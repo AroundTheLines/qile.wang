@@ -9,17 +9,31 @@ export type ZoomWindow = { start: number; end: number }
  * Callers are expected to enforce min/max span before calling, but clamp
  * always produces a valid window within [0, 1].
  */
-export function clampZoom(start: number, end: number): ZoomWindow {
+export function clampZoom(start: number, end: number, overscroll = 0): ZoomWindow {
+  // Allow the window to extend past [0, 1] by `overscroll * span` on each
+  // side so pan gestures reveal a small empty gutter beyond the first/last
+  // history point — a physical "you've reached the end" affordance. When
+  // fully zoomed out (span == 1), the overscroll collapses to zero because
+  // there's nowhere to pan.
+  const span = end - start
+  // Overscroll collapses to 0 once the window covers the full history — there
+  // is nowhere left to pan past.
+  const ov =
+    span >= 1 || overscroll <= 0 ? 0 : Math.max(0, overscroll) * Math.max(0, span)
+  // Avoid `-ov` when ov === 0; negation of +0 yields -0 in IEEE 754 and
+  // trips `expect(...).toBe(0)` with Object.is semantics.
+  const minStart = ov > 0 ? -ov : 0
+  const maxEnd = 1 + ov
   let s = start
   let e = end
-  if (s < 0) {
-    e -= s
-    s = 0
+  if (s < minStart) {
+    e -= s - minStart
+    s = minStart
   }
-  if (e > 1) {
-    s -= e - 1
-    e = 1
-    if (s < 0) s = 0
+  if (e > maxEnd) {
+    s -= e - maxEnd
+    e = maxEnd
+    if (s < minStart) s = minStart
   }
   return { start: s, end: e }
 }
@@ -52,11 +66,11 @@ export function wheelZoom(
  * horizontal-swipe pan. Positive `deltaX` shifts the window rightward (content
  * appears to move left), matching native scroll semantics.
  */
-export function wheelPan(cur: ZoomWindow, deltaX: number, width: number): ZoomWindow {
+export function wheelPan(cur: ZoomWindow, deltaX: number, width: number, overscroll = 0): ZoomWindow {
   if (width === 0) return cur
   const span = cur.end - cur.start
   const dxFrac = deltaX / width
-  return clampZoom(cur.start + dxFrac * span, cur.end + dxFrac * span)
+  return clampZoom(cur.start + dxFrac * span, cur.end + dxFrac * span, overscroll)
 }
 
 /**
@@ -64,11 +78,11 @@ export function wheelPan(cur: ZoomWindow, deltaX: number, width: number): ZoomWi
  * shifts opposite to the drag (drag right → window moves left → content
  * appears to follow the finger).
  */
-export function dragPan(startZoom: ZoomWindow, dx: number, width: number): ZoomWindow {
+export function dragPan(startZoom: ZoomWindow, dx: number, width: number, overscroll = 0): ZoomWindow {
   if (width === 0) return startZoom
   const span = startZoom.end - startZoom.start
   const dxFrac = dx / width
-  return clampZoom(startZoom.start - dxFrac * span, startZoom.end - dxFrac * span)
+  return clampZoom(startZoom.start - dxFrac * span, startZoom.end - dxFrac * span, overscroll)
 }
 
 /**

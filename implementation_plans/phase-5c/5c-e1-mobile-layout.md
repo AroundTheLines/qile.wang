@@ -359,3 +359,56 @@ Note: no sidecar, no scrim, no translate/scale of the globe. The globe is just v
 8. Tap close X — returns to trip panel (if trip locked) or trip list (if nothing locked).
 9. Resize to 800px wide → desktop layout (unchanged behavior).
 10. Real device (iPhone): all the above. Confirm globe gestures still work (rotate, pinch).
+
+---
+
+## Implementation record (2026-04-23)
+
+Shipped decisions from the E1 build. These supersede the "ambiguities" section above — treat this as the ground truth for what exists in code.
+
+### Layout
+
+- **Globe height**: tuned to `70vh` (not the original 45vh). Smaller values pushed the panel header off-screen before the user realized there was content below; 70vh leaves the panel's first line peeking, which reads as an affordance.
+- **Globe region `touchAction: 'none'`** so R3F OrbitControls claim the gesture. Timeline region inherits `pan-y` default so native vertical scroll still works on the page.
+- **Timeline sticky offset**: `top: NAVBAR_HEIGHT_PX` (72px). Without an explicit offset the sticky bar collided with the fixed navbar text at the top of the viewport.
+- **Squeeze cue**: IntersectionObserver on the globe region drives a `padding-y: 8px → 2px` transition on the timeline wrapper when the globe scrolls out. Padding only — no font-size or transform. No rAF/throttle needed at this event rate.
+- **MobileNavChrome**: non-sticky, rendered inline at the top of the panel or article. Back handler resets both `selectedPin` and `lockedTrip`, then `router.push('/globe', { scroll: false })`.
+- **Mobile trip-list stub**: `MobileTripList.tsx` renders a visible "Trip list — E2" placeholder. Intentionally conspicuous so reviewers can see this is a stub handoff, not a bug.
+
+### Timeline interaction on mobile
+
+Everything below is mobile-only unless noted. Desktop behavior is unchanged.
+
+- **Initial zoom window**: `{ start: 0.15, end: 0.85 }` on mobile (`window.innerWidth < 768`), `{ 0, 1 }` on desktop. Mobile opens pre-zoomed so the pan/pinch affordance is discoverable without tutorial text.
+- **Track inset**: edge-to-edge (`MOBILE_TRACK_INSET_X = 0`). Earlier iterations tried a dynamic inset that popped in at the history endpoints; it caused horizontal and vertical reflow at the exact moment the user was trying to read their position. Replaced with pan overscroll (see below) which gives the same visual breathing room without reflow.
+- **Tap rows**: `labelRowHeight = 18` on mobile (vs 14 desktop). Text stays at 10px; line-height set to the row height so the label sits vertically centered. 20–24 felt over-padded; 18 is the chosen tap target.
+- **Label taps lock directly**: mobile-specific preview-then-lock UX is owned by E3. Until then, `handleLabelClick` behaves the same as desktop (single-tap locks). The earlier `if (ctx.isMobile) return` guard was removed for the E1 release.
+- **Row packing is stable across pan/zoom**: the memoized `packed` result depends only on `innerWidth`, `trips`, `compressed`, `labelWidths`, `displayLabels`. Since `innerWidth` no longer varies with pan state, the timeline element's vertical height is constant during gestures. Any future reintroduction of dynamic track inset MUST use a separate stable width for packing — otherwise rows reshuffle mid-gesture.
+
+### Pan overscroll (user-visible affordance, not just a numeric clamp)
+
+- **Problem**: the user needs to feel "this is the end of the timeline." A gutter that pops in at the endpoint caused vertical reflow. A permanent gutter wasted horizontal space and hid the edge-to-edge aesthetic.
+- **Solution**: the pan range itself is extended past `[0, 1]`. Panning reveals a short empty strip beyond the first/last history point, then hard-stops.
+- **Shape of the clamp**: `clampZoom(start, end, overscroll)` allows `start ∈ [-ov, ...]` and `end ∈ [..., 1+ov]` where `ov = overscroll × span` (and collapses to 0 once `span ≥ 1`). Default `overscroll = 0` preserves desktop behavior. Only `dragPan` and `wheelPan` pass a non-zero overscroll; `wheelZoom` and `pinchZoom` still strict-clamp.
+- **Magnitude**: `MOBILE_PAN_OVERSCROLL = 0.08`. Sized so the visible gutter is ~8% of the currently-visible span on each side. At typical mid-zoom this reads as ~20–30px of empty space.
+- **Why overscroll scales with span**: fixed-pixel overscroll looked wrong at different zoom levels (huge gap when zoomed out, invisible when zoomed in). Scaling with span keeps the visual cue consistent across zoom states.
+- **Background bar clipping**: the track's gray pill is clipped to the history range via `left: max(0, -start/span * 100%)` and `right: max(0, (end-1)/span * 100%)`. Without this clip the gray bar ran into the overscrolled region and the stop was ambiguous. Children of the track container (TimelineSegment, TimelinePinBands, TimelinePlayhead) project via `(x - start) / span * containerWidth` and don't assume the container represents the full history — they keep working unchanged.
+- **No snap-back**: overscroll acts as a hard bound, not a rubber-band. The intent is "reveal empty space → hit wall," not "bounce back to the edge." Revisit if QA says the hard stop feels abrupt.
+
+### Dev-server plumbing (not part of the spec, but shipped to unblock mobile testing)
+
+- **`dev-lan.sh`**: env-symlink shim (same as `dev.sh`) plus `next dev -H 0.0.0.0 -p 3100`. Binds all interfaces so a phone on the same Wi-Fi can hit the host's LAN IP.
+- **`next.config.ts > allowedDevOrigins`**: required by Next 15 — without it the HMR websocket upgrade from a LAN IP fails with "cannot parse response." Pattern list covers common RFC1918 ranges plus `*.local`.
+- **Launch config**: `.claude/launch.json` has a "Next.js dev (LAN)" entry on port 3100 so LAN dev doesn't collide with standard dev on 3000.
+
+### What's not covered by tests
+
+- `clampZoom` overscroll paths ARE unit-tested (`lib/timelineZoom.test.ts`). `dragPan` / `wheelPan` overscroll paths are unit-tested.
+- No Playwright / integration test covers the mobile layout itself or the overscroll gesture. Visual QA only. If flakiness appears post-ship, prioritize an integration test that simulates a drag past the endpoint and asserts the track background's `left` CSS value.
+- `ctx.isMobile` is assumed stable within a session. A resize that crosses the 768px breakpoint will re-read it on next render (via `panOverscrollRef.current` assignment on each render), but the initial zoom window (set in `useState` initializer) won't adjust. Not a bug worth fixing for E1; note for future maintainers.
+
+### Handoff reminders for downstream tickets
+
+- **E2 (mobile trip list)**: replace `MobileTripList` body. Expected to consume the same `ctx.trips` used by the desktop sidebar — check `GlobeContext` for shape.
+- **E3 (mobile preview-then-lock)**: `handleLabelClick` on mobile currently locks immediately (same as desktop). E3 will reintroduce a mobile branch; the place to gate it is `handleLabelClick` in `Timeline.tsx`. Preview state should live alongside the trip context, not inside Timeline.
+- **Anything touching clampZoom**: if you change the signature again, update the optional `overscroll` param rather than removing it. Existing callers depend on the default.

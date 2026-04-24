@@ -23,6 +23,14 @@ export interface TimelineProps {
 }
 
 const TRACK_INSET_X = 16
+// Mobile renders the track edge-to-edge; breathing room at the history
+// endpoints is provided by pan overscroll (see PAN_OVERSCROLL) rather
+// than a fixed CSS inset, so the empty space is itself pannable content.
+const MOBILE_TRACK_INSET_X = 0
+// Max fraction of the current span the window is allowed to pan past each
+// history endpoint on mobile — produces a "you've reached the end" gutter
+// without a hard snap.
+const MOBILE_PAN_OVERSCROLL = 0.08
 const LABEL_ROW_HEIGHT = 14
 const LABEL_HORIZONTAL_GAP = 8
 const HOVER_HPAD = 4
@@ -128,7 +136,15 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
   // Fallback active id when there is no provider (e.g. /timeline-dev).
   const [localActiveId, setLocalActiveId] = useState<string | null>(null)
   const activeId = ctx ? (ctx.hoveredTrip ?? ctx.lockedTrip) : localActiveId
-  const [zoomWindow, setZoomWindow] = useState<ZoomWindow>({ start: 0, end: 1 })
+  // Mobile opens slightly zoomed-in so the edge fades (below) read as "more
+  // to reveal by zooming/panning" rather than a solid wall. Desktop keeps
+  // full-history because there's plenty of horizontal room to show it all.
+  const [zoomWindow, setZoomWindow] = useState<ZoomWindow>(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      return { start: 0.15, end: 0.85 }
+    }
+    return { start: 0, end: 1 }
+  })
   const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map())
   const gestureRef = useRef<GestureState>(null)
   const panMovedRef = useRef(false)
@@ -165,6 +181,8 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
   minZoomSpanRef.current = minZoomSpan
   const zoomWindowRef = useRef(zoomWindow)
   zoomWindowRef.current = zoomWindow
+  const panOverscrollRef = useRef(0)
+  panOverscrollRef.current = ctx?.isMobile ? MOBILE_PAN_OVERSCROLL : 0
 
   // Latest intended zoom window — prefers an in-flight rAF update over React
   // state. Used by gesture starts so a pointerdown/wheel mid-flight picks up
@@ -221,7 +239,7 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
       // wheel event with deltaX dominant and no ctrlKey (pinch is ctrlKey+deltaY).
       // shift+wheel on a mouse also surfaces as deltaX on some browsers.
       if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && !e.ctrlKey) {
-        scheduleZoom(wheelPan(cur, e.deltaX, rect.width))
+        scheduleZoom(wheelPan(cur, e.deltaX, rect.width, panOverscrollRef.current))
         return
       }
 
@@ -251,7 +269,7 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
       const dx = e.clientX - gesture.startClientX
       if (!panMovedRef.current && Math.abs(dx) < DRAG_THRESHOLD_PX) return
       panMovedRef.current = true
-      scheduleZoom(dragPan(gesture.startZoom, dx, rect.width))
+      scheduleZoom(dragPan(gesture.startZoom, dx, rect.width, panOverscrollRef.current))
     } else if (gesture.kind === 'pinch') {
       // Only the two oldest pointers drive the pinch. A 3rd finger is ignored
       // until one of the original two releases — matches typical map UX.
@@ -392,7 +410,13 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
     })
   }, [measureKey])
 
-  const innerWidth = Math.max(0, width - TRACK_INSET_X * 2)
+  const trackInsetX = ctx?.isMobile ? MOBILE_TRACK_INSET_X : TRACK_INSET_X
+
+  // Tap targets on mobile need room to hit reliably; desktop keeps the
+  // compact 14px row since hover is pointer-precise. Text stays 10px and
+  // line-height matches the row so it remains vertically centered.
+  const labelRowHeight = ctx?.isMobile ? 18 : LABEL_ROW_HEIGHT
+  const innerWidth = Math.max(0, width - trackInsetX * 2)
 
   // Row assignment is computed against the full-history view, not the current
   // zoom window. This keeps each label's row (and the wrapper's total height)
@@ -441,7 +465,7 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
     return { items: placed, rowCount: rowEnds.length }
   }, [trips, compressed, innerWidth, labelWidths, displayLabels])
 
-  const labelsHeight = packed.rowCount * LABEL_ROW_HEIGHT
+  const labelsHeight = packed.rowCount * labelRowHeight
   const totalHeight = FIRST_LABEL_Y + labelsHeight + BOTTOM_PADDING
 
   const measurementLayer = useMemo(
@@ -513,10 +537,8 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
         setLocalActiveId((cur) => (cur === trip.id ? null : trip.id))
         return
       }
-      // Mobile tap-to-preview is E3's responsibility. Until that ships, do
-      // nothing on mobile rather than lock — a direct lock would race E3's
-      // preview→expand design and surprise users on small viewports.
-      if (ctx.isMobile) return
+      // E3 will introduce a preview-then-lock flow on mobile. Until it
+      // ships, mirror desktop so the mobile timeline isn't dead on tap.
       if (ctx.lockedTrip === trip.id) {
         ctx.setLockedTrip(null)
         // Also clear hover pause — guard against pointerLeave not firing.
@@ -590,7 +612,7 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
         data-no-skeleton
         className="absolute w-px bg-black/35 dark:bg-white/40 pointer-events-none"
         style={{
-          left: TRACK_INSET_X + todayProj * innerWidth,
+          left: trackInsetX + todayProj * innerWidth,
           top: YEAR_AXIS_Y,
           height: TRACK_Y + 6 - YEAR_AXIS_Y,
         }}
@@ -620,7 +642,7 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
       }
       if (labelX < 0) labelX = 0
 
-      const labelTop = FIRST_LABEL_Y + item.row * LABEL_ROW_HEIGHT
+      const labelTop = FIRST_LABEL_Y + item.row * labelRowHeight
       const connectorTop = TRACK_Y + 6
       const connectorHeight = labelTop - connectorTop
       const isActive = activeId === item.trip.id
@@ -628,8 +650,8 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
         0,
         Math.min(labelX - HOVER_HPAD, innerWidth - item.fullWidth - HOVER_HPAD * 2),
       )
-      const restingLeft = TRACK_INSET_X + labelX
-      const leftPx = isActive ? TRACK_INSET_X + hoverLeft : restingLeft
+      const restingLeft = trackInsetX + labelX
+      const leftPx = isActive ? trackInsetX + hoverLeft : restingLeft
 
       return (
         <div key={item.trip.id}>
@@ -640,7 +662,7 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
               // Shift the 1px line left by half a pixel so its visual center
               // sits on anchorX — otherwise the line's center is at
               // anchorX + 0.5, one half-pixel right of the dot's center.
-              left: TRACK_INSET_X + anchorX - 0.5,
+              left: trackInsetX + anchorX - 0.5,
               top: connectorTop,
               height: Math.max(0, connectorHeight),
             }}
@@ -667,21 +689,21 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
             style={{
               left: leftPx,
               top: labelTop,
-              height: LABEL_ROW_HEIGHT,
+              height: labelRowHeight,
               width:
                 (isActive ? item.fullWidth : item.shortWidth) +
                 (isActive ? HOVER_HPAD * 2 : 0),
             }}
           >
             <span
-              className="absolute top-0 text-[10px] leading-[14px] tracking-widest uppercase whitespace-nowrap transition-opacity duration-150 ease-out pointer-events-none text-black/80 dark:text-white/80"
-              style={{ left: isActive ? HOVER_HPAD : 0, opacity: isActive ? 0 : 1 }}
+              className="absolute top-0 text-[10px] tracking-widest uppercase whitespace-nowrap transition-opacity duration-150 ease-out pointer-events-none text-black/80 dark:text-white/80"
+              style={{ left: isActive ? HOVER_HPAD : 0, opacity: isActive ? 0 : 1, lineHeight: `${labelRowHeight}px` }}
             >
               {item.short}
             </span>
             <span
-              className="absolute top-0 text-[10px] leading-[14px] tracking-widest uppercase whitespace-nowrap transition-opacity duration-150 ease-out pointer-events-none text-black dark:text-white"
-              style={{ left: HOVER_HPAD, opacity: isActive ? 1 : 0 }}
+              className="absolute top-0 text-[10px] tracking-widest uppercase whitespace-nowrap transition-opacity duration-150 ease-out pointer-events-none text-black dark:text-white"
+              style={{ left: HOVER_HPAD, opacity: isActive ? 1 : 0, lineHeight: `${labelRowHeight}px` }}
             >
               {item.full}
             </span>
@@ -715,7 +737,7 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
             compressed={compressed}
             zoomWindow={zoomWindow}
             containerWidth={innerWidth}
-            leftOffset={TRACK_INSET_X}
+            leftOffset={trackInsetX}
           />
         </div>
       )}
@@ -723,9 +745,18 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
       {/* Track */}
       <div
         className="absolute h-1.5"
-        style={{ left: TRACK_INSET_X, right: TRACK_INSET_X, top: TRACK_Y }}
+        style={{ left: trackInsetX, right: trackInsetX, top: TRACK_Y }}
       >
-        <div className="absolute inset-0 bg-black/10 dark:bg-white/10" />
+        {/* Background bar is clipped to the history range so that panning
+            into overscroll (zoomWindow.start < 0 or end > 1) reveals the
+            element's background instead of a trailing line. */}
+        <div
+          className="absolute top-0 bottom-0 bg-black/10 dark:bg-white/10"
+          style={{
+            left: `${Math.max(0, (-zoomWindow.start / zoomSpan) * 100)}%`,
+            right: `${Math.max(0, ((zoomWindow.end - 1) / zoomSpan) * 100)}%`,
+          }}
+        />
 
         {width > 0 &&
           trips.map((trip) => (
@@ -757,7 +788,7 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
           compressed={compressed}
           zoomWindow={zoomWindow}
           containerWidth={innerWidth}
-          leftOffsetPx={TRACK_INSET_X}
+          leftOffsetPx={trackInsetX}
           trackTopPx={TRACK_Y}
           playheadTopPx={YEAR_AXIS_Y}
           playheadHeightPx={Math.max(0, TRACK_Y + 8 - YEAR_AXIS_Y)}

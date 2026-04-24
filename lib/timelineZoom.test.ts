@@ -29,6 +29,31 @@ describe('clampZoom', () => {
     expect(clampZoom(0, 0.5)).toEqual({ start: 0, end: 0.5 })
     expect(clampZoom(0.5, 1)).toEqual({ start: 0.5, end: 1 })
   })
+
+  it('allows start to pan past 0 when overscroll > 0, preserving span', () => {
+    // span = 0.3, overscroll = 0.08 → allowed minStart = -0.024
+    const { start, end } = clampZoom(-0.1, 0.2, 0.08)
+    expect(start).toBeCloseTo(-0.024, 10)
+    expect(end).toBeCloseTo(0.276, 10)
+  })
+
+  it('allows end to pan past 1 when overscroll > 0, preserving span', () => {
+    const { start, end } = clampZoom(0.8, 1.1, 0.08)
+    expect(end).toBeCloseTo(1.024, 10)
+    expect(start).toBeCloseTo(0.724, 10)
+  })
+
+  it('collapses overscroll to zero when fully zoomed out (span == 1)', () => {
+    // span = 1 should still clamp to [0, 1] — nowhere to overscroll when the
+    // whole history is visible.
+    const { start, end } = clampZoom(-0.1, 0.9, 0.08)
+    expect(start).toBe(0)
+    expect(end).toBe(1)
+  })
+
+  it('leaves a mid-range window untouched even with overscroll set', () => {
+    expect(clampZoom(0.2, 0.6, 0.08)).toEqual({ start: 0.2, end: 0.6 })
+  })
 })
 
 describe('wheelZoom', () => {
@@ -92,6 +117,15 @@ describe('wheelPan', () => {
     const cur = { start: 0.2, end: 0.6 }
     expect(wheelPan(cur, 100, 0)).toBe(cur)
   })
+
+  it('pans past the right edge when overscroll is provided', () => {
+    // span = 0.1, dxFrac = 0.1 → raw shift = 0.01 so end lands at 1.01; with
+    // overscroll = 0.08 the allowed maxEnd is 1.008 (0.08 × 0.1), so the
+    // window clamps there rather than snapping back to 1.
+    const result = wheelPan({ start: 0.9, end: 1 }, 100, 1000, 0.08)
+    expect(result.end).toBeCloseTo(1.008, 10)
+    expect(result.start).toBeCloseTo(0.908, 10)
+  })
 })
 
 describe('dragPan', () => {
@@ -113,6 +147,14 @@ describe('dragPan', () => {
   it('returns startZoom unchanged when width is zero', () => {
     const start = { start: 0.2, end: 0.6 }
     expect(dragPan(start, 100, 0)).toBe(start)
+  })
+
+  it('allows a small overshoot past 0 when overscroll is provided', () => {
+    // span = 0.2, drag right by 100/1000 → window wants to move left by 0.02.
+    // overscroll = 0.08 allows minStart = -0.016, so the result clamps there.
+    const result = dragPan({ start: 0, end: 0.2 }, 100, 1000, 0.08)
+    expect(result.start).toBeCloseTo(-0.016, 10)
+    expect(result.end).toBeCloseTo(0.184, 10)
   })
 })
 
