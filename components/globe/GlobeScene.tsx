@@ -75,6 +75,8 @@ export default function GlobeScene() {
     isMobile,
     activeTripSlug,
     tripsWithVisits,
+    addPauseReason,
+    removePauseReason,
   } = useGlobe()
   const { camera } = useThree()
 
@@ -443,10 +445,19 @@ export default function GlobeScene() {
 
     const handleStart = () => {
       setAutoRotate(false)
+      // §5.5: clicking-and-dragging the globe pauses playback. OrbitControls
+      // `start` fires for both drag and zoom; we pause on either — cheap
+      // simplification (documented as a minor deviation from spec drag-only).
+      addPauseReason('globe-drag')
       if (interactionTimeout.current) clearTimeout(interactionTimeout.current)
     }
     const handleEnd = () => {
       if (interactionTimeout.current) clearTimeout(interactionTimeout.current)
+      // Release the playback pause immediately so the provider's idle-resume
+      // timer (IDLE_RESUME_MS) runs from the moment interaction ends. Passive
+      // spin has its own AUTO_ROTATE_RESUME_DELAY — the two resume delays are
+      // independent but similar enough that they land close together.
+      removePauseReason('globe-drag')
       interactionTimeout.current = setTimeout(
         () => setAutoRotate(true),
         AUTO_ROTATE_RESUME_DELAY,
@@ -459,8 +470,10 @@ export default function GlobeScene() {
       controls.removeEventListener('start', handleStart)
       controls.removeEventListener('end', handleEnd)
       if (interactionTimeout.current) clearTimeout(interactionTimeout.current)
+      // Defense: if the component unmounts mid-drag, release the reason.
+      removePauseReason('globe-drag')
     }
-  }, [controlsEnabled])
+  }, [controlsEnabled, addPauseReason, removePauseReason])
 
   return (
     <>

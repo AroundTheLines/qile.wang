@@ -58,9 +58,6 @@ function Pin({
     playbackHighlightedTripIds,
     requestPinScroll,
     showHover,
-    isDesktop,
-    addPauseReason,
-    removePauseReason,
   } = useGlobe()
   const meshRef = useRef<THREE.Mesh>(null)
   const hitRef = useRef<THREE.Mesh>(null)
@@ -177,8 +174,8 @@ function Pin({
       // §7.5 / §9.2: emit sub-region highlight signal for the timeline
       // bands (B5 consumes).
       setPinSubregionHighlight(locationId)
-      // §5.5: desktop pin hover pauses the playback sweep.
-      if (isDesktop) addPauseReason('pin-hover')
+      // §5.5 playback pause on pin hover is handled in GlobeProvider via
+      // an effect on `hoveredPin`, with a 150ms debounce. See B7.
     },
     [
       showHover,
@@ -186,8 +183,6 @@ function Pin({
       locationId,
       setHoveredPin,
       setPinSubregionHighlight,
-      isDesktop,
-      addPauseReason,
     ],
   )
 
@@ -205,7 +200,8 @@ function Pin({
       if (selectedPin !== locationId) {
         setPinSubregionHighlight((prev) => (prev === locationId ? null : prev))
       }
-      if (isDesktop) removePauseReason('pin-hover')
+      // Pause removal is handled by the cleanup of the `hoveredPin` effect
+      // in GlobeProvider — no call needed here.
     },
     [
       showHover,
@@ -213,16 +209,12 @@ function Pin({
       selectedPin,
       setHoveredPin,
       setPinSubregionHighlight,
-      isDesktop,
-      removePauseReason,
     ],
   )
 
   const handleClick = useCallback(
     (e: ThreeEvent<MouseEvent>) => {
       e.stopPropagation()
-      // Clear any lingering hover-pause; pointerOut may race with click.
-      if (isDesktop) removePauseReason('pin-hover')
 
       // §9.2: context-aware dispatch when a trip is locked.
       if (lockedTrip) {
@@ -258,8 +250,6 @@ function Pin({
       setHoveredPin,
       setPinSubregionHighlight,
       requestPinScroll,
-      isDesktop,
-      removePauseReason,
     ],
   )
 
