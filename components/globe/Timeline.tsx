@@ -244,10 +244,16 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
   const zoomResetRafRef = useRef<number | null>(null)
   const prevPlaybackActiveRef = useRef<boolean>(true)
   const playbackActive = ctx?.playbackActive ?? true
+  const isMobile = ctx?.isMobile ?? false
   useEffect(() => {
     const prev = prevPlaybackActiveRef.current
     prevPlaybackActiveRef.current = playbackActive
     if (!playbackActive || prev) return
+    // Mobile: preserve the user's zoom on resume. On a small screen the
+    // pinch-to-zoom gesture is a larger commitment than a desktop wheel
+    // scroll, and snapping back to full history feels like the UI is
+    // undoing the user's work.
+    if (isMobile) return
     const cur = zoomWindowRef.current
     if (cur.start === 0 && cur.end === 1) return
     const startZ = { ...cur }
@@ -275,7 +281,7 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
         zoomResetRafRef.current = null
       }
     }
-  }, [playbackActive, scheduleZoom])
+  }, [playbackActive, isMobile, scheduleZoom])
 
   // Native wheel listener — React's passive SyntheticEvent can't reliably
   // preventDefault, which would let the page scroll while the timeline zooms.
