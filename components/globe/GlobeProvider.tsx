@@ -1,8 +1,23 @@
 'use client'
 
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { GlobeContext, type ScreenPosition, type ViewportTier } from './GlobeContext'
+import {
+  GlobeDataContext,
+  GlobePinContext,
+  GlobeTripContext,
+  GlobePlaybackContext,
+  GlobeUIContext,
+  GlobeRouteContext,
+  type GlobeDataContextValue,
+  type GlobePinContextValue,
+  type GlobeTripContextValue,
+  type GlobePlaybackContextValue,
+  type GlobeUIContextValue,
+  type GlobeRouteContextValue,
+  type ScreenPosition,
+  type ViewportTier,
+} from './GlobeContext'
 import type { PinWithVisits, TripSummary, TripWithVisits } from '@/lib/types'
 import type { GlobeScreenCircle } from '@/lib/globe'
 
@@ -463,55 +478,129 @@ export default function GlobeProvider({
   const isDesktop = tier === 'desktop'
   const isTablet = tier === 'tablet'
   const isMobile = tier === 'mobile'
+  const showHover = !isMobile
+  const showConnectors = isDesktop
+
+  // --- Memoized context values, one per split context. Refs are included in
+  // the object but omitted from dep arrays: their .current mutates but the
+  // ref object identity is stable for the component's lifetime.
+  const dataValue = useMemo<GlobeDataContextValue>(
+    () => ({
+      trips,
+      pins,
+      tripsWithVisits,
+      fetchError,
+      pinPositionRef,
+      globeScreenRef,
+      frameSubscribersRef,
+    }),
+    [trips, pins, tripsWithVisits, fetchError],
+  )
+
+  const pinValue = useMemo<GlobePinContextValue>(
+    () => ({
+      selectedPin,
+      selectPin,
+      hoveredPin,
+      setHoveredPin,
+      pinSubregionHighlight,
+      setPinSubregionHighlight,
+      pinToScrollTo,
+      requestPinScroll,
+      clearPinScroll,
+      selectedPinScreenY,
+    }),
+    [
+      selectedPin,
+      selectPin,
+      hoveredPin,
+      pinSubregionHighlight,
+      pinToScrollTo,
+      requestPinScroll,
+      clearPinScroll,
+      selectedPinScreenY,
+    ],
+  )
+
+  const tripValue = useMemo<GlobeTripContextValue>(
+    () => ({
+      lockedTrip,
+      setLockedTrip,
+      hoveredTrip,
+      setHoveredTrip,
+      previewTrip,
+      setPreviewTrip,
+    }),
+    [lockedTrip, setLockedTrip, hoveredTrip, previewTrip],
+  )
+
+  const playbackValue = useMemo<GlobePlaybackContextValue>(
+    () => ({
+      playbackHighlightedTripIds,
+      setPlaybackHighlightedTripIds,
+      playbackActive,
+      addPauseReason,
+      removePauseReason,
+      isPaused,
+    }),
+    [
+      playbackHighlightedTripIds,
+      playbackActive,
+      addPauseReason,
+      removePauseReason,
+      isPaused,
+    ],
+  )
+
+  const uiValue = useMemo<GlobeUIContextValue>(
+    () => ({
+      tier,
+      isDesktop,
+      isTablet,
+      isMobile,
+      showHover,
+      showConnectors,
+      isDark,
+      layoutState,
+      slideComplete,
+      panelVariant,
+    }),
+    [
+      tier,
+      isDesktop,
+      isTablet,
+      isMobile,
+      showHover,
+      showConnectors,
+      isDark,
+      layoutState,
+      slideComplete,
+      panelVariant,
+    ],
+  )
+
+  const routeValue = useMemo<GlobeRouteContextValue>(
+    () => ({
+      activeArticleSlug,
+      activeTripSlug,
+      closeArticle,
+    }),
+    [activeArticleSlug, activeTripSlug, closeArticle],
+  )
 
   return (
-    <GlobeContext.Provider
-      value={{
-        trips,
-        pins,
-        tripsWithVisits,
-        fetchError,
-        selectedPin,
-        selectPin,
-        hoveredPin,
-        setHoveredPin,
-        pinSubregionHighlight,
-        setPinSubregionHighlight,
-        pinToScrollTo,
-        requestPinScroll,
-        clearPinScroll,
-        lockedTrip,
-        setLockedTrip,
-        hoveredTrip,
-        setHoveredTrip,
-        previewTrip,
-        setPreviewTrip,
-        playbackHighlightedTripIds,
-        setPlaybackHighlightedTripIds,
-        playbackActive,
-        addPauseReason,
-        removePauseReason,
-        isPaused,
-        layoutState,
-        slideComplete,
-        selectedPinScreenY,
-        pinPositionRef,
-        globeScreenRef,
-        frameSubscribersRef,
-        activeArticleSlug,
-        activeTripSlug,
-        closeArticle,
-        tier,
-        isDesktop,
-        isTablet,
-        isMobile,
-        showHover: !isMobile,
-        showConnectors: isDesktop,
-        isDark,
-        panelVariant,
-      }}
-    >
-      {children}
-    </GlobeContext.Provider>
+    <GlobeDataContext.Provider value={dataValue}>
+      <GlobeUIContext.Provider value={uiValue}>
+        <GlobeRouteContext.Provider value={routeValue}>
+          <GlobeTripContext.Provider value={tripValue}>
+            <GlobePinContext.Provider value={pinValue}>
+              <GlobePlaybackContext.Provider value={playbackValue}>
+                {children}
+              </GlobePlaybackContext.Provider>
+            </GlobePinContext.Provider>
+          </GlobeTripContext.Provider>
+        </GlobeRouteContext.Provider>
+      </GlobeUIContext.Provider>
+    </GlobeDataContext.Provider>
   )
 }

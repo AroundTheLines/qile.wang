@@ -8,7 +8,7 @@ import TimelineSegment from './TimelineSegment'
 import TimelineAxis from './TimelineAxis'
 import TimelinePinBands from './TimelinePinBands'
 import TimelinePlayhead from './TimelinePlayhead'
-import { useGlobe } from './GlobeContext'
+import { useGlobeData, useGlobeTrip, useGlobePlayback, useGlobeUI } from './GlobeContext'
 import { Skeleton } from 'boneyard-js/react'
 
 type TimelineTrip = TripRange & {
@@ -111,7 +111,14 @@ type GestureState =
   | null
 
 export default function Timeline({ className, now }: TimelineProps) {
-  const ctx = useGlobe()
+  const dataCtx = useGlobeData()
+  const tripCtx = useGlobeTrip()
+  const playbackCtx = useGlobePlayback()
+  const uiCtx = useGlobeUI()
+  const ctx = useMemo(
+    () => ({ ...dataCtx, ...tripCtx, ...playbackCtx, ...uiCtx }),
+    [dataCtx, tripCtx, playbackCtx, uiCtx],
+  )
   const router = useRouter()
   const searchParams = useSearchParams()
 

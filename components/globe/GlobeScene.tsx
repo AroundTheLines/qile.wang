@@ -4,7 +4,7 @@ import { useRef, useEffect, useState, useCallback } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
-import { useGlobe } from './GlobeContext'
+import { useGlobeData, useGlobePin, useGlobeTrip, useGlobeUI, useGlobeRoute, useGlobePlayback } from './GlobeContext'
 import { computeFitCamera, GLOBE_RADIUS, sphericalToCartesian } from '@/lib/globe'
 import type { Coordinates } from '@/lib/types'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
@@ -58,6 +58,12 @@ const FIT_CAMERA_OPTS = {
   maxDistance: TRIP_FIT_MAX_DISTANCE,
 } as const
 
+// Module-scoped scratch vector for the entrance-animation useFrame body.
+// Reused in place to keep per-frame allocations at zero. Same pattern as
+// GlobePositionBridge — safe because R3F's useFrame callbacks run
+// synchronously and never concurrently.
+const _sceneEntranceDir = new THREE.Vector3()
+
 type RotateState = {
   active: boolean
   elapsed: number
@@ -67,17 +73,12 @@ type RotateState = {
 
 export default function GlobeScene() {
   const controlsRef = useRef<OrbitControlsImpl>(null)
-  const {
-    pins,
-    selectedPin,
-    lockedTrip,
-    layoutState,
-    isMobile,
-    activeTripSlug,
-    tripsWithVisits,
-    addPauseReason,
-    removePauseReason,
-  } = useGlobe()
+  const { pins, tripsWithVisits } = useGlobeData()
+  const { selectedPin } = useGlobePin()
+  const { lockedTrip } = useGlobeTrip()
+  const { layoutState, isMobile } = useGlobeUI()
+  const { activeTripSlug } = useGlobeRoute()
+  const { addPauseReason, removePauseReason } = useGlobePlayback()
   const { camera } = useThree()
 
   // Reactive enabled state — avoids the "React re-renders and reapplies
@@ -351,7 +352,7 @@ export default function GlobeScene() {
       const t = Math.min(entranceElapsed.current / ENTRANCE_DURATION, 1)
       const eased = 1 - Math.pow(1 - t, 3)
       const dist = FAR_DISTANCE + (RESTING_DISTANCE - FAR_DISTANCE) * eased
-      const dir = targetDir.current.clone()
+      const dir = _sceneEntranceDir.copy(targetDir.current)
       camera.position.copy(dir.multiplyScalar(dist))
       camera.lookAt(0, 0, 0)
 

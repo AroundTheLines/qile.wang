@@ -1,14 +1,17 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useGlobe } from './GlobeContext'
+import { useGlobePin, useGlobeTrip, useGlobeRoute, useGlobeUI } from './GlobeContext'
 
 interface Props {
   mode: 'back' | 'close'
 }
 
 export default function MobileNavChrome({ mode }: Props) {
-  const { selectPin, setLockedTrip, closeArticle, layoutState } = useGlobe()
+  const { selectPin } = useGlobePin()
+  const { setLockedTrip } = useGlobeTrip()
+  const { closeArticle } = useGlobeRoute()
+  const { layoutState } = useGlobeUI()
   const router = useRouter()
 
   const onClick = () => {

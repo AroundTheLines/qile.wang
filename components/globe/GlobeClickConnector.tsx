@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useEffect, useState } from 'react'
-import { useGlobe } from './GlobeContext'
+import { useGlobeData, useGlobePin, useGlobeUI } from './GlobeContext'
 import { clampPanelTop, clipLineByGlobe } from '@/lib/globe'
 
 // Header band ~64px tall; aim line at its vertical center
@@ -10,19 +10,9 @@ const FADE_IN_MS = 200
 const FADE_OUT_MS = 150
 
 export default function GlobeClickConnector() {
-  const {
-    selectedPin,
-    slideComplete,
-    pinPositionRef,
-    globeScreenRef,
-    frameSubscribersRef,
-    showConnectors,
-    selectedPinScreenY,
-    isDesktop,
-    isTablet,
-    isDark,
-    layoutState,
-  } = useGlobe()
+  const { pinPositionRef, globeScreenRef, frameSubscribersRef } = useGlobeData()
+  const { selectedPin, selectedPinScreenY } = useGlobePin()
+  const { slideComplete, showConnectors, isDesktop, isTablet, isDark, layoutState } = useGlobeUI()
   const lineRef = useRef<SVGLineElement>(null)
   const [viewport, setViewport] = useState({ w: 0, h: 0 })
 

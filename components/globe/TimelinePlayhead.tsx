@@ -1,6 +1,6 @@
 'use client'
 
-import { useContext, useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type { CompressedMap } from '@/lib/timelineCompression'
 import {
@@ -8,7 +8,7 @@ import {
   type PlaybackController,
   type PlaybackState,
 } from '@/lib/timelinePlayback'
-import { GlobeContext } from './GlobeContext'
+import { useGlobeTrip, useGlobePlayback, useGlobeUI } from './GlobeContext'
 
 export interface PlaybackTripInput {
   id: string
@@ -51,7 +51,13 @@ export default function TimelinePlayhead({
   playheadHeightPx,
   trips,
 }: Props) {
-  const ctx = useContext(GlobeContext)
+  const tripCtx = useGlobeTrip()
+  const playbackCtx = useGlobePlayback()
+  const uiCtx = useGlobeUI()
+  const ctx = useMemo(
+    () => ({ ...tripCtx, ...playbackCtx, ...uiCtx }),
+    [tripCtx, playbackCtx, uiCtx],
+  )
   const router = useRouter()
   const searchParams = useSearchParams()
 

@@ -1,5 +1,6 @@
 'use client'
 
+import { memo } from 'react'
 import type { CompressedMap } from '@/lib/timelineCompression'
 
 interface Props {
@@ -9,7 +10,7 @@ interface Props {
   leftOffset: number
 }
 
-export default function TimelineAxis({
+function TimelineAxis({
   compressed,
   zoomWindow,
   containerWidth,
@@ -40,3 +41,5 @@ export default function TimelineAxis({
     </div>
   )
 }
+
+export default memo(TimelineAxis)

@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { useGlobe } from './GlobeContext'
+import { useGlobeTrip } from './GlobeContext'
 
 interface Props {
   tripId: string
@@ -14,7 +14,7 @@ interface Props {
  * open behind the sliver (§8.1). Mirrors GlobeArticleReveal.
  */
 export default function TripArticleReveal({ tripId, children }: Props) {
-  const { lockedTrip, setLockedTrip } = useGlobe()
+  const { lockedTrip, setLockedTrip } = useGlobeTrip()
 
   useEffect(() => {
     if (lockedTrip !== tripId) setLockedTrip(tripId)

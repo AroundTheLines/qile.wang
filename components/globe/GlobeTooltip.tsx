@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useEffect, useState } from 'react'
-import { useGlobe } from './GlobeContext'
+import { useGlobeData, useGlobePin, useGlobeUI } from './GlobeContext'
 
 // Short intentional delay before the tooltip appears on pin hover — just
 // enough to feel deliberate without lagging behind a quick scrub across
@@ -10,7 +10,9 @@ import { useGlobe } from './GlobeContext'
 const TOOLTIP_SHOW_DELAY_MS = 120
 
 export default function GlobeTooltip() {
-  const { hoveredPin, pins, pinPositionRef, showHover } = useGlobe()
+  const { pins, pinPositionRef } = useGlobeData()
+  const { hoveredPin } = useGlobePin()
+  const { showHover } = useGlobeUI()
   const tooltipRef = useRef<HTMLDivElement>(null)
   // `visible` is the post-delay intent: did the user dwell long enough
   // to earn a tooltip? `visibleRef` mirrors it so the RAF loop (below)

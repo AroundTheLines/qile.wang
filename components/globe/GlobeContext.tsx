@@ -22,15 +22,33 @@ export interface ScreenPosition {
 
 export type ViewportTier = 'desktop' | 'tablet' | 'mobile'
 
-export interface GlobeContextValue {
-  // --- Server-fed data ---
+// ---------- 1. Data (server props + mutable refs; never change identity) ----------
+export interface GlobeDataContextValue {
   trips: TripSummary[]
   pins: PinWithVisits[]
   /** Trips with embedded visits+items. Drives TripPanel (C4). */
   tripsWithVisits: TripWithVisits[]
   fetchError: boolean
+  pinPositionRef: MutableRefObject<Record<string, ScreenPosition>>
+  /** Globe silhouette in screen-space (canvas-local pixels). Null until
+      the first frame is projected. Connectors read this to occlude the
+      back-of-globe segment of their line. */
+  globeScreenRef: MutableRefObject<GlobeScreenCircle | null>
+  /** Callbacks invoked by GlobePositionBridge at the end of every R3F
+      frame, after pin positions and the globe silhouette are written. */
+  frameSubscribersRef: MutableRefObject<Set<() => void>>
+}
+export const GlobeDataContext = createContext<GlobeDataContextValue | null>(null)
+export function useGlobeData(): GlobeDataContextValue {
+  const ctx = useContext(GlobeDataContext)
+  if (!ctx) {
+    throw new Error('useGlobeData must be used inside <GlobeProvider>')
+  }
+  return ctx
+}
 
-  // --- Pin selection ---
+// ---------- 2. Pin (selection, hover, scroll signal) ----------
+export interface GlobePinContextValue {
   /** Pin identity = locationDoc._id. Was globe_group string pre-5C. */
   selectedPin: string | null
   selectPin: (id: string | null) => void
@@ -51,8 +69,19 @@ export interface GlobeContextValue {
    *  re-fires even if the same pin is clicked twice in a row. */
   requestPinScroll: (id: string) => void
   clearPinScroll: () => void
+  selectedPinScreenY: number | null
+}
+export const GlobePinContext = createContext<GlobePinContextValue | null>(null)
+export function useGlobePin(): GlobePinContextValue {
+  const ctx = useContext(GlobePinContext)
+  if (!ctx) {
+    throw new Error('useGlobePin must be used inside <GlobeProvider>')
+  }
+  return ctx
+}
 
-  // --- Trip selection (new in 5C) ---
+// ---------- 3. Trip (lock, hover, mobile preview) ----------
+export interface GlobeTripContextValue {
   lockedTrip: string | null
   setLockedTrip: (id: string | null) => void
   hoveredTrip: string | null
@@ -60,8 +89,18 @@ export interface GlobeContextValue {
   /** Mobile-only preview state (E3). */
   previewTrip: string | null
   setPreviewTrip: (id: string | null) => void
+}
+export const GlobeTripContext = createContext<GlobeTripContextValue | null>(null)
+export function useGlobeTrip(): GlobeTripContextValue {
+  const ctx = useContext(GlobeTripContext)
+  if (!ctx) {
+    throw new Error('useGlobeTrip must be used inside <GlobeProvider>')
+  }
+  return ctx
+}
 
-  // --- Playback coordination (B6/B7) ---
+// ---------- 4. Playback (sweep highlight + pause reasons) ----------
+export interface GlobePlaybackContextValue {
   /** Trip ids currently lit by the playback sweep. Set by B6. */
   playbackHighlightedTripIds: string[]
   setPlaybackHighlightedTripIds: (ids: string[]) => void
@@ -71,26 +110,18 @@ export interface GlobeContextValue {
   removePauseReason: (reason: string) => void
   /** Computed: any pause reason set, OR a locked trip, OR an open article. */
   isPaused: boolean
+}
+export const GlobePlaybackContext = createContext<GlobePlaybackContextValue | null>(null)
+export function useGlobePlayback(): GlobePlaybackContextValue {
+  const ctx = useContext(GlobePlaybackContext)
+  if (!ctx) {
+    throw new Error('useGlobePlayback must be used inside <GlobeProvider>')
+  }
+  return ctx
+}
 
-  // --- Layout state ---
-  layoutState: 'default' | 'panel-open' | 'article-open'
-  slideComplete: boolean
-  selectedPinScreenY: number | null
-  pinPositionRef: MutableRefObject<Record<string, ScreenPosition>>
-  /** Globe silhouette in screen-space (canvas-local pixels). Null until
-      the first frame is projected. Connectors read this to occlude the
-      back-of-globe segment of their line. */
-  globeScreenRef: MutableRefObject<GlobeScreenCircle | null>
-  /** Callbacks invoked by GlobePositionBridge at the end of every R3F
-      frame, after pin positions and the globe silhouette are written. */
-  frameSubscribersRef: MutableRefObject<Set<() => void>>
-
-  // --- URL state ---
-  activeArticleSlug: string | null // /globe/<slug> item article
-  activeTripSlug: string | null // /trip/<slug> trip article
-  closeArticle: () => void
-
-  // --- Viewport + theme ---
+// ---------- 5. UI (viewport tier, theme, layout derivation) ----------
+export interface GlobeUIContextValue {
   tier: ViewportTier
   isDesktop: boolean
   isTablet: boolean
@@ -98,18 +129,31 @@ export interface GlobeContextValue {
   showHover: boolean
   showConnectors: boolean
   isDark: boolean
-
-  // --- Derived ---
+  layoutState: 'default' | 'panel-open' | 'article-open'
+  slideComplete: boolean
   /** Which panel to render. Null = nothing. */
   panelVariant: 'pin' | 'trip' | null
 }
-
-export const GlobeContext = createContext<GlobeContextValue | null>(null)
-
-export function useGlobe(): GlobeContextValue {
-  const ctx = useContext(GlobeContext)
+export const GlobeUIContext = createContext<GlobeUIContextValue | null>(null)
+export function useGlobeUI(): GlobeUIContextValue {
+  const ctx = useContext(GlobeUIContext)
   if (!ctx) {
-    throw new Error('useGlobe must be used inside <GlobeProvider>')
+    throw new Error('useGlobeUI must be used inside <GlobeProvider>')
+  }
+  return ctx
+}
+
+// ---------- 6. Route (URL-derived state + close action) ----------
+export interface GlobeRouteContextValue {
+  activeArticleSlug: string | null // /globe/<slug> item article
+  activeTripSlug: string | null // /trip/<slug> trip article
+  closeArticle: () => void
+}
+export const GlobeRouteContext = createContext<GlobeRouteContextValue | null>(null)
+export function useGlobeRoute(): GlobeRouteContextValue {
+  const ctx = useContext(GlobeRouteContext)
+  if (!ctx) {
+    throw new Error('useGlobeRoute must be used inside <GlobeProvider>')
   }
   return ctx
 }
