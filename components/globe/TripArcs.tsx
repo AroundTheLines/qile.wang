@@ -308,7 +308,7 @@ function ArcLine({
       {/* Base layer — always visible; brightens when its trip is highlighted
           so the path remains legible in the gaps between overlay sweeps. */}
       <Line
-        ref={baseRef as Ref<LineRef>}
+        ref={baseRef as unknown as Ref<never>}
         points={points}
         color={idleColor}
         lineWidth={BASE_WIDTH_INACTIVE}
@@ -321,7 +321,7 @@ function ArcLine({
           Paints on top of the base so the traversal reads as a highlight
           sliding over the persistent path. */}
       <Line
-        ref={overlayRef as Ref<LineRef>}
+        ref={overlayRef as unknown as Ref<never>}
         points={points}
         color={idleColor}
         lineWidth={OVERLAY_INACTIVE_WIDTH}
