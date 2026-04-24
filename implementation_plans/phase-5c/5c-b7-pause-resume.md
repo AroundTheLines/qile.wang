@@ -425,3 +425,99 @@ Use `addDebouncedPauseReason` for `'label-hover'`, `'pin-hover'`. Use immediate 
 6. Open item article (from a pin panel, requires D1 merged) — playback pauses. Close article — 5s later resumes.
 7. Pinch-zoom timeline — pauses. Release — 5s later, timeline animates back to full history, playback resumes from right edge.
 8. Check `isPaused` / `playbackActive` / `pauseReasonsRef.current` in React DevTools during each interaction. Confirm reasons enter/exit the set correctly.
+
+---
+
+## Shipped decisions (post-implementation)
+
+Notes added after the ticket landed so future implementers can see what was actually decided vs. what the spec proposed. Where shipped behavior diverges from the spec above, the shipped behavior wins — this section is the source of truth.
+
+### 1. Idle-resume delay: 1.5s, not 5s
+
+**Constant**: `IDLE_RESUME_MS = 1500` in `GlobeProvider.tsx`. Inherited from B6, not re-opened in B7.
+
+**Why**: 5s felt like "did I break it?" between deselection and playback resuming. 1.5s is short enough that the user perceives continuity, still long enough that quick tap-to-lock-to-unlock-to-tap-again sequences don't re-trigger the sweep for no reason. Applies to all pause sources (label hover, pin/trip selection, article open, globe drag, timeline pan/zoom).
+
+**If you want to revisit**: change the constant and update the acceptance criteria in this ticket.
+
+### 2. Playhead position on resume: §5.6 preserved (not §5.1 reset)
+
+**Behavior**: When playback resumes after any pause, the playhead continues from where the controller left it — it does NOT teleport to the right edge (present).
+
+**Why**: The spec contained an unresolved ambiguity between §5.1 ("reappears at right edge") and §5.6 ("picks up from where the playhead was"). B6 shipped with §5.6; B7 kept it. §5.6 is the cleaner UX — brief interactions don't visibly discard the user's mental model of "where playback was."
+
+**If you want §5.1**: add a `resetToPresent()` method to the playback controller in `lib/timelinePlayback.ts` and call it on the `playbackActive` false→true transition in `GlobeProvider`.
+
+### 3. Playhead visibility during pause
+
+**Behavior**: Playhead opacity driven by `playbackActive` via the `applyDom` function in `TimelinePlayhead` — invisible while any pause reason is set or during the 1.5s idle ramp. B6 owns this; B7 did not re-wire.
+
+### 4. Globe zoom pauses (minor deviation from spec drag-only)
+
+**Behavior**: `OrbitControls.start` fires for both rotate-drag and scroll-zoom; both add `'globe-drag'` as the pause reason (name is slightly misleading for the zoom case but kept for simplicity).
+
+**Why**: Distinguishing drag vs zoom requires inspecting the mouse button / touch count during `start`, or diffing camera position on `change`. Not worth the complexity — user-visible difference is "my playback pauses when I interact with the globe in any way," which is intuitive.
+
+**If reviewer insists on drag-only**: listen for `change` events and compare `camera.position.distanceTo(origin)` pre/post to classify drag vs zoom.
+
+### 5. Hover debounce: 150ms
+
+**Constant**: `HOVER_PAUSE_DEBOUNCE_MS = 150` in both `GlobeProvider.tsx` (pin-hover) and `Timeline.tsx` (label-hover).
+
+**Why**: Spec §5.5 excludes "brief cursor transit over the timeline without stopping" but doesn't define "brief." 150ms felt like the right threshold — short enough that a deliberate hover lands instantly, long enough that sweeping the cursor across a dense label row doesn't flicker pause state. Tunable in F2.
+
+### 6. Pin-hover wiring moved from GlobePins to GlobeProvider
+
+**Why**: C2 shipped with `addPauseReason('pin-hover')` and `removePauseReason('pin-hover')` inlined into `GlobePins.tsx`'s pointerOver/pointerOut/click handlers. With the single shared reason string, rapid transit between pins hit a Set-semantic race (new pin's over fires before old pin's out → new pin adds (no-op, already there) → old pin removes (clears the Set) → pause leaks).
+
+**Shipped fix**: a single effect in `GlobeProvider.tsx` driven by `hoveredPin`:
+```tsx
+useEffect(() => {
+  if (tier !== 'desktop') return
+  if (!hoveredPin) return
+  const timer = setTimeout(() => addPauseReason('pin-hover'), HOVER_PAUSE_DEBOUNCE_MS)
+  return () => {
+    clearTimeout(timer)
+    removePauseReason('pin-hover')
+  }
+}, [hoveredPin, tier, addPauseReason, removePauseReason])
+```
+
+The cleanup runs when `hoveredPin` changes identity (including from A to B), so the race is impossible. Pointer handlers in `GlobePins.tsx` only manage `hoveredPin` state; no pause calls remain there.
+
+### 7. Timeline pan pause gated on `DRAG_THRESHOLD_PX`, not pointerdown
+
+**Why**: Adding `'timeline-pan'` in `handlePointerDown` caused a ~1.5s pause for every tap (tap-to-dismiss-locked-trip, accidental taps). The add now fires inside `moveImplRef` on the first frame where `|dx| >= DRAG_THRESHOLD_PX`. Pure taps never enter that branch, so they don't pause.
+
+### 8. Wheel/trackpad zoom: 250ms quiescence release
+
+**Constant**: `WHEEL_INTERACTION_END_MS = 250` in `Timeline.tsx`.
+
+**Why**: Wheel events have no "up" signal. We hold the pause reason while events keep arriving and clear both `'timeline-pan'` and `'timeline-zoom'` after 250ms of no wheel events (a single session can interleave pan-dominant and zoom-dominant deltas; clearing both is safer than tracking the last-fired reason). Tunable if it feels sticky.
+
+### 9. Globe-drag pause released immediately on `controls.end`
+
+**Why**: The provider's own `IDLE_RESUME_MS` (1.5s) runs from the moment the reason clears. Layering the existing `AUTO_ROTATE_RESUME_DELAY` (2s) on top of that would stack delays to ~3.5s, which felt broken during manual testing. Shipped behavior: playback resumes ~1.5s after release, passive spin resumes ~2s after release — close enough that they read as synchronized.
+
+### 10. Zoom-reset-on-resume: 500ms ease-out, **desktop only**
+
+**Why desktop-only**: A pinch-zoom on mobile is a larger intentional gesture than a desktop wheel scroll — snapping the timeline back to full history after the resume delay feels like the UI is undoing the user's work. Mobile preserves the user's zoom level on resume; desktop still animates back to `{0, 1}` over 500ms.
+
+**Cancellation**: the tween itself doesn't check for user interaction. Instead, any pause source flips `playbackActive → false`, which triggers the effect cleanup and cancels the rAF. No explicit short-circuit needed.
+
+### 11. Pause reason names (for reference / grep)
+
+| Reason | Source | Released by |
+|---|---|---|
+| `label-hover` | Timeline label mouseenter (debounced 150ms) | mouseleave |
+| `pin-hover` | GlobeProvider effect on `hoveredPin` (desktop, debounced 150ms) | effect cleanup when `hoveredPin` clears |
+| `timeline-pan` | moveImplRef first crossing of `DRAG_THRESHOLD_PX`, or wheel with `deltaX` dominant | pointerup-to-zero, or wheel 250ms quiescence |
+| `timeline-zoom` | handlePointerDown with two pointers, or ctrl+wheel | pointerup-to-zero, or wheel 250ms quiescence |
+| `globe-drag` | OrbitControls `start` (drag OR zoom — see #4) | OrbitControls `end` (immediately) |
+| `playback-floating-label-hover` | TimelinePlayhead label mouseenter (no debounce — the label already has a sub-150ms reaction time) | mouseleave |
+
+The `article-open` case is handled by folding `activeArticleSlug`/`activeTripSlug` directly into the `isPaused` computation in `GlobeProvider.tsx` — it is NOT a reason in the registry.
+
+### 12. Locked trip ≠ pause reason; it's folded into `isPaused`
+
+`isPaused = pauseReasonCount > 0 || lockedTrip !== null || activeArticleSlug !== null || activeTripSlug !== null`. The lock and article-open states aren't entries in the reasons Set; they're read directly from the provider's existing state. This means the 1.5s idle timer doesn't run while a trip is locked OR while an article sliver is open — only once both clear AND every registry reason has been removed.

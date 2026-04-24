@@ -237,10 +237,11 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
   )
 
   // §5.6 zoom-reset-on-resume: when playback transitions back to active,
-  // animate the zoom window back to full history. Cancelled if the user
-  // re-interacts mid-animation (pointerdown/wheel call scheduleZoom, which
-  // clears pendingZoomRef; the tween checks pendingZoom identity to
-  // short-circuit).
+  // animate the zoom window back to full history. Cancellation on
+  // re-interaction is indirect but reliable: any pause source (pointerdown,
+  // wheel, label hover) flips `playbackActive` to false, which triggers
+  // this effect's cleanup and cancels the pending rAF. No explicit
+  // short-circuit inside the tween step is needed.
   const zoomResetRafRef = useRef<number | null>(null)
   const prevPlaybackActiveRef = useRef<boolean>(true)
   const playbackActive = ctx?.playbackActive ?? true
