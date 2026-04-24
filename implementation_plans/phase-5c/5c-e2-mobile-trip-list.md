@@ -165,3 +165,79 @@ function fixtureList() {
 4. Slow-network cold load: skeleton bones visible briefly, replaced by real list.
 5. DevTools: inspect `<ul>` — children have proper structure.
 6. Dark mode: `.dark` class on `<html>` → colors swap.
+
+---
+
+## Shipped implementation notes
+
+Read this section first before editing `MobileTripList.tsx` — it records the
+decisions that aren't obvious from the code and the review feedback that was
+already addressed. (PR [#49](https://github.com/AroundTheLines/qile.wang/pull/49).)
+
+### Structure
+
+- **Shared `TripRow` subcomponent** (title + date range) is used by both the
+  real list and the boneyard `fixture`. The row's Tailwind classes are hoisted
+  to module-level constants (`ROW_TITLE_CLASS`, `ROW_META_CLASS`,
+  `ROW_PADDING_CLASS`, `LIST_CLASS`) so the fixture can't drift visually from
+  the real render. If you change row styling, you only edit the constants —
+  bones regenerate accurately on the next `npx boneyard-js build`.
+- **Fixture is still an inline `fixtureList()` function**, not a separate file.
+  Keeping it colocated makes the bone/row contract obvious.
+
+### Decisions worth knowing
+
+- **Date format**: `formatDateRange` (from C3) chosen over month-year-only.
+  Produces `JUNE 10–20, 2024` for same-month and `MARCH 2022 – APRIL 2022` for
+  cross-month. Reviewed and accepted — we want date granularity, not just
+  month buckets, for single-day trips.
+- **No visit count on the row** — spec §16 Q3 default. Adding it was
+  considered and deferred; trip panel already surfaces the count.
+- **No thumbnails** — §16 Q3 default. Adds layout noise and every trip would
+  need a representative image.
+- **No truncation on long titles** — they wrap to a second line. Acceptable
+  per spec gotcha.
+- **Empty-state is explicit** (`"No trips yet"`). Timeline also handles the
+  empty case; this is a belt-and-suspenders fallback so the content region
+  never renders blank. Kept per spec's own suggestion in the gotchas section.
+- **Order comes from the GROQ query** (`allTripsQuery` ORDER BY startDate
+  desc). No client-side `.sort()` — if the order is wrong, fix the query.
+- **URL uses absolute `/globe?trip=<slug>`** rather than a relative push.
+  This component only mounts inside `MobileContentRegion`, which itself only
+  renders on `/globe`, so the absolute path is safe. If the list is ever
+  reused elsewhere, switch to `usePathname()`-based construction.
+- **`aria-label="Trips"`** on the `<ul>`, mirroring the pins list's
+  `"Pin locations"` label for screen-reader symmetry.
+- **`encodeURIComponent(slug)`** even though current slugs are ASCII
+  kebab-case — defensive against future non-ASCII titles.
+
+### Interactions with other layers
+
+- **Locking via context**: `setLockedTrip(tripId)` is called *before*
+  `router.push`. `MobileContentRegion` reads `panelVariant` from context and
+  swaps to `<TripPanel>` synchronously on the next render. The URL push is
+  purely for deep-link / back-button support (D2 handles the reverse wiring).
+- **Back behavior**: `MobileNavChrome` (E1) already owns the back chrome; this
+  ticket does not render its own back button.
+
+### Sidecar fix: Timeline hydration mismatch
+
+Shipped in the same PR. `components/globe/Timeline.tsx` was initializing
+`zoomWindow` via `window.innerWidth` inside `useState`, causing mobile SSR
+and first client render to disagree and React to throw "Hydration failed."
+
+- `zoomWindow` now initializes to `{ start: 0, end: 1 }` on both server and
+  client.
+- A post-mount `useEffect` applies the mobile narrowing (`{0.15, 0.85}`),
+  guarded by `z.start === 0 && z.end === 1` so we don't clobber user
+  pan/zoom if it races.
+- Known tradeoff: brief visual snap on mobile cold load (full-history →
+  narrowed) on the tick after hydration. `useLayoutEffect` would avoid the
+  paint but reintroduces the SSR warning. Snap judged acceptable.
+
+### What this ticket explicitly did NOT do
+
+- No shared row component extracted to a sibling file (still local to
+  `MobileTripList.tsx`). Defer until a second consumer exists.
+- No `useLayoutEffect` on the timeline zoom narrowing.
+- No tests added — spec didn't require, component is thin.

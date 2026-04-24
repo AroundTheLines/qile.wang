@@ -139,12 +139,9 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
   // Mobile opens slightly zoomed-in so the edge fades (below) read as "more
   // to reveal by zooming/panning" rather than a solid wall. Desktop keeps
   // full-history because there's plenty of horizontal room to show it all.
-  const [zoomWindow, setZoomWindow] = useState<ZoomWindow>(() => {
-    if (typeof window !== 'undefined' && window.innerWidth < 768) {
-      return { start: 0.15, end: 0.85 }
-    }
-    return { start: 0, end: 1 }
-  })
+  // Initialize to the full-history window so SSR and the first client render
+  // match; the mobile zoom-in is applied after mount in useEffect below.
+  const [zoomWindow, setZoomWindow] = useState<ZoomWindow>({ start: 0, end: 1 })
   const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map())
   const gestureRef = useRef<GestureState>(null)
   const panMovedRef = useRef(false)
@@ -162,6 +159,13 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
     })
     obs.observe(el)
     return () => obs.disconnect()
+  }, [])
+
+  // Apply the mobile zoom-in after mount so SSR and first client render agree.
+  useEffect(() => {
+    if (window.innerWidth < 768) {
+      setZoomWindow((z) => (z.start === 0 && z.end === 1 ? { start: 0.15, end: 0.85 } : z))
+    }
   }, [])
 
   const compressed = useMemo<CompressedMap>(
