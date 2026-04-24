@@ -39,6 +39,10 @@ function useIsDark(): boolean {
 // with a small buffer.
 const PANEL_SETTLE_MS = 450
 const IDLE_RESUME_MS = 1500
+// Brief cursor transit (<150ms) over a pin/label should not pause playback
+// per §5.5. Add-side debounce: the pause reason only fires if the hover
+// sustains past this window.
+const HOVER_PAUSE_DEBOUNCE_MS = 150
 
 export default function GlobeProvider({
   trips,
@@ -202,6 +206,22 @@ export default function GlobeProvider({
       }
     }
   }, [isPaused])
+
+  // --- Effect-driven pin-hover pause (desktop).
+  // C2 wired this inline inside GlobePins for the interim; B7 moves it to
+  // an effect so the single shared `pin-hover` reason can't leak when
+  // pointer-over on pin B fires before pointer-out on pin A (Set-semantic
+  // race). Debounced by HOVER_PAUSE_DEBOUNCE_MS so brief transit across
+  // a pin doesn't flicker playback.
+  useEffect(() => {
+    if (tier !== 'desktop') return
+    if (!hoveredPin) return
+    const timer = setTimeout(() => addPauseReason('pin-hover'), HOVER_PAUSE_DEBOUNCE_MS)
+    return () => {
+      clearTimeout(timer)
+      removePauseReason('pin-hover')
+    }
+  }, [hoveredPin, tier, addPauseReason, removePauseReason])
 
   // --- Clear the pin-subregion highlight when the pin panel closes.
   // C2 keeps the highlight set on hover-out if the pin is selected so

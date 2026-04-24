@@ -44,6 +44,14 @@ const BOTTOM_PADDING = 8
 
 export const DRAG_THRESHOLD_PX = 5
 const WHEEL_ZOOM_MULTIPLIER = 0.001
+const HOVER_PAUSE_DEBOUNCE_MS = 150
+// Delay after wheel/trackpad interaction stops before the zoom/pan pause
+// reasons are released. Wheel events have no "up" signal, so we rely on a
+// quiescence timer.
+const WHEEL_INTERACTION_END_MS = 250
+// Zoom-reset-on-resume (§5.6). When playback restarts after a pause, the
+// timeline animates its zoom window back to full-history over this duration.
+const ZOOM_RESET_MS = 500
 // Floor on the min zoom span (fraction of compressed x). Compression's
 // activeBoost makes real-day math misleading in active-dense regions — at
 // 1/totalDays the view can land on an empty gap with zero trips visible.
@@ -149,6 +157,10 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
   const windowListenersRef = useRef(false)
   const rafRef = useRef<number | null>(null)
   const pendingZoomRef = useRef<ZoomWindow | null>(null)
+  // Wheel/trackpad events have no "up" signal — we hold the pause reason
+  // while events keep arriving and release after WHEEL_INTERACTION_END_MS
+  // of quiescence.
+  const wheelQuiescenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     const el = wrapperRef.current
@@ -228,6 +240,54 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
     [],
   )
 
+  // §5.6 zoom-reset-on-resume: when playback transitions back to active,
+  // animate the zoom window back to full history. Cancellation on
+  // re-interaction is indirect but reliable: any pause source (pointerdown,
+  // wheel, label hover) flips `playbackActive` to false, which triggers
+  // this effect's cleanup and cancels the pending rAF. No explicit
+  // short-circuit inside the tween step is needed.
+  const zoomResetRafRef = useRef<number | null>(null)
+  const prevPlaybackActiveRef = useRef<boolean>(true)
+  const playbackActive = ctx?.playbackActive ?? true
+  const isMobile = ctx?.isMobile ?? false
+  useEffect(() => {
+    const prev = prevPlaybackActiveRef.current
+    prevPlaybackActiveRef.current = playbackActive
+    if (!playbackActive || prev) return
+    // Mobile: preserve the user's zoom on resume. On a small screen the
+    // pinch-to-zoom gesture is a larger commitment than a desktop wheel
+    // scroll, and snapping back to full history feels like the UI is
+    // undoing the user's work.
+    if (isMobile) return
+    const cur = zoomWindowRef.current
+    if (cur.start === 0 && cur.end === 1) return
+    const startZ = { ...cur }
+    const startT = performance.now()
+    const step = (t: number) => {
+      const u = Math.min(1, (t - startT) / ZOOM_RESET_MS)
+      // ease-out cubic
+      const eased = 1 - Math.pow(1 - u, 3)
+      const next: ZoomWindow = {
+        start: startZ.start + (0 - startZ.start) * eased,
+        end: startZ.end + (1 - startZ.end) * eased,
+      }
+      scheduleZoom(next)
+      if (u < 1) {
+        zoomResetRafRef.current = requestAnimationFrame(step)
+      } else {
+        zoomResetRafRef.current = null
+      }
+    }
+    if (zoomResetRafRef.current !== null) cancelAnimationFrame(zoomResetRafRef.current)
+    zoomResetRafRef.current = requestAnimationFrame(step)
+    return () => {
+      if (zoomResetRafRef.current !== null) {
+        cancelAnimationFrame(zoomResetRafRef.current)
+        zoomResetRafRef.current = null
+      }
+    }
+  }, [playbackActive, isMobile, scheduleZoom])
+
   // Native wheel listener — React's passive SyntheticEvent can't reliably
   // preventDefault, which would let the page scroll while the timeline zooms.
   useEffect(() => {
@@ -239,10 +299,26 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
       if (rect.width === 0) return
       const cur = currentZoom()
 
+      const isPan = Math.abs(e.deltaX) > Math.abs(e.deltaY) && !e.ctrlKey
+      // §5.5: timeline pan/zoom pauses playback. Wheel has no "up" event
+      // so we add on first event and clear on a quiescence timer.
+      if (ctx) {
+        const reason = isPan ? 'timeline-pan' : 'timeline-zoom'
+        ctx.addPauseReason(reason)
+        if (wheelQuiescenceTimerRef.current) clearTimeout(wheelQuiescenceTimerRef.current)
+        wheelQuiescenceTimerRef.current = setTimeout(() => {
+          // Clear both reasons — a single wheel session may include
+          // pan-dominant and zoom-dominant events interleaved.
+          ctx.removePauseReason('timeline-pan')
+          ctx.removePauseReason('timeline-zoom')
+          wheelQuiescenceTimerRef.current = null
+        }, WHEEL_INTERACTION_END_MS)
+      }
+
       // Trackpad two-finger horizontal swipe → pan. Browsers report this as a
       // wheel event with deltaX dominant and no ctrlKey (pinch is ctrlKey+deltaY).
       // shift+wheel on a mouse also surfaces as deltaX on some browsers.
-      if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && !e.ctrlKey) {
+      if (isPan) {
         scheduleZoom(wheelPan(cur, e.deltaX, rect.width, panOverscrollRef.current))
         return
       }
@@ -272,6 +348,10 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
     if (gesture.kind === 'pan') {
       const dx = e.clientX - gesture.startClientX
       if (!panMovedRef.current && Math.abs(dx) < DRAG_THRESHOLD_PX) return
+      // First crossing of the drag threshold: now it's a real pan, so
+      // claim the pause reason. A pure tap (no movement) never gets here,
+      // so tapping the timeline background to dismiss doesn't pause.
+      if (!panMovedRef.current && ctx) ctx.addPauseReason('timeline-pan')
       panMovedRef.current = true
       scheduleZoom(dragPan(gesture.startZoom, dx, rect.width, panOverscrollRef.current))
     } else if (gesture.kind === 'pinch') {
@@ -315,6 +395,13 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
       gestureRef.current = null
       rectRef.current = null
       detachWindowListeners()
+      // §5.5: release timeline gesture pause reasons. Both are cleared
+      // unconditionally — a gesture may have transitioned pan↔pinch
+      // mid-interaction.
+      if (ctx) {
+        ctx.removePauseReason('timeline-pan')
+        ctx.removePauseReason('timeline-zoom')
+      }
     } else if (pointersRef.current.size === 1) {
       // Dropped from pinch → pan: re-seed pan from the remaining pointer.
       const remaining = pointersRef.current.values().next().value!
@@ -353,6 +440,8 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
         startClientX: e.clientX,
         startZoom,
       }
+      // Pause reason is added later, once movement crosses DRAG_THRESHOLD_PX
+      // in moveImplRef — a pure tap (no drag) must not pause playback.
     } else if (size === 2) {
       const iter = pointersRef.current.values()
       const a = iter.next().value!
@@ -368,6 +457,10 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
         startCenter: startZoom.start + centerXFrac * span,
         centerXFrac,
       }
+      // §5.5: pinch zoom on the timeline pauses playback. If a pan was
+      // already armed (first finger) we keep its reason too — both are
+      // released together on the pointerup-to-zero transition.
+      if (ctx) ctx.addPauseReason('timeline-zoom')
     }
     attachWindowListeners()
   }
@@ -508,6 +601,16 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
 
   const isDesktopHover = ctx?.isDesktop ?? true
 
+  // Debounce the pause-add so brief cursor transit (<150ms) across a label
+  // doesn't pause playback. §5.5 explicitly excludes brief transit.
+  const labelHoverPauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (labelHoverPauseTimerRef.current) clearTimeout(labelHoverPauseTimerRef.current)
+    },
+    [],
+  )
+
   const handleLabelEnter = useCallback(
     (trip: TimelineTrip) => {
       if (!ctx) {
@@ -516,7 +619,11 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
       }
       if (!isDesktopHover) return
       ctx.setHoveredTrip(trip.id)
-      ctx.addPauseReason('label-hover')
+      if (labelHoverPauseTimerRef.current) clearTimeout(labelHoverPauseTimerRef.current)
+      labelHoverPauseTimerRef.current = setTimeout(() => {
+        ctx.addPauseReason('label-hover')
+        labelHoverPauseTimerRef.current = null
+      }, HOVER_PAUSE_DEBOUNCE_MS)
     },
     [ctx, isDesktopHover],
   )
@@ -526,6 +633,12 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
       if (!ctx) {
         setLocalActiveId((cur) => (cur === trip.id ? null : cur))
         return
+      }
+      // Cancel the pending add — if the hover didn't last past the debounce
+      // window, the pause reason never fires.
+      if (labelHoverPauseTimerRef.current) {
+        clearTimeout(labelHoverPauseTimerRef.current)
+        labelHoverPauseTimerRef.current = null
       }
       // Always release the hover-bound state on leave, even if the viewport
       // flipped to mobile mid-hover — otherwise the pause reason leaks.
