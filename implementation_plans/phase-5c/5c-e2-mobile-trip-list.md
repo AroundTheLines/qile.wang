@@ -241,3 +241,24 @@ and first client render to disagree and React to throw "Hydration failed."
   `MobileTripList.tsx`). Defer until a second consumer exists.
 - No `useLayoutEffect` on the timeline zoom narrowing.
 - No tests added — spec didn't require, component is thin.
+
+---
+
+## Addendum: smooth-scroll on row tap (2026-04-24, PR [#55](https://github.com/AroundTheLines/qile.wang/pull/55))
+
+### Behavior
+
+`handleSelect` now calls `window.scrollTo({ top: 0, behavior: 'smooth' })` after `setLockedTrip` + `router.push`. On a real phone, the page was previously leaving the viewport parked on the tapped row while the trip panel opened below; the user had to manually scroll back up to see the globe / timeline context. Scrolling for them closes the loop between "I tapped a row" and "the panel is now open, here's the globe that matches it."
+
+### Prefers-reduced-motion
+
+`scrollTo`'s `behavior: 'smooth'` ignores the user's reduced-motion preference. We check `matchMedia('(prefers-reduced-motion: reduce)')` and fall back to `behavior: 'auto'` (instant jump) when set. If you add more animated scrolls elsewhere, apply the same pattern or extract a helper — don't trust the browser to honor the preference for you here.
+
+### Coupling with E1's `min-h-screen`
+
+The smooth-scroll only reaches the top because E1's addendum added `min-h-screen` to the mobile content region. Without it, the trip list (long) is replaced by the trip panel (often shorter), the document shrinks, and the browser clamps `scrollY` to the new max — cutting the animation short and producing the "snap" the user reported. If you remove that class, also remove this scroll call, or the bug comes back.
+
+### Not done
+
+- No scroll-into-view of a specific element (just to document top). The globe at `70vh` height naturally lands above the fold once `scrollY === 0`.
+- No deep-link smooth-scroll: if the user lands on `/globe?trip=<slug>` from an external link, we don't animate. Initial load is handled by the browser's default scroll restoration and Next's router — not worth overriding.

@@ -412,3 +412,23 @@ Everything below is mobile-only unless noted. Desktop behavior is unchanged.
 - **E2 (mobile trip list)**: replace `MobileTripList` body. Expected to consume the same `ctx.trips` used by the desktop sidebar — check `GlobeContext` for shape.
 - **E3 (mobile preview-then-lock)**: `handleLabelClick` on mobile currently locks immediately (same as desktop). E3 will reintroduce a mobile branch; the place to gate it is `handleLabelClick` in `Timeline.tsx`. Preview state should live alongside the trip context, not inside Timeline.
 - **Anything touching clampZoom**: if you change the signature again, update the optional `overscroll` param rather than removing it. Existing callers depend on the default.
+
+---
+
+## Addendum: post-ship tweaks (2026-04-24, PR [#55](https://github.com/AroundTheLines/qile.wang/pull/55))
+
+Two changes to the mobile layout after real-device review reversed earlier decisions. If you're reading the code and looking for the sticky timeline or the squeeze cue described above, that's why they're gone.
+
+### Timeline is no longer sticky on mobile
+
+- **Before**: the mobile timeline wrapper was `sticky top: NAVBAR_HEIGHT_PX` with an IntersectionObserver-driven `py-2 → py-0.5` squeeze when the globe scrolled off.
+- **After**: plain `static` block with constant `py-2`. Scrolls with the page.
+- **Why**: on-device the sticky strip crowded the navbar and the squeeze animation drew the eye away from content the user was actively scrolling into. Removing the pin felt calmer. The squeeze cue signaled "timeline is pinned" — with no pin, the signal isn't needed.
+- **Removed with it**: the `globeOffscreen` state, its `IntersectionObserver`, and the `NAVBAR_HEIGHT_PX` import in `GlobeViewport.tsx`. `NAVBAR_HEIGHT_PX` is still exported from `lib/globe` and used by `TimelineOverlay.tsx` for the **desktop** sticky overlay — leave that alone. The mobile/desktop split is: `MobileGlobeLayout` (non-sticky) vs. `TimelineOverlay` (sticky, `md:block fixed`).
+
+### `min-h-screen` on the mobile content region
+
+- Added to the inner flex child in `MobileGlobeLayout` (the one that wraps `MobileContentRegion` / article `children`).
+- **Why**: `MobileTripList` now smooth-scrolls to the top on row tap (see E2 addendum). The list-to-panel swap shrinks the document height mid-animation, which causes the browser to clamp `scrollY` to the new max and the animation visibly stops short of the top. Keeping the content region ≥ 100vh means the document length doesn't change across the swap, so `scrollTo({ top: 0, behavior: 'smooth' })` can complete cleanly.
+- **Trade-off**: up to ~70vh of empty `bg-white`/`bg-black` below the panel when the trip panel is shorter than 100vh. Bg matches the outer wrapper, so it reads as padding, not a gap.
+- **Don't remove this** unless you also remove the smooth-scroll in `MobileTripList.handleSelect` — the two are coupled.
