@@ -58,8 +58,15 @@ export default function GlobeProvider({
   const [hoveredPin, setHoveredPin] = useState<string | null>(null)
   const [pinSubregionHighlight, setPinSubregionHighlight] = useState<string | null>(null)
   const [pinToScrollTo, setPinToScrollTo] = useState<{ id: string; nonce: number } | null>(null)
+  // Monotonic nonce counter. Lives in a ref so `clearPinScroll()` resetting
+  // state to null doesn't reset the next nonce back to 1 — otherwise two
+  // rapid clicks on the same pin (separated by a clear) would both land on
+  // nonce 1 and downstream pulse effects keyed on `[pulseNonce]` would
+  // skip the replay.
+  const pinScrollNonceRef = useRef(0)
   const requestPinScroll = useCallback((id: string) => {
-    setPinToScrollTo((prev) => ({ id, nonce: (prev?.nonce ?? 0) + 1 }))
+    pinScrollNonceRef.current += 1
+    setPinToScrollTo({ id, nonce: pinScrollNonceRef.current })
   }, [])
   const clearPinScroll = useCallback(() => {
     setPinToScrollTo(null)

@@ -54,6 +54,8 @@ function Pin({
     setPinSubregionHighlight,
     lockedTrip,
     setLockedTrip,
+    hoveredTrip,
+    playbackHighlightedTripIds,
     requestPinScroll,
     showHover,
     isDesktop,
@@ -77,6 +79,23 @@ function Pin({
   const pos = sphericalToCartesian(lat, lng, GLOBE_RADIUS)
   const isSelected = selectedPin === locationId
   const isHovered = hoveredPin === locationId
+  // A pin is "trip-active" when it belongs to any trip currently being
+  // highlighted — locked, hovered, or lit by the playback sweep. Trip-
+  // active pins adopt the same visual active state as a selected pin
+  // (ring + shared pulse) so the highlighted trip reads as a connected
+  // set of stops rather than just animated arcs. Matches the arc
+  // highlight rule in TripArcs.
+  const pinTripIds = useMemo(
+    () => pins.find((p) => p.location._id === locationId)?.tripIds ?? [],
+    [pins, locationId],
+  )
+  const isInActiveTrip = useMemo(() => {
+    if (lockedTrip && pinTripIds.includes(lockedTrip)) return true
+    if (hoveredTrip && pinTripIds.includes(hoveredTrip)) return true
+    if (playbackHighlightedTripIds.some((id) => pinTripIds.includes(id))) return true
+    return false
+  }, [pinTripIds, lockedTrip, hoveredTrip, playbackHighlightedTripIds])
+  const isActive = isSelected || isInActiveTrip
 
   // Orient the pin stem so its +Y axis points outward from the globe center.
   const quat = useMemo(() => {
@@ -108,35 +127,39 @@ function Pin({
       hitRef.current.visible = opacity > 0.1
     }
 
-    // --- Smoothly tween selected / hovered toward target ---
+    // --- Smoothly tween active / hovered toward target ---
     // Equivalent to ~180ms exponential easing at 60fps
     const k = Math.min(1, delta * 8)
-    selectedT.current += ((isSelected ? 1 : 0) - selectedT.current) * k
+    selectedT.current += ((isActive ? 1 : 0) - selectedT.current) * k
     hoveredT.current += ((isHovered ? 1 : 0) - hoveredT.current) * k
 
     // --- Target scale ---
-    // Selected adds a gentle pulse on top of a 1.0 baseline; hover pushes
-    // up modestly. Both are intentionally small so the active dot stays
-    // close in size to its neighbors.
-    const pulse = 0.1 * Math.sin(clock.elapsedTime * 3)
-    const selectedScale = 1 + pulse
+    // The dot itself never changes size for active — the pulse lives
+    // entirely on the ring border, so neighboring active pins don't
+    // jitter in size. Only hover bumps the dot.
     const hoverScale = 1.15
-    const targetScale =
-      1 + (selectedScale - 1) * selectedT.current + (hoverScale - 1) * hoveredT.current
+    const targetScale = 1 + (hoverScale - 1) * hoveredT.current
     scaleT.current += (targetScale - scaleT.current) * k
     meshRef.current.scale.setScalar(scaleT.current)
 
     // --- Ring ---
-    // Ring stays tangent to the surface (painted alongside the dot), so no
-    // camera-facing counter-rotation — the static rotation on the mesh wins.
-    // Ring scale is decoupled from the dot's pulse so the outline doesn't
-    // pulsate with the dot; only the selection tween drives its growth.
+    // Ring breathes outward and back with a smooth ease (sine → smoothstep)
+    // whenever the pin is active — selected or part of an active trip
+    // (locked, hovered, or playback-lit). Globally phased on
+    // clock.elapsedTime so every active pin pulses in sync, matching
+    // the shared rhythm of the trip arcs.
     if (ringRef.current && ringMaterialRef.current) {
       const sel = selectedT.current
       ringRef.current.visible = sel > 0.01 && opacity > 0.1
       if (ringRef.current.visible) {
-        ringRef.current.scale.setScalar(1 + 0.4 * sel)
-        ringMaterialRef.current.opacity = 0.4 * sel * opacity
+        // 0..1 triangle-ish wave from a sine, then smoothstepped so the
+        // in/out transitions ease rather than linearly ping-pong.
+        const raw = 0.5 + 0.5 * Math.sin(clock.elapsedTime * 2)
+        const pulse = raw * raw * (3 - 2 * raw)
+        // Grow outward with the pulse; fade back toward baseline opacity
+        // as it expands so it reads as a breathing halo.
+        ringRef.current.scale.setScalar(1 + (0.25 + 0.35 * pulse) * sel)
+        ringMaterialRef.current.opacity = (0.55 - 0.3 * pulse) * sel * opacity
       }
     }
   })
