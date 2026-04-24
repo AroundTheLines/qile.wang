@@ -359,17 +359,24 @@ export default function GlobeProvider({
     if (!slugFromUrl) {
       // On base /globe with no ?trip=, unlock. Article routes (/globe/<slug>)
       // keep the current lock untouched — they don't own trip state.
+      //
+      // Route through the wrapper (not the raw setter) so the null-case
+      // cleanup — clearing `pinToScrollTo` so a stranded scroll signal
+      // doesn't leak into the next lock — stays consistent regardless of
+      // which code path drives the unlock. If `lockedTrip` is already null
+      // this collapses to a no-op (React bails on identical state).
       if (pathname === '/globe') {
         // eslint-disable-next-line react-hooks/set-state-in-effect -- URL → state sync
-        setLockedTripState((prev) => (prev === null ? prev : null))
+        setLockedTrip(null)
       }
       return
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- URL → state sync
     setLockedTripState((prev) => {
       const target = trips.find((t) => t.slug.current === slugFromUrl)
       return target ? target._id : prev
     })
-  }, [searchParams, activeTripSlug, pathname, trips])
+  }, [searchParams, activeTripSlug, pathname, trips, setLockedTrip])
 
   // --- Write-side URL sync for lockedTrip. Callers (Timeline label click,
   // TripPanel close) already push the URL themselves; this effect is the
