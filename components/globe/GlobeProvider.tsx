@@ -25,7 +25,9 @@ import type { GlobeScreenCircle } from '@/lib/globe'
 // useSyncExternalStore avoids the `setState in effect` pattern the lint rule
 // flags: the current tier is derived synchronously from window.innerWidth,
 // and React re-subscribes only on subscribe-function identity changes (stable
-// via module-scope reference).
+// via module-scope reference). Unlike useIsDark, nothing to cache here —
+// getViewportTier reads a primitive (window.innerWidth) and subscribe binds
+// straight to the 'resize' event; there's no MediaQueryList object to reuse.
 function subscribeViewportTier(callback: () => void): () => void {
   window.addEventListener('resize', callback)
   return () => window.removeEventListener('resize', callback)
@@ -45,14 +47,21 @@ function useViewportTier(): ViewportTier {
 }
 
 // Same pattern for dark-mode preference: read synchronously from matchMedia,
-// subscribe to changes without touching state in an effect.
+// subscribe to changes without touching state in an effect. The
+// MediaQueryList is cached at module scope and lazy-initialized on first
+// client call so repeated getSnapshot/subscribe invocations reuse the same
+// instance (SSR never reaches the getter — getServerSnapshot returns first).
+// Exported for test consumption only — app code should go through useIsDark.
+let _darkMql: MediaQueryList | null = null
+export const getDarkMql = (): MediaQueryList =>
+  (_darkMql ??= window.matchMedia('(prefers-color-scheme: dark)'))
 function subscribeIsDark(callback: () => void): () => void {
-  const mq = window.matchMedia('(prefers-color-scheme: dark)')
+  const mq = getDarkMql()
   mq.addEventListener('change', callback)
   return () => mq.removeEventListener('change', callback)
 }
 function getIsDark(): boolean {
-  return window.matchMedia('(prefers-color-scheme: dark)').matches
+  return getDarkMql().matches
 }
 function getIsDarkServer(): boolean {
   return false
