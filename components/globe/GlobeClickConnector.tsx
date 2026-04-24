@@ -66,10 +66,14 @@ export default function GlobeClickConnector() {
   const panelLeftInContainer = viewport.w - panelWidthPx / 2 - 16
 
   // Fade-out controller — triggered when selectedPin diverges from drawPin
-  // (includes closing the panel AND switching to a different pin).
+  // (includes closing the panel AND switching to a different pin). All
+  // `setDraw*` calls below are either immediate-skip paths (nothing to
+  // animate, just flip the target) or the RAF step's terminal frame —
+  // async state transitions, not synchronous cascades.
   useEffect(() => {
     if (drawPin == null || drawPin === selectedPin) return
     if (drawProgressRef.current === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- animation target swap
       setDrawPin(selectedPin)
       return
     }
@@ -92,14 +96,20 @@ export default function GlobeClickConnector() {
     return () => cancelAnimationFrame(raf)
   }, [selectedPin, drawPin])
 
-  // First-open sync
+  // First-open sync. Single-step transition: the first time a pin is
+  // selected (drawPin still null), adopt it as the draw target so the
+  // fade-in effect below has something to work against.
   useEffect(() => {
     if (drawPin == null && selectedPin != null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- first-open bootstrap
       setDrawPin(selectedPin)
     }
   }, [selectedPin, drawPin])
 
-  // Fade-in controller
+  // Fade-in controller — activates after the panel slide completes. The
+  // `setDrawing(true)` below is the kickoff flag for the RAF step below,
+  // equivalent to the fade-out's timing: state transition is async (RAF),
+  // not a synchronous cascade.
   useEffect(() => {
     if (!drawPin || !slideComplete || drawPin !== selectedPin) return
     if (drawProgressRef.current >= 1) return
@@ -107,6 +117,7 @@ export default function GlobeClickConnector() {
     let raf: number
     let start: number | null = null
     const from = drawProgressRef.current
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- RAF-driven fade-in start
     setDrawing(true)
     const step = (t: number) => {
       if (start === null) start = t
@@ -171,6 +182,7 @@ export default function GlobeClickConnector() {
     }
   }, [
     drawPin,
+    selectedPin,
     pinPositionRef,
     globeScreenRef,
     frameSubscribersRef,

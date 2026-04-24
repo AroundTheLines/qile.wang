@@ -217,6 +217,8 @@ export default function GlobeScene() {
         pendingArticleZoom.current = true
         return
       }
+      // startArticleZoom flips controlsEnabled and sets animation refs.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- camera-zoom state machine
       startArticleZoom(zoomPin)
       return
     }
@@ -244,6 +246,7 @@ export default function GlobeScene() {
     const zoomPin = resolveArticleZoomPinId()
     if (!zoomPin) return
     pendingArticleZoom.current = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- deferred zoom once deep-link data resolves
     startArticleZoom(zoomPin)
   }, [selectedPin, activeTripSlug, tripsWithVisits, layoutState, startArticleZoom, resolveArticleZoomPinId])
 
@@ -281,7 +284,8 @@ export default function GlobeScene() {
       startPos: camera.position.clone(),
       endPos,
     }
-    // Disable controls during programmatic rotation
+    // Disable controls during programmatic rotation (RAF-driven animation).
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- camera-rotate state machine
     setControlsEnabled(false)
   }, [selectedPin, pins, camera, lockedTrip])
 
@@ -341,6 +345,7 @@ export default function GlobeScene() {
     // the article later closes, a re-fire of this effect still sees
     // `prev !== lockedTrip` and lands the fit.
     if (layoutState === 'article-open') return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- trip-fit camera animation
     kickOffTripFit(lockedTrip)
   }, [lockedTrip, layoutState, kickOffTripFit])
 

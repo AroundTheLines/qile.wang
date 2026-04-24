@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type { CompressedMap } from '@/lib/timelineCompression'
 import {
@@ -8,7 +8,7 @@ import {
   type PlaybackController,
   type PlaybackState,
 } from '@/lib/timelinePlayback'
-import { useGlobeTrip, useGlobePlayback, useGlobeUI } from './GlobeContext'
+import { useGlobePlayback, useGlobeTrip, useGlobeUI } from './GlobeContext'
 
 export interface PlaybackTripInput {
   id: string
@@ -23,7 +23,6 @@ interface Props {
   zoomWindow: { start: number; end: number }
   containerWidth: number
   leftOffsetPx: number
-  trackTopPx: number
   playheadTopPx: number
   playheadHeightPx: number
   trips: PlaybackTripInput[]
@@ -46,18 +45,18 @@ export default function TimelinePlayhead({
   zoomWindow,
   containerWidth,
   leftOffsetPx,
-  trackTopPx,
   playheadTopPx,
   playheadHeightPx,
   trips,
 }: Props) {
-  const tripCtx = useGlobeTrip()
-  const playbackCtx = useGlobePlayback()
-  const uiCtx = useGlobeUI()
-  const ctx = useMemo(
-    () => ({ ...tripCtx, ...playbackCtx, ...uiCtx }),
-    [tripCtx, playbackCtx, uiCtx],
-  )
+  const { lockedTrip, setLockedTrip } = useGlobeTrip()
+  const {
+    setPlaybackHighlightedTripIds,
+    playbackActive,
+    addPauseReason,
+    removePauseReason,
+  } = useGlobePlayback()
+  const { isMobile } = useGlobeUI()
   const router = useRouter()
   const searchParams = useSearchParams()
 
@@ -66,24 +65,28 @@ export default function TimelinePlayhead({
   const controllerRef = useRef<PlaybackController | null>(null)
   const lastStateRef = useRef<PlaybackState | null>(null)
   const highlightedRef = useRef<string[]>([])
-  // Stable ref for the context setter — avoids re-creating the controller
-  // every render (GlobeProvider returns a fresh context object each render).
-  const setHighlightedIdsRef = useRef<((ids: string[]) => void) | null>(null)
-  setHighlightedIdsRef.current = ctx?.setPlaybackHighlightedTripIds ?? null
-  // Read lockedTrip through a ref so the DOM applier (called from the
-  // subscriber) always sees the current value without re-subscribing.
-  const lockedTripRef = useRef<string | null>(null)
-  lockedTripRef.current = ctx?.lockedTrip ?? null
 
-  // Refs that stay current so the stable RAF callback reads the latest.
+  // Refs mirror the latest React values so the long-lived controller
+  // subscriber and RAF loop can read them without re-subscribing. Each ref
+  // is updated in a useLayoutEffect (post-commit, pre-paint) rather than
+  // during render — React 19 flags render-phase ref writes as an error.
+  // The subscriber only reads these refs asynchronously (inside the RAF
+  // tick or a post-commit subscribe fire), so the one-frame lag is
+  // irrelevant.
+  const setHighlightedIdsRef = useRef(setPlaybackHighlightedTripIds)
+  const lockedTripRef = useRef<string | null>(lockedTrip)
   const zoomRef = useRef(zoomWindow)
-  zoomRef.current = zoomWindow
   const widthRef = useRef(containerWidth)
-  widthRef.current = containerWidth
   const leftOffsetRef = useRef(leftOffsetPx)
-  leftOffsetRef.current = leftOffsetPx
   const tripsRef = useRef(trips)
-  tripsRef.current = trips
+  useLayoutEffect(() => {
+    setHighlightedIdsRef.current = setPlaybackHighlightedTripIds
+    lockedTripRef.current = lockedTrip
+    zoomRef.current = zoomWindow
+    widthRef.current = containerWidth
+    leftOffsetRef.current = leftOffsetPx
+    tripsRef.current = trips
+  })
 
   const playbackTrips = useMemo(
     () =>
@@ -105,6 +108,14 @@ export default function TimelinePlayhead({
     const halfYearCompressedX = Math.max(0.01, endX - earlierX)
     return halfYearCompressedX / 5
   }, [compressed])
+
+  // Ref indirection so the controller-creation effect doesn't list xPerSecond
+  // as a dep — a xPerSecond change is handled by the separate setXPerSecond
+  // effect below, not by rebuilding the controller.
+  const xPerSecondRef = useRef(xPerSecond)
+  useLayoutEffect(() => {
+    xPerSecondRef.current = xPerSecond
+  }, [xPerSecond])
 
   const applyDom = (s: PlaybackState) => {
     const zoom = zoomRef.current
@@ -155,10 +166,12 @@ export default function TimelinePlayhead({
   }
 
   // Controller lifecycle — recreate only when trip ranges actually change.
+  // Reads xPerSecond via ref so a speed update doesn't tear down the
+  // controller; the separate useEffect below pushes the new value in place.
   useEffect(() => {
     const c = createPlaybackController({
       trips: playbackTrips,
-      xPerSecond,
+      xPerSecond: xPerSecondRef.current,
       loopHoldMs: 5000,
     })
     controllerRef.current = c
@@ -179,7 +192,7 @@ export default function TimelinePlayhead({
       }
       if (changed) {
         highlightedRef.current = next
-        setHighlightedIdsRef.current?.(next)
+        setHighlightedIdsRef.current(next)
       }
     })
 
@@ -199,7 +212,6 @@ export default function TimelinePlayhead({
   // or panel re-selection). Once the lock is released, the playhead is
   // left where we parked it so sweeping resumes from that trip — per
   // product: "resume from where the label was clicked."
-  const lockedTrip = ctx?.lockedTrip ?? null
   useEffect(() => {
     if (!lockedTrip) return
     const c = controllerRef.current
@@ -216,13 +228,12 @@ export default function TimelinePlayhead({
   useEffect(() => {
     const s = lastStateRef.current
     if (s) applyDom(s)
-  }, [zoomWindow, containerWidth, leftOffsetPx, ctx?.lockedTrip])
+  }, [zoomWindow, containerWidth, leftOffsetPx, lockedTrip])
 
   // RAF loop gated by playbackActive (which already folds in isPaused +
   // the 5s idle-resume ramp from GlobeProvider). The `last` timestamp
   // resets to null on teardown so the first tick after resume sees dt=0
   // instead of the elapsed paused duration.
-  const playbackActive = ctx?.playbackActive ?? true
   const lastFrameRef = useRef<number | null>(null)
   useEffect(() => {
     if (!playbackActive) {
@@ -245,30 +256,29 @@ export default function TimelinePlayhead({
   // subsystems (arcs, segments) return to neutral.
   useEffect(() => {
     return () => {
-      setHighlightedIdsRef.current?.([])
+      setHighlightedIdsRef.current([])
     }
   }, [])
 
   const onLabelEnter = () => {
-    ctx?.addPauseReason(PAUSE_REASON)
+    addPauseReason(PAUSE_REASON)
   }
   const onLabelLeave = () => {
-    ctx?.removePauseReason(PAUSE_REASON)
+    removePauseReason(PAUSE_REASON)
   }
   const onLabelClick = () => {
-    if (!ctx) return
-    if (ctx.isMobile) return // E3 owns mobile preview behavior
+    if (isMobile) return // E3 owns mobile preview behavior
     const ids = highlightedRef.current
     if (ids.length === 0) return
     const id = ids[0]
     const trip = tripsRef.current.find((t) => t.id === id)
     if (!trip) return
-    ctx.removePauseReason(PAUSE_REASON)
-    if (ctx.lockedTrip === id) {
-      ctx.setLockedTrip(null)
+    removePauseReason(PAUSE_REASON)
+    if (lockedTrip === id) {
+      setLockedTrip(null)
       if (searchParams?.get('trip')) router.push('/globe', { scroll: false })
     } else {
-      ctx.setLockedTrip(id)
+      setLockedTrip(id)
       if (trip.slug) {
         const next = trip.slug.current
         if (searchParams?.get('trip') !== next) {

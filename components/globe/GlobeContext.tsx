@@ -34,8 +34,39 @@ export interface GlobeDataContextValue {
       the first frame is projected. Connectors read this to occlude the
       back-of-globe segment of their line. */
   globeScreenRef: MutableRefObject<GlobeScreenCircle | null>
-  /** Callbacks invoked by GlobePositionBridge at the end of every R3F
-      frame, after pin positions and the globe silhouette are written. */
+  /**
+   * Callbacks invoked by GlobePositionBridge at the end of every R3F frame,
+   * after pin positions and the globe silhouette are written.
+   *
+   * ### Canonical subscription pattern
+   *
+   * Consumers register a tick callback inside a `useEffect` and must remove
+   * the same reference in the cleanup to prevent leaks:
+   *
+   * ```tsx
+   * useEffect(() => {
+   *   const subscribers = frameSubscribersRef.current
+   *   const update = () => { ... read refs, update DOM ... }
+   *   subscribers.add(update)
+   *   return () => {
+   *     subscribers.delete(update)
+   *   }
+   * }, [])
+   * ```
+   *
+   * Rules:
+   * - Alias `subscribers = frameSubscribersRef.current` once inside the
+   *   effect; write both `.add` and `.delete` against that alias.
+   * - The `update` closure must be a named `const` — passing a fresh inline
+   *   arrow to both `.add` and `.delete` silently leaks because the `delete`
+   *   reference doesn't match the one that was added.
+   * - Subscribers should read all external state (selectedPin, layoutState,
+   *   pin positions) through refs, so the effect doesn't have to tear down
+   *   and re-register on every context update.
+   *
+   * Audit callers: `rg '(frameSubscribersRef\.current|subscribers)\.(add|delete)' components`
+   * — both direct and aliased access must be paired.
+   */
   frameSubscribersRef: MutableRefObject<Set<() => void>>
 }
 export const GlobeDataContext = createContext<GlobeDataContextValue | null>(null)
