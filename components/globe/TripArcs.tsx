@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useMemo, useRef, type Ref } from 'react'
+import { memo, useEffect, useMemo, useRef, type Ref } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Line } from '@react-three/drei'
 import * as THREE from 'three'
-import { useGlobe } from './GlobeContext'
+import { useGlobeData, useGlobeTrip, useGlobePlayback, useGlobeUI } from './GlobeContext'
 import { GLOBE_RADIUS } from '@/lib/globe'
 
 const ARC_SURFACE_OFFSET = 0.01
@@ -338,6 +338,8 @@ function ArcLine({
   )
 }
 
+const MemoArcLine = memo(ArcLine)
+
 // Deterministic, well-spread phase in [0, 1) from a trip id. String hashing
 // → [0, 1); avoids two trips with adjacent alphabetical ids from starting
 // their cycles within a few frames of each other.
@@ -352,8 +354,10 @@ function phaseFromId(id: string): number {
 }
 
 export default function TripArcs() {
-  const { tripsWithVisits, hoveredTrip, lockedTrip, playbackHighlightedTripIds, isDark } =
-    useGlobe()
+  const { tripsWithVisits } = useGlobeData()
+  const { hoveredTrip, lockedTrip } = useGlobeTrip()
+  const { playbackHighlightedTripIds } = useGlobePlayback()
+  const { isDark } = useGlobeUI()
 
   const arcs: ArcData[] = useMemo(() => {
     const result: ArcData[] = []
@@ -415,7 +419,7 @@ export default function TripArcs() {
           ? isLocked
           : hoveredTrip === arc.tripId || playbackSet.has(arc.tripId)
         return (
-          <ArcLine
+          <MemoArcLine
             key={arc.key}
             points={arc.points}
             idleColor={idleColor}

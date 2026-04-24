@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic'
 import { useRef, useCallback, useState, useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { useGlobe } from './GlobeContext'
+import { useGlobePin, useGlobeUI, useGlobeRoute } from './GlobeContext'
 import { clampPanelTop, TRIP_PANEL_TOP_PX } from '@/lib/globe'
 import GlobeFallbackSVG from './GlobeFallbackSVG'
 import GlobeDetailPanel from './GlobeDetailPanel'
@@ -24,15 +24,9 @@ const GlobeCanvas = dynamic(() => import('./GlobeCanvas'), {
 const ARTICLE_GLOBE_WIDTH_FRAC = 0.3
 
 export default function GlobeViewport({ children }: { children?: React.ReactNode }) {
-  const {
-    selectedPinScreenY,
-    tier,
-    isMobile,
-    isDesktop,
-    layoutState,
-    panelVariant,
-    closeArticle,
-  } = useGlobe()
+  const { selectedPinScreenY } = useGlobePin()
+  const { tier, isMobile, isDesktop, layoutState, panelVariant } = useGlobeUI()
+  const { closeArticle } = useGlobeRoute()
 
   // Drag-vs-click discriminator — accumulate total travel between
   // pointerdown and pointerup so any wiggle beyond 5px cancels the close.
@@ -214,7 +208,7 @@ function MobileGlobeLayout({
   onPointerDown,
   onPointerMove,
 }: MobileGlobeLayoutProps) {
-  const { layoutState } = useGlobe()
+  const { layoutState } = useGlobeUI()
 
   const isArticle = layoutState === 'article-open'
 

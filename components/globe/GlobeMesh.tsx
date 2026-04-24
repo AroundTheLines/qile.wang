@@ -4,7 +4,7 @@ import { useMemo } from 'react'
 import * as THREE from 'three'
 import { Line } from '@react-three/drei'
 import * as topojson from 'topojson-client'
-import { useGlobe } from './GlobeContext'
+import { useGlobeUI } from './GlobeContext'
 import { GLOBE_RADIUS } from '@/lib/globe'
 
 const GRID_SEGMENTS_W = 36
@@ -82,7 +82,7 @@ function GlobeShadow() {
 }
 
 export default function GlobeMesh() {
-  const { isDark } = useGlobe()
+  const { isDark } = useGlobeUI()
   const borderLines = useMemo(() => parseCountryBorders(), [])
 
   const wireframeGeo = useMemo(() => {

@@ -1,14 +1,16 @@
 'use client'
 
-import { useGlobe } from './GlobeContext'
+import { useGlobeData, useGlobePin, useGlobeTrip, useGlobeUI } from './GlobeContext'
 import MobileTripList from './MobileTripList'
 import MobileNavChrome from './MobileNavChrome'
 import PinPanel from './panels/PinPanel'
 import TripPanel from './panels/TripPanel'
 
 export default function MobileContentRegion() {
-  const { panelVariant, pins, selectedPin, lockedTrip, tripsWithVisits } =
-    useGlobe()
+  const { pins, tripsWithVisits } = useGlobeData()
+  const { selectedPin } = useGlobePin()
+  const { lockedTrip } = useGlobeTrip()
+  const { panelVariant } = useGlobeUI()
 
   if (!panelVariant) {
     return <MobileTripList />

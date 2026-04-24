@@ -1,7 +1,7 @@
 'use client'
 
-import { useContext, useMemo } from 'react'
-import { GlobeContext } from './GlobeContext'
+import { useMemo } from 'react'
+import { useGlobeData } from './GlobeContext'
 import type { CompressedMap } from '@/lib/timelineCompression'
 
 interface Props {
@@ -21,11 +21,10 @@ export default function TimelineVisitTicks({
   containerWidth,
   segmentLeftPx,
 }: Props) {
-  const ctx = useContext(GlobeContext)
   // Destructure so the memo depends on the stable `pins` array rather than
   // the whole ctx object, which the provider rebuilds every render (hover
   // flips, frame-sub set churn). Matches the B4 shipped-notes dep pattern.
-  const pins = ctx?.pins
+  const { pins } = useGlobeData()
 
   const visits = useMemo(() => {
     if (!pins) return []
