@@ -308,7 +308,7 @@ function ArcLine({
       {/* Base layer — always visible; brightens when its trip is highlighted
           so the path remains legible in the gaps between overlay sweeps. */}
       <Line
-        ref={baseRef as Ref<LineRef>}
+        ref={baseRef as unknown as Ref<never>}
         points={points}
         color={idleColor}
         lineWidth={BASE_WIDTH_INACTIVE}
@@ -321,7 +321,7 @@ function ArcLine({
           Paints on top of the base so the traversal reads as a highlight
           sliding over the persistent path. */}
       <Line
-        ref={overlayRef as Ref<LineRef>}
+        ref={overlayRef as unknown as Ref<never>}
         points={points}
         color={idleColor}
         lineWidth={OVERLAY_INACTIVE_WIDTH}
@@ -406,11 +406,14 @@ export default function TripArcs() {
   return (
     <group>
       {arcs.map((arc) => {
-        const isHighlighted =
-          hoveredTrip === arc.tripId ||
-          lockedTrip === arc.tripId ||
-          playbackSet.has(arc.tripId)
         const isLocked = lockedTrip === arc.tripId
+        // When a trip is locked, suppress playback/hover highlight on
+        // other trips so the selection reads as a single connected set
+        // (mirrors GlobePins — avoids lighting up an arc for a trip that
+        // merely overlaps the locked trip's date range).
+        const isHighlighted = lockedTrip
+          ? isLocked
+          : hoveredTrip === arc.tripId || playbackSet.has(arc.tripId)
         return (
           <ArcLine
             key={arc.key}
