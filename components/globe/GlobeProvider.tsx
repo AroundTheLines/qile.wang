@@ -78,12 +78,31 @@ export default function GlobeProvider({
   const [selectedPinScreenY, setSelectedPinScreenY] = useState<number | null>(null)
 
   // --- Trip state ---
-  const [lockedTrip, setLockedTripState] = useState<string | null>(null)
+  const [lockedTrip, _setLockedTripRaw] = useState<string | null>(null)
   const [hoveredTrip, setHoveredTrip] = useState<string | null>(null)
   const [previewTrip, setPreviewTrip] = useState<string | null>(null)
 
   // --- Playback state ---
   const [playbackHighlightedTripIds, setPlaybackHighlightedTripIds] = useState<string[]>([])
+  /**
+   * Set of active pause reasons driving `isPaused`. Mutated exclusively via
+   * `addPauseReason` / `removePauseReason` callbacks — never reach in and
+   * mutate `.current` directly.
+   *
+   * ### Canonical usage
+   *
+   * ```tsx
+   * const { addPauseReason, removePauseReason } = useGlobePlayback()
+   * useEffect(() => {
+   *   addPauseReason('my-reason')
+   *   return () => removePauseReason('my-reason')
+   * }, [])
+   * ```
+   *
+   * Every `add` must be paired with a matching `remove` in the effect's
+   * cleanup. Reason strings must be unique per call site (use kebab-case
+   * namespacing like `timeline-pan`, `pin-hover`).
+   */
   const pauseReasonsRef = useRef<Set<string>>(new Set())
   const [pauseReasonCount, setPauseReasonCount] = useState(0)
 
@@ -154,7 +173,7 @@ export default function GlobeProvider({
   // GlobeViewport), so clearing it here keeps state tidy for the next
   // pin selection.
   const setLockedTrip = useCallback((id: string | null) => {
-    setLockedTripState(id)
+    _setLockedTripRaw(id)
     if (id !== null) {
       setSelectedPin(null)
       setSelectedPinScreenY(null)
@@ -313,11 +332,11 @@ export default function GlobeProvider({
       // On base /globe with no ?trip=, unlock. Article routes (/globe/<slug>)
       // keep the current lock untouched — they don't own trip state.
       if (pathname === '/globe') {
-        setLockedTripState((prev) => (prev === null ? prev : null))
+        _setLockedTripRaw((prev) => (prev === null ? prev : null))
       }
       return
     }
-    setLockedTripState((prev) => {
+    _setLockedTripRaw((prev) => {
       const target = trips.find((t) => t.slug.current === slugFromUrl)
       return target ? target._id : prev
     })
