@@ -45,6 +45,10 @@ export default function TripPanel({ trip }: Props) {
     if (!visit) return
     const el = sectionRefs.current.get(visit._id)
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // Pulse must survive after `pinToScrollTo` is cleared below — otherwise
+    // VisitSection's effect would re-run with null and (worst case, under
+    // timer-ordering races) could leave its data-pulsing attribute stuck.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPulse({ visitId: visit._id, nonce: pinToScrollTo.nonce })
     const timer = setTimeout(() => {
       clearPinScroll()

@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, useEffect, useMemo, useLayoutEffect, useCallback, useContext } from 'react'
+import { useRef, useState, useEffect, useMemo, useLayoutEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { buildCompressedMap, type TripRange, type CompressedMap } from '@/lib/timelineCompression'
 import { dragPan, pinchZoom, wheelPan, wheelZoom, type ZoomWindow } from '@/lib/timelineZoom'
@@ -8,7 +8,7 @@ import TimelineSegment from './TimelineSegment'
 import TimelineAxis from './TimelineAxis'
 import TimelinePinBands from './TimelinePinBands'
 import TimelinePlayhead from './TimelinePlayhead'
-import { GlobeContext } from './GlobeContext'
+import { useGlobe } from './GlobeContext'
 
 type TimelineTrip = TripRange & {
   title?: string
@@ -110,15 +110,14 @@ type GestureState =
   | null
 
 export default function Timeline({ className, now }: TimelineProps) {
-  const ctx = useContext(GlobeContext)
+  const ctx = useGlobe()
   const router = useRouter()
   const searchParams = useSearchParams()
 
   // Depend on the trips array identity, not `ctx` — the provider rebuilds its
   // context value object every render, so `[ctx]` would recompute unnecessarily.
-  const ctxTripsSource = ctx?.trips
-  const ctxTrips = useMemo<TimelineTrip[] | null>(() => {
-    if (!ctxTripsSource) return null
+  const ctxTripsSource = ctx.trips
+  const trips = useMemo<TimelineTrip[]>(() => {
     // Filter zero-visit trips (null startDate/endDate per §1.4) and adapt to
     // TripRange shape. Using _id as the timeline identity to match context's
     // lockedTrip/hoveredTrip fields (C1 resolver writes _id, not slug).
@@ -133,15 +132,11 @@ export default function Timeline({ className, now }: TimelineProps) {
       }))
   }, [ctxTripsSource])
 
-  const trips: TimelineTrip[] = ctxTrips ?? []
-
   const wrapperRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   const [labelWidths, setLabelWidths] = useState<Record<string, LabelWidths>>({})
-  // Fallback active id when there is no provider.
-  const [localActiveId, setLocalActiveId] = useState<string | null>(null)
-  const activeId = ctx ? (ctx.hoveredTrip ?? ctx.lockedTrip) : localActiveId
+  const activeId = ctx.hoveredTrip ?? ctx.lockedTrip
   // Mobile opens slightly zoomed-in so the edge fades (below) read as "more
   // to reveal by zooming/panning" rather than a solid wall. Desktop keeps
   // full-history because there's plenty of horizontal room to show it all.
@@ -196,7 +191,7 @@ export default function Timeline({ className, now }: TimelineProps) {
   const zoomWindowRef = useRef(zoomWindow)
   zoomWindowRef.current = zoomWindow
   const panOverscrollRef = useRef(0)
-  panOverscrollRef.current = ctx?.isMobile ? MOBILE_PAN_OVERSCROLL : 0
+  panOverscrollRef.current = ctx.isMobile ? MOBILE_PAN_OVERSCROLL : 0
 
   // Latest intended zoom window — prefers an in-flight rAF update over React
   // state. Used by gesture starts so a pointerdown/wheel mid-flight picks up
@@ -246,8 +241,8 @@ export default function Timeline({ className, now }: TimelineProps) {
   // short-circuit inside the tween step is needed.
   const zoomResetRafRef = useRef<number | null>(null)
   const prevPlaybackActiveRef = useRef<boolean>(true)
-  const playbackActive = ctx?.playbackActive ?? true
-  const isMobile = ctx?.isMobile ?? false
+  const playbackActive = ctx.playbackActive
+  const isMobile = ctx.isMobile
   useEffect(() => {
     const prev = prevPlaybackActiveRef.current
     prevPlaybackActiveRef.current = playbackActive
@@ -300,18 +295,16 @@ export default function Timeline({ className, now }: TimelineProps) {
       const isPan = Math.abs(e.deltaX) > Math.abs(e.deltaY) && !e.ctrlKey
       // §5.5: timeline pan/zoom pauses playback. Wheel has no "up" event
       // so we add on first event and clear on a quiescence timer.
-      if (ctx) {
-        const reason = isPan ? 'timeline-pan' : 'timeline-zoom'
-        ctx.addPauseReason(reason)
-        if (wheelQuiescenceTimerRef.current) clearTimeout(wheelQuiescenceTimerRef.current)
-        wheelQuiescenceTimerRef.current = setTimeout(() => {
-          // Clear both reasons — a single wheel session may include
-          // pan-dominant and zoom-dominant events interleaved.
-          ctx.removePauseReason('timeline-pan')
-          ctx.removePauseReason('timeline-zoom')
-          wheelQuiescenceTimerRef.current = null
-        }, WHEEL_INTERACTION_END_MS)
-      }
+      const reason = isPan ? 'timeline-pan' : 'timeline-zoom'
+      ctx.addPauseReason(reason)
+      if (wheelQuiescenceTimerRef.current) clearTimeout(wheelQuiescenceTimerRef.current)
+      wheelQuiescenceTimerRef.current = setTimeout(() => {
+        // Clear both reasons — a single wheel session may include
+        // pan-dominant and zoom-dominant events interleaved.
+        ctx.removePauseReason('timeline-pan')
+        ctx.removePauseReason('timeline-zoom')
+        wheelQuiescenceTimerRef.current = null
+      }, WHEEL_INTERACTION_END_MS)
 
       // Trackpad two-finger horizontal swipe → pan. Browsers report this as a
       // wheel event with deltaX dominant and no ctrlKey (pinch is ctrlKey+deltaY).
@@ -349,7 +342,7 @@ export default function Timeline({ className, now }: TimelineProps) {
       // First crossing of the drag threshold: now it's a real pan, so
       // claim the pause reason. A pure tap (no movement) never gets here,
       // so tapping the timeline background to dismiss doesn't pause.
-      if (!panMovedRef.current && ctx) ctx.addPauseReason('timeline-pan')
+      if (!panMovedRef.current) ctx.addPauseReason('timeline-pan')
       panMovedRef.current = true
       scheduleZoom(dragPan(gesture.startZoom, dx, rect.width, panOverscrollRef.current))
     } else if (gesture.kind === 'pinch') {
@@ -396,10 +389,8 @@ export default function Timeline({ className, now }: TimelineProps) {
       // §5.5: release timeline gesture pause reasons. Both are cleared
       // unconditionally — a gesture may have transitioned pan↔pinch
       // mid-interaction.
-      if (ctx) {
-        ctx.removePauseReason('timeline-pan')
-        ctx.removePauseReason('timeline-zoom')
-      }
+      ctx.removePauseReason('timeline-pan')
+      ctx.removePauseReason('timeline-zoom')
     } else if (pointersRef.current.size === 1) {
       // Dropped from pinch → pan: re-seed pan from the remaining pointer.
       const remaining = pointersRef.current.values().next().value!
@@ -458,14 +449,14 @@ export default function Timeline({ className, now }: TimelineProps) {
       // §5.5: pinch zoom on the timeline pauses playback. If a pan was
       // already armed (first finger) we keep its reason too — both are
       // released together on the pointerup-to-zero transition.
-      if (ctx) ctx.addPauseReason('timeline-zoom')
+      ctx.addPauseReason('timeline-zoom')
     }
     attachWindowListeners()
   }
 
   const playbackHighlightSet = useMemo(
-    () => new Set(ctx?.playbackHighlightedTripIds ?? []),
-    [ctx?.playbackHighlightedTripIds],
+    () => new Set(ctx.playbackHighlightedTripIds),
+    [ctx.playbackHighlightedTripIds],
   )
 
   const displayLabels = useMemo(() => computeDisplayLabels(trips), [trips])
@@ -505,12 +496,12 @@ export default function Timeline({ className, now }: TimelineProps) {
     })
   }, [measureKey])
 
-  const trackInsetX = ctx?.isMobile ? MOBILE_TRACK_INSET_X : TRACK_INSET_X
+  const trackInsetX = ctx.isMobile ? MOBILE_TRACK_INSET_X : TRACK_INSET_X
 
   // Tap targets on mobile need room to hit reliably; desktop keeps the
   // compact 14px row since hover is pointer-precise. Text stays 10px and
   // line-height matches the row so it remains vertically centered.
-  const labelRowHeight = ctx?.isMobile ? 18 : LABEL_ROW_HEIGHT
+  const labelRowHeight = ctx.isMobile ? 18 : LABEL_ROW_HEIGHT
   const innerWidth = Math.max(0, width - trackInsetX * 2)
 
   // Row assignment is computed against the full-history view, not the current
@@ -597,7 +588,7 @@ export default function Timeline({ className, now }: TimelineProps) {
     [trips, displayLabels],
   )
 
-  const isDesktopHover = ctx?.isDesktop ?? true
+  const isDesktopHover = ctx.isDesktop
 
   // Debounce the pause-add so brief cursor transit (<150ms) across a label
   // doesn't pause playback. §5.5 explicitly excludes brief transit.
@@ -611,10 +602,6 @@ export default function Timeline({ className, now }: TimelineProps) {
 
   const handleLabelEnter = useCallback(
     (trip: TimelineTrip) => {
-      if (!ctx) {
-        setLocalActiveId(trip.id)
-        return
-      }
       if (!isDesktopHover) return
       ctx.setHoveredTrip(trip.id)
       if (labelHoverPauseTimerRef.current) clearTimeout(labelHoverPauseTimerRef.current)
@@ -628,10 +615,6 @@ export default function Timeline({ className, now }: TimelineProps) {
 
   const handleLabelLeave = useCallback(
     (trip: TimelineTrip) => {
-      if (!ctx) {
-        setLocalActiveId((cur) => (cur === trip.id ? null : cur))
-        return
-      }
       // Cancel the pending add — if the hover didn't last past the debounce
       // window, the pause reason never fires.
       if (labelHoverPauseTimerRef.current) {
@@ -648,10 +631,6 @@ export default function Timeline({ className, now }: TimelineProps) {
 
   const handleLabelClick = useCallback(
     (trip: TimelineTrip) => {
-      if (!ctx) {
-        setLocalActiveId((cur) => (cur === trip.id ? null : trip.id))
-        return
-      }
       // E3 will introduce a preview-then-lock flow on mobile. Until it
       // ships, mirror desktop so the mobile timeline isn't dead on tap.
       if (ctx.lockedTrip === trip.id) {
@@ -676,10 +655,6 @@ export default function Timeline({ className, now }: TimelineProps) {
 
   const handleBackgroundClick = useCallback(() => {
     if (panMovedRef.current) return
-    if (!ctx) {
-      setLocalActiveId(null)
-      return
-    }
     if (ctx.lockedTrip) {
       ctx.setLockedTrip(null)
       if (searchParams?.get('trip')) {
@@ -688,7 +663,7 @@ export default function Timeline({ className, now }: TimelineProps) {
     }
   }, [ctx, router, searchParams])
 
-  if (ctx?.fetchError) {
+  if (ctx.fetchError) {
     return (
       <div
         ref={wrapperRef}
@@ -898,7 +873,7 @@ export default function Timeline({ className, now }: TimelineProps) {
       {renderTodayMarker()}
       {renderLabels()}
 
-      {width > 0 && ctx && (
+      {width > 0 && (
         <TimelinePlayhead
           compressed={compressed}
           zoomWindow={zoomWindow}
