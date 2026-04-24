@@ -172,7 +172,9 @@ export default function GlobeScene() {
         endPos,
         duration: ARTICLE_ZOOM_DURATION,
       }
-      setAutoRotate(false)
+      // Don't touch `autoRotate` — the OrbitControls prop is already gated on
+      // `layoutState === 'default'`, so rotation is suppressed while the
+      // article is open. See 5c-g1.
       setControlsEnabled(false)
     },
     [pins, camera, isMobile],

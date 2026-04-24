@@ -96,3 +96,39 @@ Option A is less code and removes a source of drift. Prefer it unless Dev C note
 
 - PR title: `5c-g1: restore auto-rotate after article close`.
 - In the PR description, reference [`5c-b6-playback-engine.md`](./5c-b6-playback-engine.md) "Auto-rotate after trip deselect" — this ticket completes the pattern for the article path.
+
+---
+
+## Shipped decisions
+
+Recording the decisions made during implementation so future readers don't have to re-derive them from the diff.
+
+### Chose Option A (deletion) over Option B (explicit restore)
+
+Deleted `setAutoRotate(false)` from `startArticleZoom` rather than adding a matching `setAutoRotate(true)` at the article-close zoom completion path. Rationale:
+- Matches the invariant already documented in the trip-fit path ([`GlobeScene.tsx`](../../components/globe/GlobeScene.tsx) L308): "Don't touch `autoRotate` — the OrbitControls prop is already gated by `layoutState`."
+- Option B would have required a symmetric restore in every exit path (close via Escape, close via back button, deselect while article open, etc.), each a new chance for drift. Option A has no exit paths to remember.
+- The `autoRotate` React state is allowed to remain `true` across lock cycles. The prop at [`GlobeScene.tsx`](../../components/globe/GlobeScene.tsx) L484–485 evaluates `layoutState === 'default' && autoRotate && controlsEnabled`, so the `layoutState` gate alone suppresses rotation during `'article-open'`, and `controlsEnabled=false` suppresses it during the zoom tween. No state mutation needed.
+
+### What stayed in `startArticleZoom`
+
+- `setControlsEnabled(false)` is **load-bearing** and was not touched. It prevents OrbitControls from responding to user input during the article-zoom animation. It is re-enabled when the zoom completes (or when the article closes, depending on path).
+- A second `setControlsEnabled(false)` at [`GlobeScene.tsx`](../../components/globe/GlobeScene.tsx) L424 keeps controls disabled for the duration of the article view while `layoutState === 'article-open'`. Also untouched.
+
+### Cold deep-link to `/trip/<slug>` — traced to confirm correctness
+
+On cold deep-link, entrance animation completes, which schedules `setAutoRotate(true)` at +500ms ([`GlobeScene.tsx`](../../components/globe/GlobeScene.tsx) L356). Then `pendingArticleZoom` fires `startArticleZoom`, which flips `controlsEnabled=false`. 500ms later `autoRotate` becomes `true`, but the prop stays `false` because `layoutState === 'article-open'` and `controlsEnabled === false`. After close + deselect, both gates open → rotation resumes. Confirmed this path works identically to the warm path.
+
+### In-code breadcrumb
+
+Added a comment at the deletion site mirroring the existing trip-fit-path comment, so a future reader won't reflexively re-add the disable and re-introduce the regression. Both comment sites now point to the same invariant.
+
+### Non-changes
+
+- No refactoring of the article-zoom state machine.
+- No other camera-behavior changes.
+- No new tests — the camera state machine is Three.js + OrbitControls and has no existing unit-test scaffolding. Verified via the manual matrix in §"How to verify".
+
+### Verification status at merge
+
+Manual verification items from §"Acceptance criteria" / §"How to verify" were left to the repo owner to walk through in the browser; the harness could not reliably automate the multi-step 3D interaction sequence. The code path was traced statically and compiles cleanly; no runtime errors on `/globe` load.
