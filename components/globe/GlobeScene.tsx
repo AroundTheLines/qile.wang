@@ -172,7 +172,6 @@ export default function GlobeScene() {
         endPos,
         duration: ARTICLE_ZOOM_DURATION,
       }
-      setAutoRotate(false)
       setControlsEnabled(false)
     },
     [pins, camera, isMobile],
