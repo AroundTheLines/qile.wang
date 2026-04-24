@@ -76,8 +76,7 @@ export default function TripPanel({ trip }: Props) {
   }
 
   return (
-    // TODO(F1): add `fixture` prop so bones can be (re)captured for the loading state.
-    <Skeleton name="trip-panel" loading={false}>
+    <Skeleton name="trip-panel" loading={false} fixture={<TripPanelFixture />}>
       <PanelChrome title={trip.title} subtitle={subtitle} onClose={handleClose}>
         {/* Global "View trip article" button — per §7.2, the only article link
             in the trip panel. Per-visit sections deliberately omit it. */}
@@ -113,5 +112,28 @@ export default function TripPanel({ trip }: Props) {
         ))}
       </PanelChrome>
     </Skeleton>
+  )
+}
+
+export function TripPanelFixture() {
+  return (
+    <div className="bg-white dark:bg-black border border-gray-200 dark:border-gray-800 h-full flex flex-col">
+      <div className="p-4 pb-2 border-b border-gray-100 dark:border-gray-900">
+        <h2 className="text-sm tracking-widest uppercase font-light text-black dark:text-white">Trip title</h2>
+        <span className="text-[10px] tracking-widest uppercase text-gray-400 dark:text-gray-500 block mt-0.5">March 2022 · 3 visits</span>
+      </div>
+      <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-900">
+        <div className="w-full py-2 border border-black dark:border-white text-center text-[11px] uppercase tracking-widest">View trip article</div>
+      </div>
+      {[1, 2, 3].map((i) => (
+        <div key={i} className="border-b border-gray-100 dark:border-gray-900">
+          <div className="px-4 py-3">
+            <p className="text-xs tracking-widest uppercase">March 2022</p>
+            <p className="text-[10px] text-gray-400">Sample location</p>
+          </div>
+          <div className="px-4 py-2 text-[10px] uppercase text-gray-500">12 items</div>
+        </div>
+      ))}
+    </div>
   )
 }
