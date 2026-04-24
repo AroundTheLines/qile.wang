@@ -417,14 +417,13 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
   // line-height matches the row so it remains vertically centered.
   const labelRowHeight = ctx?.isMobile ? 18 : LABEL_ROW_HEIGHT
   const innerWidth = Math.max(0, width - trackInsetX * 2)
-  const packingInnerWidth = innerWidth
 
   // Row assignment is computed against the full-history view, not the current
   // zoom window. This keeps each label's row (and the wrapper's total height)
   // stable during pan/zoom — otherwise labels shuffle vertically as others
   // cull in and out of the visible window, which reads as jitter.
   const packed = useMemo(() => {
-    if (packingInnerWidth === 0 || trips.length === 0) {
+    if (innerWidth === 0 || trips.length === 0) {
       return {
         items: [] as {
           trip: TripRange & { title?: string }
@@ -454,9 +453,9 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
     const placed = baseItems.map((item) => {
       // Use the full-history anchor to pack. Clamp x to the right edge so the
       // last label doesn't overflow the 100% case.
-      let labelX = item.rawX * packingInnerWidth
-      if (labelX + item.shortWidth > packingInnerWidth) {
-        labelX = Math.max(0, packingInnerWidth - item.shortWidth)
+      let labelX = item.rawX * innerWidth
+      if (labelX + item.shortWidth > innerWidth) {
+        labelX = Math.max(0, innerWidth - item.shortWidth)
       }
       let row = 0
       while (row < rowEnds.length && rowEnds[row] > labelX - LABEL_HORIZONTAL_GAP) row++
@@ -464,7 +463,7 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
       return { ...item, row }
     })
     return { items: placed, rowCount: rowEnds.length }
-  }, [trips, compressed, packingInnerWidth, labelWidths, displayLabels])
+  }, [trips, compressed, innerWidth, labelWidths, displayLabels])
 
   const labelsHeight = packed.rowCount * labelRowHeight
   const totalHeight = FIRST_LABEL_Y + labelsHeight + BOTTOM_PADDING

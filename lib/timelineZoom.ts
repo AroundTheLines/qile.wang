@@ -16,8 +16,13 @@ export function clampZoom(start: number, end: number, overscroll = 0): ZoomWindo
   // fully zoomed out (span == 1), the overscroll collapses to zero because
   // there's nowhere to pan.
   const span = end - start
-  const ov = Math.max(0, overscroll) * Math.max(0, Math.min(span, 1))
-  const minStart = -ov
+  // Overscroll collapses to 0 once the window covers the full history — there
+  // is nowhere left to pan past.
+  const ov =
+    span >= 1 || overscroll <= 0 ? 0 : Math.max(0, overscroll) * Math.max(0, span)
+  // Avoid `-ov` when ov === 0; negation of +0 yields -0 in IEEE 754 and
+  // trips `expect(...).toBe(0)` with Object.is semantics.
+  const minStart = ov > 0 ? -ov : 0
   const maxEnd = 1 + ov
   let s = start
   let e = end
