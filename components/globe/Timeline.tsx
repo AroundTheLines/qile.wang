@@ -9,6 +9,7 @@ import TimelineAxis from './TimelineAxis'
 import TimelinePinBands from './TimelinePinBands'
 import TimelinePlayhead from './TimelinePlayhead'
 import { GlobeContext } from './GlobeContext'
+import { Skeleton } from 'boneyard-js/react'
 
 type TimelineTrip = TripRange & {
   title?: string
@@ -831,6 +832,7 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
   }
 
   return (
+    <Skeleton name="timeline-strip" loading={false} fixture={<TimelineFixture />}>
     <div
       ref={wrapperRef}
       className={`w-full relative overflow-hidden bg-black/5 dark:bg-white/5 select-none ${className ?? ''}`}
@@ -912,6 +914,37 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
           trips={trips}
         />
       )}
+    </div>
+    </Skeleton>
+  )
+}
+
+function TimelineFixture() {
+  return (
+    <div className="w-full h-16 md:h-20 relative bg-black/5 dark:bg-white/5">
+      <div className="absolute inset-x-4 top-1/2 -translate-y-1/2 h-1.5 bg-black/10 dark:bg-white/10" />
+      {[0.1, 0.25, 0.55, 0.82].map((x, i) => (
+        <div key={i}>
+          <div
+            className="absolute inset-y-[25%] bg-black/20 dark:bg-white/[.18]"
+            style={{ left: `calc(${x * 100}% - 2px)`, width: '24px' }}
+          />
+          <span
+            className="absolute text-[10px] tracking-widest uppercase text-black/80 dark:text-white/80 whitespace-nowrap"
+            style={{
+              left: `calc(${x * 100}% - 30px)`,
+              [i % 2 === 0 ? 'bottom' : 'top']: 'calc(50% + 14px)',
+            }}
+          >
+            Sample trip
+          </span>
+        </div>
+      ))}
+      <div className="absolute bottom-0 left-4 right-4 h-4">
+        <span className="absolute text-[9px] uppercase text-black/40 dark:text-white/40" style={{ left: '10%' }}>2020</span>
+        <span className="absolute text-[9px] uppercase text-black/40 dark:text-white/40" style={{ left: '45%' }}>2022</span>
+        <span className="absolute text-[9px] uppercase text-black/40 dark:text-white/40" style={{ left: '85%' }}>2024</span>
+      </div>
     </div>
   )
 }

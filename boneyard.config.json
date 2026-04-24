@@ -1,0 +1,6 @@
+{
+  "out": "./bones",
+  "color": "rgba(0,0,0,0.08)",
+  "darkColor": "rgba(255,255,255,0.08)",
+  "animate": "pulse"
+}
