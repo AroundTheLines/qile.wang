@@ -2,7 +2,6 @@
 
 import dynamic from 'next/dynamic'
 import { useRef, useCallback, useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useGlobe } from './GlobeContext'
 import { clampPanelTop, NAVBAR_HEIGHT_PX, TRIP_PANEL_TOP_PX } from '@/lib/globe'
@@ -12,6 +11,9 @@ import GlobePinTriggers from './GlobePinTriggers'
 import GlobeTooltip from './GlobeTooltip'
 import GlobeHoverConnector from './GlobeHoverConnector'
 import GlobeClickConnector from './GlobeClickConnector'
+import MobileContentRegion from './MobileContentRegion'
+import MobileNavChrome from './MobileNavChrome'
+import Timeline from './Timeline'
 
 const GlobeCanvas = dynamic(() => import('./GlobeCanvas'), {
   ssr: false,
@@ -23,19 +25,14 @@ const ARTICLE_GLOBE_WIDTH_FRAC = 0.3
 
 export default function GlobeViewport({ children }: { children?: React.ReactNode }) {
   const {
-    selectedPin,
-    selectPin,
     selectedPinScreenY,
     tier,
     isMobile,
     isDesktop,
-    pins,
     layoutState,
     panelVariant,
-    activeArticleSlug,
     closeArticle,
   } = useGlobe()
-  const router = useRouter()
 
   // Drag-vs-click discriminator — accumulate total travel between
   // pointerdown and pointerup so any wiggle beyond 5px cancels the close.
@@ -75,127 +72,12 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
       : clampPanelTop(selectedPinScreenY, viewportH || 800)
 
   if (isMobile) {
-    // On mobile, article content opens *inside* the sidecar panel — no separate
-    // full-screen article page. The panel shows either the pin's item list or
-    // the inline article (with a back-to-list button), keeping the globe
-    // visible behind the scrim so the user can always tap back to the globe.
-    const isArticle = layoutState === 'article-open'
-    const resolvedPin =
-      pins.find((p) => p.location._id === selectedPin) ||
-      (activeArticleSlug
-        ? pins.find((p) =>
-            p.visits.some((v) =>
-              v.items.some((i) => i.slug.current === activeArticleSlug),
-            ),
-          )
-        : undefined)
-    const showPanel = Boolean(resolvedPin) && (!!selectedPin || isArticle)
-
-    // Mobile panel width — must match the motion.div style below
-    // (`width: 85vw, maxWidth: 380`). Translating the globe wrapper by half
-    // the panel width puts the canvas center (where the camera-centered pin
-    // lands) at the center of the visible globe sliver.
-    //
-    // We deliberately translate but do NOT scale the wrapper: R3F measures
-    // its container's getBoundingClientRect (which is post-transform), so a
-    // CSS scale shrinks the canvas itself and the pin no longer lands at
-    // the predictable canvas-center pixel. The dim scrim already does the
-    // visual job of de-emphasizing the globe; scaling is unnecessary.
-    const mobilePanelWidth = viewportW
-      ? Math.min(viewportW * 0.85, 380)
-      : 0
-    const mobileGlobeShiftPx = showPanel ? -mobilePanelWidth / 2 : 0
-    // The fixed top navbar consumes the upper ~72px of the viewport. The
-    // pin renders at the canvas vertical center (h/2), but the visible
-    // globe area is below the navbar, so its center sits at (navbar+h)/2.
-    // Shifting the wrapper down by half the navbar height re-centers the
-    // pin in the area that's actually visible to the user.
-    const mobileGlobeShiftYPx = showPanel ? NAVBAR_HEIGHT_PX / 2 : 0
-
-    const closeAll = () => {
-      if (isArticle) router.push('/globe', { scroll: false })
-      selectPin(null)
-    }
-
-    const backToList = () => {
-      router.push('/globe', { scroll: false })
-    }
-
     return (
       <>
         <GlobePinTriggers />
-        <div className="fixed inset-0 w-screen h-screen" style={{ touchAction: 'none' }}>
-          <motion.div
-            className="relative w-full h-full"
-            animate={{
-              x: mobileGlobeShiftPx,
-              y: mobileGlobeShiftYPx,
-            }}
-            transition={{ type: 'spring', stiffness: 200, damping: 30 }}
-          >
-            <GlobeCanvas dragDistanceRef={dragDistance} />
-          </motion.div>
-        </div>
-
-        {/* Scrim + panel are siblings of the globe wrapper (not nested inside)
-            so they share the root stacking context with GlobeNavbar and, being
-            later in DOM at z-50, paint above it. */}
-        <AnimatePresence>
-          {showPanel && (
-            <motion.div
-              className="fixed inset-0 z-50"
-              style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={closeAll}
-            />
-          )}
-        </AnimatePresence>
-
-        <AnimatePresence>
-          {showPanel && resolvedPin && (
-            <motion.div
-              className="fixed top-0 right-0 z-50 h-full"
-              style={{ width: '85vw', maxWidth: 380 }}
-              initial={{ x: '100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              transition={{ type: 'spring', stiffness: 200, damping: 30 }}
-              drag="x"
-              dragConstraints={{ left: 0, right: 0 }}
-              dragElastic={0.2}
-              onDragEnd={(_, info) => {
-                if (info.offset.x > 100) closeAll()
-              }}
-            >
-              {isArticle ? (
-                <div className="bg-white dark:bg-black border border-gray-200 dark:border-gray-800 h-full flex flex-col">
-                  <div className="flex items-center justify-between p-4 pb-2 border-b border-gray-100 dark:border-gray-900">
-                    <button
-                      onClick={backToList}
-                      className="flex items-center gap-2 text-xs tracking-widest uppercase font-light text-black dark:text-white hover:opacity-50 transition-opacity cursor-pointer"
-                      aria-label={`Back to ${resolvedPin.location.name} list`}
-                    >
-                      <span aria-hidden>&larr;</span>
-                      {resolvedPin.location.name}
-                    </button>
-                    <button
-                      onClick={closeAll}
-                      className="w-12 h-12 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-black dark:hover:text-white transition-colors text-lg cursor-pointer"
-                      aria-label="Close panel"
-                    >
-                      &times;
-                    </button>
-                  </div>
-                  <div className="flex-1 min-h-0">{children}</div>
-                </div>
-              ) : (
-                <GlobeDetailPanel />
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <MobileGlobeLayout dragDistanceRef={dragDistance} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove}>
+          {children}
+        </MobileGlobeLayout>
       </>
     )
   }
@@ -315,6 +197,79 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  )
+}
+
+interface MobileGlobeLayoutProps {
+  children?: React.ReactNode
+  dragDistanceRef: React.MutableRefObject<number>
+  onPointerDown: (e: React.PointerEvent) => void
+  onPointerMove: (e: React.PointerEvent) => void
+}
+
+function MobileGlobeLayout({
+  children,
+  dragDistanceRef,
+  onPointerDown,
+  onPointerMove,
+}: MobileGlobeLayoutProps) {
+  const { layoutState } = useGlobe()
+  const globeRegionRef = useRef<HTMLDivElement>(null)
+  const [globeOffscreen, setGlobeOffscreen] = useState(false)
+
+  useEffect(() => {
+    const el = globeRegionRef.current
+    if (!el) return
+    const obs = new IntersectionObserver(
+      ([entry]) => setGlobeOffscreen(!entry.isIntersecting),
+      { threshold: 0.3 },
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [])
+
+  const isArticle = layoutState === 'article-open'
+
+  return (
+    <div className="flex flex-col min-h-screen w-full bg-white dark:bg-black">
+      {/* Globe region — not sticky, scrolls with the page. Navbar (fixed, 72px)
+          overlaps the top of this region; we accept that so the globe reaches
+          full 45vh height without getting cropped. */}
+      <div
+        ref={globeRegionRef}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        className="relative w-full flex-shrink-0"
+        style={{ height: '70vh', touchAction: 'none' }}
+      >
+        <GlobeCanvas dragDistanceRef={dragDistanceRef} />
+        <GlobeTooltip />
+      </div>
+
+      {/* Timeline — sticks below the fixed navbar once the globe scrolls off.
+          Squeeze = wrapper vertical padding shrinks when globeOffscreen flips. */}
+      <div
+        className={`sticky z-30 w-full bg-white dark:bg-black border-b border-black/5 dark:border-white/5 transition-[padding] duration-300 ${
+          globeOffscreen ? 'py-0.5' : 'py-2'
+        }`}
+        style={{ top: NAVBAR_HEIGHT_PX }}
+      >
+        <Timeline />
+      </div>
+
+      {/* Content region — part of the page's vertical flow, not a nested
+          scroll container. Page scroll handles overflow. */}
+      <div className="flex-1 w-full">
+        {isArticle ? (
+          <div className="w-full border-t border-gray-100 dark:border-gray-900">
+            <MobileNavChrome mode="close" />
+            {children}
+          </div>
+        ) : (
+          <MobileContentRegion />
+        )}
+      </div>
     </div>
   )
 }
