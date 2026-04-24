@@ -288,3 +288,90 @@ Test manually:
 6. Resize to mobile → bones render for trip list stub.
 7. Open a pin panel / trip panel quickly → shouldn't see bones in practice (panel is client-side computed, not fetched), but fixture still compiled.
 8. `.dark` class → bones render with dark variant.
+
+---
+
+## Implementation record (shipped 2026-04-23)
+
+What the ticket assumed vs. what actually existed in the repo at implementation time, plus the decisions made to reconcile the two. Future implementers: read this before re-running the build.
+
+### Build URL
+
+**The CLI cannot capture `pin-panel-multi` or `trip-panel` from `/globe` alone.** Those panels only mount when a pin is clicked or a trip is selected, and boneyard's crawler does not simulate clicks.
+
+**Decision:** created [`app/bones-capture/page.tsx`](../../app/bones-capture/page.tsx) + [`app/bones-capture/BonesCaptureClient.tsx`](../../app/bones-capture/BonesCaptureClient.tsx) — a capture-only route that mounts `<Skeleton>` wrappers with their fixtures as standalone siblings. This mirrors the existing `/timeline-dev` pattern.
+
+- **The build command must target this URL explicitly:** `npx boneyard-js build http://localhost:3000/bones-capture`. The CLI still auto-crawls `/globe` (which covers `timeline-strip` + `trip-list-default` at mobile width) but only `/bones-capture` can produce `pin-panel-multi` + `trip-panel`.
+- **Production safety:** the page calls `notFound()` when `NODE_ENV === 'production'` and sets `robots: { index: false, follow: false }`. The CLI always runs against the dev server, so this doesn't affect capture.
+- **Server/client split:** `page.tsx` is a server component (so it can export `metadata`), `BonesCaptureClient.tsx` holds the `<Skeleton>` JSX (hooks need `'use client'`).
+- **Alternative considered, not taken:** adding `?pin=<id>` deeplink support to `GlobeProvider` to make `/globe` directly crawlable. More invasive and couples production URL shape to dev tooling.
+
+### Output directory
+
+Spec said "check the repo structure" — no `./bones/` or `./src/bones/` existed. The only hint was a commented `@/bones/registry` import in [`app/wardrobe/layout.tsx:7`](../../app/wardrobe/layout.tsx).
+
+**Decision:** `./bones/` at repo root. Registered via [`boneyard.config.json`](../../boneyard.config.json) (`"out": "./bones"`) and imported in [`app/layout.tsx`](../../app/layout.tsx) as `import '@/bones/registry'`.
+
+### `boneyard.config.json`
+
+Spec §13.6.3 said dark-mode colors come from "the project's existing boneyard config." **It didn't exist.** Created with best-guess values:
+
+```json
+{
+  "out": "./bones",
+  "color": "rgba(0,0,0,0.08)",
+  "darkColor": "rgba(255,255,255,0.08)",
+  "animate": "pulse"
+}
+```
+
+Colors chosen to match the site's black/white palette. These values are baked into `registry.js` via `configureBoneyard()` — **re-run `npx boneyard-js build` after any config change.**
+
+### Registry import
+
+Spec §13.6.4 said `import './bones/registry'` "must already be in the app entry from prior phases." **It wasn't.** Added to [`app/layout.tsx`](../../app/layout.tsx) (top-level root layout — covers all routes including `/(globe)`, `/wardrobe`, etc.).
+
+The commented line in [`app/wardrobe/layout.tsx:7`](../../app/wardrobe/layout.tsx) can be removed — the root layout import supersedes it.
+
+### Fixture exports
+
+[`PinPanelFixture`](../../components/globe/panels/PinPanel.tsx) and [`TripPanelFixture`](../../components/globe/panels/TripPanel.tsx) are `export`ed from their respective panel files so the `/bones-capture` page can import them. Ambiguity #3 resolution was followed: both single- and multi-visit pin panels share `name="pin-panel-multi"`.
+
+### Timeline wrapping scope
+
+Only the main happy-path `return` in [`Timeline.tsx`](../../components/globe/Timeline.tsx) is wrapped in `<Skeleton>`. The `fetchError` (L694) and empty-trips (L711) branches return bare `<div>`s. Safe today because `loading={false}` on all paths — but **if a future change flips to `loading={true}`, those branches will render without bones.** Worth restructuring at that point, not now.
+
+### Breakpoint coverage by skeleton
+
+- `timeline-strip` — 6 breakpoints (375, 640, 768, 1024, 1280, 1536)
+- `trip-panel` — 6 breakpoints
+- `pin-panel-multi` — 6 breakpoints
+- `trip-list-default` — **2 breakpoints only (375, 640).** Mobile list unmounts at `md` and up, so the CLI gets no DOM to snapshot at larger widths. This is correct, not a bug.
+
+### Pin panel bone width caveat
+
+`pin-panel-multi` is captured at `max-w-md` (448px) on `/bones-capture`. The real panel in `GlobeDetailPanel` uses a different container width (sidebar on desktop, full width on mobile). Bones scale responsively — `x`/`w` are stored as percentages — but fixed-px paddings and border radii may drift at widths far from ~448px. Acceptable for a skeleton loading state; flag if visual mismatch appears.
+
+### Dev-server environment
+
+The worktree did not have `.env.local` at implementation time — copied from the parent repo to get past Sanity config errors during the build. `.env*` is gitignored; not committed.
+
+### Runtime bone rendering — not exhaustively verified
+
+Confirmed during implementation: `data-boneyard` attribute is present in DOM (registry loaded), CLI reports `.bones.json` files well-formed, `/bones-capture` renders without errors in both light and dark mode.
+
+**Not verified:** actual bone overlays rendering at runtime with `loading={true}`, or during the SSR→hydration gap on a cold slow-network load. That remains a manual verification step per §How to verify above.
+
+### Commands reference (for re-runs)
+
+```bash
+# Start dev server
+npm run dev
+
+# Capture all 4 skeletons (CLI crawls /globe for timeline + trip list,
+# uses /bones-capture for the two panels):
+npx boneyard-js build http://localhost:3000/bones-capture
+
+# --force if you want to bypass the incremental cache and recapture everything
+npx boneyard-js build http://localhost:3000/bones-capture --force
+```
