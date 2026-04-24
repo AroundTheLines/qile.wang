@@ -337,6 +337,10 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
     if (gesture.kind === 'pan') {
       const dx = e.clientX - gesture.startClientX
       if (!panMovedRef.current && Math.abs(dx) < DRAG_THRESHOLD_PX) return
+      // First crossing of the drag threshold: now it's a real pan, so
+      // claim the pause reason. A pure tap (no movement) never gets here,
+      // so tapping the timeline background to dismiss doesn't pause.
+      if (!panMovedRef.current && ctx) ctx.addPauseReason('timeline-pan')
       panMovedRef.current = true
       scheduleZoom(dragPan(gesture.startZoom, dx, rect.width, panOverscrollRef.current))
     } else if (gesture.kind === 'pinch') {
@@ -425,8 +429,8 @@ export default function Timeline({ trips: tripsProp, className, now }: TimelineP
         startClientX: e.clientX,
         startZoom,
       }
-      // §5.5: pointer drag on the timeline track pauses playback.
-      if (ctx) ctx.addPauseReason('timeline-pan')
+      // Pause reason is added later, once movement crosses DRAG_THRESHOLD_PX
+      // in moveImplRef — a pure tap (no drag) must not pause playback.
     } else if (size === 2) {
       const iter = pointersRef.current.values()
       const a = iter.next().value!
