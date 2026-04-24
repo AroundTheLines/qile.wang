@@ -406,11 +406,14 @@ export default function TripArcs() {
   return (
     <group>
       {arcs.map((arc) => {
-        const isHighlighted =
-          hoveredTrip === arc.tripId ||
-          lockedTrip === arc.tripId ||
-          playbackSet.has(arc.tripId)
         const isLocked = lockedTrip === arc.tripId
+        // When a trip is locked, suppress playback/hover highlight on
+        // other trips so the selection reads as a single connected set
+        // (mirrors GlobePins — avoids lighting up an arc for a trip that
+        // merely overlaps the locked trip's date range).
+        const isHighlighted = lockedTrip
+          ? isLocked
+          : hoveredTrip === arc.tripId || playbackSet.has(arc.tripId)
         return (
           <ArcLine
             key={arc.key}
