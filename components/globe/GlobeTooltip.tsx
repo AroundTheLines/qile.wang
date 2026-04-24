@@ -27,13 +27,12 @@ export default function GlobeTooltip() {
 
   // Delay the "visible" state transition — re-runs on every hoveredPin
   // change, so scrubbing across pins resets the timer (still snappy, but
-  // avoids flicker when the pointer grazes neighbors). The immediate
-  // `setVisible(false)` when hover clears and the deferred `setVisible(true)`
-  // are both timer-gated state transitions (async); the rule's
-  // cascading-render warning doesn't apply.
+  // avoids flicker when the pointer grazes neighbors). The `false` branch
+  // is a synchronous clear (no dwell required to hide); the `true` branch
+  // is timer-gated so brief pointer transit doesn't flash the tooltip.
   useEffect(() => {
     if (!hoveredPin || !showHover) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- timer-gated visibility
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- derived clear on hover-out
       setVisible(false)
       return
     }
