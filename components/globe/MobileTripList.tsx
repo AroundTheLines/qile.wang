@@ -26,6 +26,12 @@ export default function MobileTripList() {
   const handleSelect = (tripId: string, slug: string) => {
     setLockedTrip(tripId)
     router.push(`/globe?trip=${encodeURIComponent(slug)}`, { scroll: false })
+    // Smooth-scroll back to the top so the globe and timeline come into
+    // view alongside the newly opened trip panel below. Without this the
+    // viewport stays parked on the tapped row.
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
   }
 
   if (trips.length === 0) {
