@@ -299,7 +299,9 @@ What the ticket assumed vs. what actually existed in the repo at implementation 
 
 **The CLI cannot capture `pin-panel-multi` or `trip-panel` from `/globe` alone.** Those panels only mount when a pin is clicked or a trip is selected, and boneyard's crawler does not simulate clicks.
 
-**Decision:** created [`app/bones-capture/page.tsx`](../../app/bones-capture/page.tsx) + [`app/bones-capture/BonesCaptureClient.tsx`](../../app/bones-capture/BonesCaptureClient.tsx) — a capture-only route that mounts `<Skeleton>` wrappers with their fixtures as standalone siblings. This mirrors the existing `/timeline-dev` pattern.
+**Decision:** created [`app/bones-capture/page.tsx`](../../app/bones-capture/page.tsx) + [`app/bones-capture/BonesCaptureClient.tsx`](../../app/bones-capture/BonesCaptureClient.tsx) — a capture-only route that mounts `<Skeleton>` wrappers with their fixtures as standalone siblings. This mirrors the (since-retired in B8) `/timeline-dev` pattern.
+
+> **Post-merge update (2026-04-24):** Timeline was refactored in the integration branch to read trips from `useGlobe()` instead of props, and `/timeline-dev` + its mocks were deleted (B8). The merge preserved the Skeleton wrapping and `TimelineFixture`; re-ran boneyard afterwards — `timeline-strip` bones shrank (~300 bone entries removed) because the refactored Timeline renders less measurement chrome, but all 4 skeletons still capture at the same breakpoint counts. If future refactors to Timeline, TripPanel, or PinPanel change DOM shape, re-run `npx boneyard-js build http://localhost:3000/bones-capture --force` and commit the updated `.bones.json` diff.
 
 - **The build command must target this URL explicitly:** `npx boneyard-js build http://localhost:3000/bones-capture`. The CLI still auto-crawls `/globe` (which covers `timeline-strip` + `trip-list-default` at mobile width) but only `/bones-capture` can produce `pin-panel-multi` + `trip-panel`.
 - **Production safety:** the page calls `notFound()` when `NODE_ENV === 'production'` and sets `robots: { index: false, follow: false }`. The CLI always runs against the dev server, so this doesn't affect capture.
