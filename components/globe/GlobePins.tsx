@@ -90,7 +90,11 @@ function Pin({
     [pins, locationId],
   )
   const isInActiveTrip = useMemo(() => {
-    if (lockedTrip && pinTripIds.includes(lockedTrip)) return true
+    // When a trip is locked, the lock conveys the user's explicit intent —
+    // ignore the playback highlight (which by design lights up every trip
+    // whose date range contains the playhead, so overlapping trips would
+    // otherwise bleed the selection ring onto unrelated pins).
+    if (lockedTrip) return pinTripIds.includes(lockedTrip)
     if (hoveredTrip && pinTripIds.includes(hoveredTrip)) return true
     if (playbackHighlightedTripIds.some((id) => pinTripIds.includes(id))) return true
     return false
