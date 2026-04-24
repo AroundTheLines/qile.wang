@@ -92,7 +92,7 @@ export default function GlobeProvider({
    * ### Canonical usage
    *
    * ```tsx
-   * const { addPauseReason, removePauseReason } = useGlobePlayback()
+   * const { addPauseReason, removePauseReason } = useGlobe()
    * useEffect(() => {
    *   addPauseReason('my-reason')
    *   return () => removePauseReason('my-reason')
