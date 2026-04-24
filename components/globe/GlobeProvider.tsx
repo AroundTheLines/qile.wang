@@ -399,7 +399,6 @@ export default function GlobeProvider({
       }
       return
     }
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- URL → state sync
     _setLockedTripRaw((prev) => {
       const target = trips.find((t) => t.slug.current === slugFromUrl)
       return target ? target._id : prev
