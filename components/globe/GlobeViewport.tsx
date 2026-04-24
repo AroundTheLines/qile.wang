@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic'
 import { useRef, useCallback, useState, useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useGlobe } from './GlobeContext'
-import { clampPanelTop, NAVBAR_HEIGHT_PX, TRIP_PANEL_TOP_PX } from '@/lib/globe'
+import { clampPanelTop, TRIP_PANEL_TOP_PX } from '@/lib/globe'
 import GlobeFallbackSVG from './GlobeFallbackSVG'
 import GlobeDetailPanel from './GlobeDetailPanel'
 import GlobePinTriggers from './GlobePinTriggers'
@@ -215,19 +215,6 @@ function MobileGlobeLayout({
   onPointerMove,
 }: MobileGlobeLayoutProps) {
   const { layoutState } = useGlobe()
-  const globeRegionRef = useRef<HTMLDivElement>(null)
-  const [globeOffscreen, setGlobeOffscreen] = useState(false)
-
-  useEffect(() => {
-    const el = globeRegionRef.current
-    if (!el) return
-    const obs = new IntersectionObserver(
-      ([entry]) => setGlobeOffscreen(!entry.isIntersecting),
-      { threshold: 0.3 },
-    )
-    obs.observe(el)
-    return () => obs.disconnect()
-  }, [])
 
   const isArticle = layoutState === 'article-open'
 
@@ -237,7 +224,6 @@ function MobileGlobeLayout({
           overlaps the top of this region; we accept that so the globe reaches
           full 45vh height without getting cropped. */}
       <div
-        ref={globeRegionRef}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         className="relative w-full flex-shrink-0"
@@ -247,20 +233,20 @@ function MobileGlobeLayout({
         <GlobeTooltip />
       </div>
 
-      {/* Timeline — sticks below the fixed navbar once the globe scrolls off.
-          Squeeze = wrapper vertical padding shrinks when globeOffscreen flips. */}
-      <div
-        className={`sticky z-30 w-full bg-white dark:bg-black border-b border-black/5 dark:border-white/5 transition-[padding] duration-300 ${
-          globeOffscreen ? 'py-0.5' : 'py-2'
-        }`}
-        style={{ top: NAVBAR_HEIGHT_PX }}
-      >
+      {/* Timeline — scrolls with the page on mobile (no sticky pin). */}
+      <div className="z-30 w-full bg-white dark:bg-black border-b border-black/5 dark:border-white/5 py-2">
         <Timeline />
       </div>
 
       {/* Content region — part of the page's vertical flow, not a nested
-          scroll container. Page scroll handles overflow. */}
-      <div className="flex-1 w-full">
+          scroll container. Page scroll handles overflow.
+          `min-h-screen` keeps the document tall enough that switching
+          between the (long) trip list and a (shorter) pin/trip panel
+          doesn't snap the page's scroll position when MobileTripList
+          triggers a smooth-scroll back to the globe. Without it, the
+          document shortens mid-animation and scrollY clamps to the new
+          max, cutting the animation short. */}
+      <div className="flex-1 w-full min-h-screen">
         {isArticle ? (
           <div className="w-full border-t border-gray-100 dark:border-gray-900">
             <MobileNavChrome mode="close" />
