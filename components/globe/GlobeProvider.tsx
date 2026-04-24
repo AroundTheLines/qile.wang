@@ -105,12 +105,31 @@ export default function GlobeProvider({
   const [selectedPinScreenY, setSelectedPinScreenY] = useState<number | null>(null)
 
   // --- Trip state ---
-  const [lockedTrip, setLockedTripState] = useState<string | null>(null)
+  const [lockedTrip, _setLockedTripRaw] = useState<string | null>(null)
   const [hoveredTrip, setHoveredTrip] = useState<string | null>(null)
   const [previewTrip, setPreviewTrip] = useState<string | null>(null)
 
   // --- Playback state ---
   const [playbackHighlightedTripIds, setPlaybackHighlightedTripIds] = useState<string[]>([])
+  /**
+   * Set of active pause reasons driving `isPaused`. Mutated exclusively via
+   * `addPauseReason` / `removePauseReason` callbacks — never reach in and
+   * mutate `.current` directly.
+   *
+   * ### Canonical usage
+   *
+   * ```tsx
+   * const { addPauseReason, removePauseReason } = useGlobe()
+   * useEffect(() => {
+   *   addPauseReason('my-reason')
+   *   return () => removePauseReason('my-reason')
+   * }, [])
+   * ```
+   *
+   * Every `add` must be paired with a matching `remove` in the effect's
+   * cleanup. Reason strings must be unique per call site (use kebab-case
+   * namespacing like `timeline-pan`, `pin-hover`).
+   */
   const pauseReasonsRef = useRef<Set<string>>(new Set())
   const [pauseReasonCount, setPauseReasonCount] = useState(0)
 
@@ -189,7 +208,7 @@ export default function GlobeProvider({
   // scroll signal from a just-closed trip panel doesn't leak into the next
   // one.
   const setLockedTrip = useCallback((id: string | null) => {
-    setLockedTripState(id)
+    _setLockedTripRaw(id)
     if (id !== null) {
       setSelectedPin(null)
       setSelectedPinScreenY(null)
@@ -372,7 +391,7 @@ export default function GlobeProvider({
       return
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect -- URL → state sync
-    setLockedTripState((prev) => {
+    _setLockedTripRaw((prev) => {
       const target = trips.find((t) => t.slug.current === slugFromUrl)
       return target ? target._id : prev
     })
