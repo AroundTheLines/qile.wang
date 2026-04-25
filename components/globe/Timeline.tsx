@@ -188,11 +188,16 @@ export default function Timeline({ className, now }: TimelineProps) {
   // Refs mirroring state/memo values so the stable window listeners can read
   // the latest without being re-bound on every render.
   const minZoomSpanRef = useRef(minZoomSpan)
-  minZoomSpanRef.current = minZoomSpan
   const zoomWindowRef = useRef(zoomWindow)
-  zoomWindowRef.current = zoomWindow
   const panOverscrollRef = useRef(0)
-  panOverscrollRef.current = ctx.isMobile ? MOBILE_PAN_OVERSCROLL : 0
+  // React 19's `react-hooks/refs` rule forbids assigning to ref.current
+  // during render — sync the latest values into refs after commit instead.
+  // This effect runs every render (no deps array).
+  useEffect(() => {
+    minZoomSpanRef.current = minZoomSpan
+    zoomWindowRef.current = zoomWindow
+    panOverscrollRef.current = ctx.isMobile ? MOBILE_PAN_OVERSCROLL : 0
+  })
 
   // Latest intended zoom window — prefers an in-flight rAF update over React
   // state. Used by gesture starts so a pointerdown/wheel mid-flight picks up
@@ -321,7 +326,11 @@ export default function Timeline({ className, now }: TimelineProps) {
     }
     el.addEventListener('wheel', handler, { passive: false })
     return () => el.removeEventListener('wheel', handler)
-  }, [scheduleZoom])
+    // ctx is excluded — we depend only on the stable add/removePauseReason
+    // callbacks (memoized in GlobeProvider). Including the full ctx would
+    // re-bind the wheel listener on every provider render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scheduleZoom, ctx.addPauseReason, ctx.removePauseReason])
 
   // Pan/pinch use window-level move/up listeners so the drag keeps tracking
   // when the cursor leaves the timeline. React's delegated onPointerMove is
@@ -329,45 +338,6 @@ export default function Timeline({ className, now }: TimelineProps) {
   // setPointerCapture.
   const moveImplRef = useRef<(e: PointerEvent) => void>(() => {})
   const upImplRef = useRef<(e: PointerEvent) => void>(() => {})
-
-  moveImplRef.current = (e: PointerEvent) => {
-    if (!pointersRef.current.has(e.pointerId)) return
-    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
-    const gesture = gestureRef.current
-    const rect = rectRef.current
-    if (!gesture || !rect || rect.width === 0) return
-
-    if (gesture.kind === 'pan') {
-      const dx = e.clientX - gesture.startClientX
-      if (!panMovedRef.current && Math.abs(dx) < DRAG_THRESHOLD_PX) return
-      // First crossing of the drag threshold: now it's a real pan, so
-      // claim the pause reason. A pure tap (no movement) never gets here,
-      // so tapping the timeline background to dismiss doesn't pause.
-      if (!panMovedRef.current) ctx.addPauseReason('timeline-pan')
-      panMovedRef.current = true
-      scheduleZoom(dragPan(gesture.startZoom, dx, rect.width, panOverscrollRef.current))
-    } else if (gesture.kind === 'pinch') {
-      // Only the two oldest pointers drive the pinch. A 3rd finger is ignored
-      // until one of the original two releases — matches typical map UX.
-      // Iterate the Map directly instead of Array.from().slice to avoid two
-      // allocations per pointermove frame.
-      const iter = pointersRef.current.values()
-      const a = iter.next().value
-      const b = iter.next().value
-      if (!a || !b) return
-      const dist = Math.hypot(a.x - b.x, a.y - b.y)
-      scheduleZoom(
-        pinchZoom(
-          gesture.startCenter,
-          gesture.centerXFrac,
-          gesture.startSpan,
-          gesture.startDist,
-          dist,
-          minZoomSpanRef.current,
-        ),
-      )
-    }
-  }
 
   const stableMove = useCallback((e: PointerEvent) => moveImplRef.current(e), [])
   const stableUp = useCallback((e: PointerEvent) => upImplRef.current(e), [])
@@ -380,29 +350,74 @@ export default function Timeline({ className, now }: TimelineProps) {
     windowListenersRef.current = false
   }, [stableMove, stableUp])
 
-  upImplRef.current = (e: PointerEvent) => {
-    if (!pointersRef.current.has(e.pointerId)) return
-    pointersRef.current.delete(e.pointerId)
-    if (pointersRef.current.size === 0) {
-      gestureRef.current = null
-      rectRef.current = null
-      detachWindowListeners()
-      // §5.5: release timeline gesture pause reasons. Both are cleared
-      // unconditionally — a gesture may have transitioned pan↔pinch
-      // mid-interaction.
-      ctx.removePauseReason('timeline-pan')
-      ctx.removePauseReason('timeline-zoom')
-    } else if (pointersRef.current.size === 1) {
-      // Dropped from pinch → pan: re-seed pan from the remaining pointer.
-      const remaining = pointersRef.current.values().next().value!
-      gestureRef.current = {
-        kind: 'pan',
-        startClientX: remaining.x,
-        startZoom: currentZoom(),
+  // Refresh the impl-ref closures every render so they capture the latest
+  // ctx / scheduleZoom / detachWindowListeners. Window event listeners call
+  // stableMove/stableUp which dereference the ref at call time, so updating
+  // after commit is safe.
+  useEffect(() => {
+    moveImplRef.current = (e: PointerEvent) => {
+      if (!pointersRef.current.has(e.pointerId)) return
+      pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      const gesture = gestureRef.current
+      const rect = rectRef.current
+      if (!gesture || !rect || rect.width === 0) return
+
+      if (gesture.kind === 'pan') {
+        const dx = e.clientX - gesture.startClientX
+        if (!panMovedRef.current && Math.abs(dx) < DRAG_THRESHOLD_PX) return
+        // First crossing of the drag threshold: now it's a real pan, so
+        // claim the pause reason. A pure tap (no movement) never gets here,
+        // so tapping the timeline background to dismiss doesn't pause.
+        if (!panMovedRef.current) ctx.addPauseReason('timeline-pan')
+        panMovedRef.current = true
+        scheduleZoom(dragPan(gesture.startZoom, dx, rect.width, panOverscrollRef.current))
+      } else if (gesture.kind === 'pinch') {
+        // Only the two oldest pointers drive the pinch. A 3rd finger is ignored
+        // until one of the original two releases — matches typical map UX.
+        // Iterate the Map directly instead of Array.from().slice to avoid two
+        // allocations per pointermove frame.
+        const iter = pointersRef.current.values()
+        const a = iter.next().value
+        const b = iter.next().value
+        if (!a || !b) return
+        const dist = Math.hypot(a.x - b.x, a.y - b.y)
+        scheduleZoom(
+          pinchZoom(
+            gesture.startCenter,
+            gesture.centerXFrac,
+            gesture.startSpan,
+            gesture.startDist,
+            dist,
+            minZoomSpanRef.current,
+          ),
+        )
       }
-      panMovedRef.current = false
     }
-  }
+
+    upImplRef.current = (e: PointerEvent) => {
+      if (!pointersRef.current.has(e.pointerId)) return
+      pointersRef.current.delete(e.pointerId)
+      if (pointersRef.current.size === 0) {
+        gestureRef.current = null
+        rectRef.current = null
+        detachWindowListeners()
+        // §5.5: release timeline gesture pause reasons. Both are cleared
+        // unconditionally — a gesture may have transitioned pan↔pinch
+        // mid-interaction.
+        ctx.removePauseReason('timeline-pan')
+        ctx.removePauseReason('timeline-zoom')
+      } else if (pointersRef.current.size === 1) {
+        // Dropped from pinch → pan: re-seed pan from the remaining pointer.
+        const remaining = pointersRef.current.values().next().value!
+        gestureRef.current = {
+          kind: 'pan',
+          startClientX: remaining.x,
+          startZoom: currentZoom(),
+        }
+        panMovedRef.current = false
+      }
+    }
+  })
 
   const attachWindowListeners = useCallback(() => {
     if (windowListenersRef.current) return

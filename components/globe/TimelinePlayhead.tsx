@@ -46,7 +46,6 @@ export default function TimelinePlayhead({
   zoomWindow,
   containerWidth,
   leftOffsetPx,
-  trackTopPx,
   playheadTopPx,
   playheadHeightPx,
   trips,
@@ -63,21 +62,26 @@ export default function TimelinePlayhead({
   // Stable ref for the context setter — avoids re-creating the controller
   // every render (GlobeProvider returns a fresh context object each render).
   const setHighlightedIdsRef = useRef<((ids: string[]) => void) | null>(null)
-  setHighlightedIdsRef.current = ctx?.setPlaybackHighlightedTripIds ?? null
   // Read lockedTrip through a ref so the DOM applier (called from the
   // subscriber) always sees the current value without re-subscribing.
   const lockedTripRef = useRef<string | null>(null)
-  lockedTripRef.current = ctx?.lockedTrip ?? null
 
   // Refs that stay current so the stable RAF callback reads the latest.
   const zoomRef = useRef(zoomWindow)
-  zoomRef.current = zoomWindow
   const widthRef = useRef(containerWidth)
-  widthRef.current = containerWidth
   const leftOffsetRef = useRef(leftOffsetPx)
-  leftOffsetRef.current = leftOffsetPx
   const tripsRef = useRef(trips)
-  tripsRef.current = trips
+  // Mirror render-time values into refs after commit so the subscriber /
+  // RAF callbacks read the latest without re-binding. React 19's
+  // `react-hooks/refs` rule disallows assigning during render.
+  useEffect(() => {
+    setHighlightedIdsRef.current = ctx?.setPlaybackHighlightedTripIds ?? null
+    lockedTripRef.current = ctx?.lockedTrip ?? null
+    zoomRef.current = zoomWindow
+    widthRef.current = containerWidth
+    leftOffsetRef.current = leftOffsetPx
+    tripsRef.current = trips
+  })
 
   const playbackTrips = useMemo(
     () =>
@@ -181,6 +185,10 @@ export default function TimelinePlayhead({
       unsub()
       controllerRef.current = null
     }
+    // xPerSecond is intentionally omitted — the next effect calls
+    // setXPerSecond() in place so the controller's identity stays stable
+    // across speed changes (recreating it would reset playback state).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playbackTrips])
 
   // Update speed in place on zoom/compression changes.

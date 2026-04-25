@@ -80,6 +80,8 @@ export default function GlobeClickConnector() {
   useEffect(() => {
     if (drawPin == null || drawPin === selectedPin) return
     if (drawProgressRef.current === 0) {
+      // Sync drawPin to selectedPin when there's no fade in flight.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDrawPin(selectedPin)
       return
     }
@@ -105,6 +107,8 @@ export default function GlobeClickConnector() {
   // First-open sync
   useEffect(() => {
     if (drawPin == null && selectedPin != null) {
+      // First-open: drawPin lags selectedPin so a switch can fade out.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDrawPin(selectedPin)
     }
   }, [selectedPin, drawPin])
@@ -117,6 +121,9 @@ export default function GlobeClickConnector() {
     let raf: number
     let start: number | null = null
     const from = drawProgressRef.current
+    // `drawing` flips render visibility for the SVG; needs to flip on
+    // fade-in start (effect-driven by definition).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDrawing(true)
     const step = (t: number) => {
       if (start === null) start = t
@@ -181,6 +188,7 @@ export default function GlobeClickConnector() {
     }
   }, [
     drawPin,
+    selectedPin,
     pinPositionRef,
     globeScreenRef,
     frameSubscribersRef,

@@ -26,6 +26,9 @@ function useIsDark(): boolean {
   const [isDark, setIsDark] = useState(false)
   useEffect(() => {
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    // Sync from an external source (matchMedia) — this state is observed
+    // from outside React, so initial sync happens in an effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsDark(mq.matches)
     const handler = (e: MediaQueryListEvent) => setIsDark(e.matches)
     mq.addEventListener('change', handler)
@@ -191,6 +194,10 @@ export default function GlobeProvider({
         clearTimeout(resumeTimerRef.current)
         resumeTimerRef.current = null
       }
+      // Cascading flag: derived from isPaused, but flipped via a delayed
+      // timer on resume — can't be a useMemo because of the IDLE_RESUME_MS
+      // ramp.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPlaybackActive(false)
       return
     }
@@ -229,6 +236,10 @@ export default function GlobeProvider({
   // the other half of that contract — once selectedPin goes null (panel
   // closed, trip locked, etc.) the bands should disappear.
   useEffect(() => {
+    // Clear-on-close: this state is owned here, not derived — when the
+    // panel closes we want it to reset, even if other code later opens
+    // the panel without re-setting the highlight.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (selectedPin === null) setPinSubregionHighlight(null)
   }, [selectedPin, setPinSubregionHighlight])
 
@@ -237,6 +248,8 @@ export default function GlobeProvider({
   // locked trip in the same tick), the signal would be stranded. Clearing on
   // any lockedTrip → null transition keeps the field tidy.
   useEffect(() => {
+    // Defensive cleanup — see comment above.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (lockedTrip === null) setPinToScrollTo(null)
   }, [lockedTrip])
 
@@ -255,6 +268,7 @@ export default function GlobeProvider({
   // --- Panel-open slideComplete timer (preserved from Phase 5A/5B) ---
   useEffect(() => {
     if (!panelVariant) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSlideComplete(false)
       return
     }
@@ -285,6 +299,8 @@ export default function GlobeProvider({
   // choice isn't silently overwritten mid-navigation.
   useEffect(() => {
     if (!activeArticleSlug) return
+    // URL → state sync: derive pin selection from external (router) state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedPin((prev) => {
       const currentPin = prev ? pins.find((p) => p.location._id === prev) : null
       const keepCurrent =
@@ -313,6 +329,8 @@ export default function GlobeProvider({
       // On base /globe with no ?trip=, unlock. Article routes (/globe/<slug>)
       // keep the current lock untouched — they don't own trip state.
       if (pathname === '/globe') {
+        // URL → state sync.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setLockedTripState((prev) => (prev === null ? prev : null))
       }
       return
@@ -420,6 +438,8 @@ export default function GlobeProvider({
     if (pathname !== '/globe') return
     const queryPin = searchParams.get('pin')
     if (!queryPin) return
+    // URL → state sync.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedPin((prev) => {
       const target = pins.find(
         (p) => p.location.slug?.current === queryPin || p.location._id === queryPin,

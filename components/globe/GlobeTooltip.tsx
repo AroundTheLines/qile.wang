@@ -28,6 +28,9 @@ export default function GlobeTooltip() {
   // avoids flicker when the pointer grazes neighbors).
   useEffect(() => {
     if (!hoveredPin || !showHover) {
+      // Reset on hover-out / capability change. Effect-driven because the
+      // delayed-show timer also lives in this effect.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setVisible(false)
       return
     }
