@@ -181,7 +181,10 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
                 fade (200ms) so the two motions land together. */}
             <motion.div
               className="absolute left-0 w-full"
-              style={{ maxHeight: 'calc(100vh - 48px)' }}
+              // 100dvh tracks the dynamic viewport height so the panel's max
+              // height collapses cleanly when iOS Safari hides its address bar
+              // (100vh would leave dead space at the bottom).
+              style={{ maxHeight: 'calc(100dvh - 48px)' }}
               initial={false}
               animate={{ top: panelTop }}
               transition={{ duration: 0.2, ease: 'easeOut' }}
