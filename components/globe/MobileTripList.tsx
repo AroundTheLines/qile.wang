@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { Skeleton } from 'boneyard-js/react'
-import { useGlobe } from './GlobeContext'
+import { useGlobeData, useGlobeTrip } from './GlobeContext'
 import { formatDateRange } from '@/lib/formatDates'
 
 const ROW_TITLE_CLASS = 'text-sm tracking-wide font-light text-black dark:text-white'
@@ -21,7 +21,8 @@ function TripRow({ title, range }: { title: string; range: string }) {
 
 export default function MobileTripList() {
   const router = useRouter()
-  const { trips, setLockedTrip } = useGlobe()
+  const { trips } = useGlobeData()
+  const { setLockedTrip } = useGlobeTrip()
 
   const handleSelect = (tripId: string, slug: string) => {
     setLockedTrip(tripId)

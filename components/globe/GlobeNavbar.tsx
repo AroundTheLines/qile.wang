@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { useGlobe } from './GlobeContext'
+import { useGlobePin, useGlobeUI } from './GlobeContext'
 
 // Mirror the panel widths from GlobeViewport so the navbar's right edge
 // retreats in lockstep when the side panel is open. Uses an identical
@@ -11,7 +11,8 @@ import { useGlobe } from './GlobeContext'
 const SLIDE_TRANSITION = { duration: 0.4, ease: [0.22, 1, 0.36, 1] as const }
 
 export default function GlobeNavbar() {
-  const { selectedPin, isDesktop, isTablet } = useGlobe()
+  const { selectedPin } = useGlobePin()
+  const { isDesktop, isTablet } = useGlobeUI()
   const [viewportW, setViewportW] = useState(0)
 
   useEffect(() => {

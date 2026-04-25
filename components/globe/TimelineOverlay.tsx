@@ -1,7 +1,7 @@
 'use client'
 
 import Timeline from './Timeline'
-import { useGlobe } from './GlobeContext'
+import { useGlobeUI } from './GlobeContext'
 import { NAVBAR_HEIGHT_PX } from '@/lib/globe'
 
 /**
@@ -11,7 +11,7 @@ import { NAVBAR_HEIGHT_PX } from '@/lib/globe'
  * visible and it punched through the top of the article region.
  */
 export default function TimelineOverlay() {
-  const { layoutState } = useGlobe()
+  const { layoutState } = useGlobeUI()
   if (layoutState === 'article-open') return null
   return (
     <div

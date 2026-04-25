@@ -1,7 +1,7 @@
 'use client'
 
-import { useContext, useMemo } from 'react'
-import { GlobeContext } from './GlobeContext'
+import { memo, useMemo } from 'react'
+import { useGlobeData, useGlobePin } from './GlobeContext'
 import type { CompressedMap } from '@/lib/timelineCompression'
 
 interface Props {
@@ -16,16 +16,16 @@ interface Props {
  * `pinSubregionHighlight` is set. Spans the full track (not a single trip
  * segment) because a pin's visits can straddle multiple trips — §7.5.
  */
-export default function TimelinePinBands({
+function TimelinePinBands({
   compressed,
   zoomWindow,
   containerWidth,
 }: Props) {
-  const ctx = useContext(GlobeContext)
   // Destructure so the memo depends on stable fields rather than the whole
   // ctx object (rebuilt every render by the provider).
-  const pins = ctx?.pins
-  const highlight = ctx?.pinSubregionHighlight ?? null
+  const { pins } = useGlobeData()
+  const { pinSubregionHighlight } = useGlobePin()
+  const highlight = pinSubregionHighlight ?? null
 
   const pin = useMemo(() => {
     if (!pins || !highlight) return null
@@ -60,3 +60,5 @@ export default function TimelinePinBands({
     </>
   )
 }
+
+export default memo(TimelinePinBands)

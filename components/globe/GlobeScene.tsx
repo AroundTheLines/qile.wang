@@ -4,7 +4,7 @@ import { useRef, useEffect, useState, useCallback } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
-import { useGlobe } from './GlobeContext'
+import { useGlobeData, useGlobePin, useGlobeTrip, useGlobeUI, useGlobeRoute, useGlobePlayback } from './GlobeContext'
 import { computeFitCamera, GLOBE_RADIUS, sphericalToCartesian } from '@/lib/globe'
 import type { Coordinates } from '@/lib/types'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
@@ -58,6 +58,12 @@ const FIT_CAMERA_OPTS = {
   maxDistance: TRIP_FIT_MAX_DISTANCE,
 } as const
 
+// Module-scoped scratch vector for the entrance-animation useFrame body.
+// Reused in place to keep per-frame allocations at zero. Same pattern as
+// GlobePositionBridge — safe because R3F's useFrame callbacks run
+// synchronously and never concurrently.
+const _sceneEntranceDir = new THREE.Vector3()
+
 type RotateState = {
   active: boolean
   elapsed: number
@@ -67,17 +73,12 @@ type RotateState = {
 
 export default function GlobeScene() {
   const controlsRef = useRef<OrbitControlsImpl>(null)
-  const {
-    pins,
-    selectedPin,
-    lockedTrip,
-    layoutState,
-    isMobile,
-    activeTripSlug,
-    tripsWithVisits,
-    addPauseReason,
-    removePauseReason,
-  } = useGlobe()
+  const { pins, tripsWithVisits } = useGlobeData()
+  const { selectedPin } = useGlobePin()
+  const { lockedTrip } = useGlobeTrip()
+  const { layoutState, isMobile } = useGlobeUI()
+  const { activeTripSlug } = useGlobeRoute()
+  const { addPauseReason, removePauseReason } = useGlobePlayback()
   const { camera } = useThree()
 
   // Reactive enabled state — avoids the "React re-renders and reapplies
@@ -216,10 +217,8 @@ export default function GlobeScene() {
         pendingArticleZoom.current = true
         return
       }
-      // Programmatic camera + controls flip — startArticleZoom calls
-      // setControlsEnabled internally. The state lives in this component
-      // because OrbitControls reads it as a prop.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+      // startArticleZoom flips controlsEnabled and sets animation refs.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- camera-zoom state machine
       startArticleZoom(zoomPin)
       return
     }
@@ -247,7 +246,7 @@ export default function GlobeScene() {
     const zoomPin = resolveArticleZoomPinId()
     if (!zoomPin) return
     pendingArticleZoom.current = false
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- deferred zoom once deep-link data resolves
     startArticleZoom(zoomPin)
   }, [selectedPin, activeTripSlug, tripsWithVisits, layoutState, startArticleZoom, resolveArticleZoomPinId])
 
@@ -285,9 +284,8 @@ export default function GlobeScene() {
       startPos: camera.position.clone(),
       endPos,
     }
-    // Disable controls during programmatic rotation. OrbitControls reads
-    // `controlsEnabled` as a prop, so the flag must live in component state.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // Disable controls during programmatic rotation (RAF-driven animation).
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- camera-rotate state machine
     setControlsEnabled(false)
   }, [selectedPin, pins, camera, lockedTrip])
 
@@ -347,8 +345,7 @@ export default function GlobeScene() {
     // the article later closes, a re-fire of this effect still sees
     // `prev !== lockedTrip` and lands the fit.
     if (layoutState === 'article-open') return
-    // kickOffTripFit calls setControlsEnabled — see notes above.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- trip-fit camera animation
     kickOffTripFit(lockedTrip)
   }, [lockedTrip, layoutState, kickOffTripFit])
 
@@ -360,7 +357,7 @@ export default function GlobeScene() {
       const t = Math.min(entranceElapsed.current / ENTRANCE_DURATION, 1)
       const eased = 1 - Math.pow(1 - t, 3)
       const dist = FAR_DISTANCE + (RESTING_DISTANCE - FAR_DISTANCE) * eased
-      const dir = targetDir.current.clone()
+      const dir = _sceneEntranceDir.copy(targetDir.current)
       camera.position.copy(dir.multiplyScalar(dist))
       camera.lookAt(0, 0, 0)
 
