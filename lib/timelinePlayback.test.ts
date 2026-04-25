@@ -160,6 +160,26 @@ describe('createPlaybackController', () => {
     expect(c.getState().highlightedTripIds).toEqual(['early', 'late'])
   })
 
+  it('setTrips during hold preserves neutral highlights', () => {
+    // Drive the controller to the holding phase, then refresh the trip
+    // list. Highlights must stay empty per spec §5.4 — a list refresh
+    // shouldn't relight trips while the playhead is parked at zero.
+    const c = createPlaybackController({
+      trips: [{ id: 'a', xStart: 0, xEnd: 0 }],
+      xPerSecond: 10,
+      loopHoldMs: 10000,
+    })
+    for (let i = 0; i < 100; i++) c.tick(0.1)
+    expect(c.getState().phase).toBe('holding')
+    expect(c.getState().highlightedTripIds).toEqual([])
+
+    // Replace with a trip whose effective range overlaps x=0; without the
+    // hold-phase guard this would relight highlights mid-hold.
+    c.setTrips([{ id: 'b', xStart: 0, xEnd: 0.05 }])
+    expect(c.getState().phase).toBe('holding')
+    expect(c.getState().highlightedTripIds).toEqual([])
+  })
+
   it('subscribe fires immediately with current state', () => {
     const c = createPlaybackController({
       trips: [],

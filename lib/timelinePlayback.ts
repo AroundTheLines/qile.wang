@@ -193,6 +193,14 @@ export function createPlaybackController(cfg: PlaybackConfig): PlaybackControlle
     },
     setTrips(t) {
       trips = sortByXStart(t)
+      // During the hold-at-zero phase, highlights must stay neutral (§5.4) —
+      // a refresh of the trip list shouldn't relight them mid-hold. Notify
+      // without recomputing so subscribers see the new trip array but the
+      // highlight state survives until the next sweep.
+      if (phase === 'holding') {
+        notify()
+        return
+      }
       recomputeAndNotify()
     },
     setXPerSecond(v) {

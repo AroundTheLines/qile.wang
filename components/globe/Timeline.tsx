@@ -243,6 +243,11 @@ export default function Timeline({ className, now }: TimelineProps) {
   useEffect(
     () => () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+      if (wheelQuiescenceTimerRef.current) {
+        clearTimeout(wheelQuiescenceTimerRef.current)
+        wheelQuiescenceTimerRef.current = null
+      }
+      pendingZoomRef.current = null
     },
     [],
   )
@@ -616,6 +621,14 @@ export default function Timeline({ className, now }: TimelineProps) {
   )
 
   const isDesktopHover = isDesktop
+  // Mirror isDesktopHover into a ref so the debounced label-hover timer can
+  // re-check it at fire time. Without this, a viewport flip from desktop
+  // → mobile during the 150ms debounce leaves the pause reason wedged on,
+  // since touch devices won't deliver a pointerleave to clear it.
+  const isDesktopHoverRef = useRef(isDesktopHover)
+  useEffect(() => {
+    isDesktopHoverRef.current = isDesktopHover
+  }, [isDesktopHover])
 
   // Debounce the pause-add so brief cursor transit (<150ms) across a label
   // doesn't pause playback. §5.5 explicitly excludes brief transit.
@@ -626,6 +639,17 @@ export default function Timeline({ className, now }: TimelineProps) {
     },
     [],
   )
+  // Cancel any in-flight debounce + release any held pause reason if the
+  // viewport flips off desktop. Belt-and-braces with the fire-time check
+  // below — covers the case where the timer has already fired.
+  useEffect(() => {
+    if (isDesktopHover) return
+    if (labelHoverPauseTimerRef.current) {
+      clearTimeout(labelHoverPauseTimerRef.current)
+      labelHoverPauseTimerRef.current = null
+    }
+    removePauseReason('label-hover')
+  }, [isDesktopHover, removePauseReason])
 
   const handleLabelEnter = useCallback(
     (trip: TimelineTrip) => {
@@ -633,8 +657,9 @@ export default function Timeline({ className, now }: TimelineProps) {
       setHoveredTrip(trip.id)
       if (labelHoverPauseTimerRef.current) clearTimeout(labelHoverPauseTimerRef.current)
       labelHoverPauseTimerRef.current = setTimeout(() => {
-        addPauseReason('label-hover')
         labelHoverPauseTimerRef.current = null
+        if (!isDesktopHoverRef.current) return
+        addPauseReason('label-hover')
       }, HOVER_PAUSE_DEBOUNCE_MS)
     },
     [isDesktopHover, setHoveredTrip, addPauseReason],
