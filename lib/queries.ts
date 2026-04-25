@@ -61,31 +61,6 @@ const visitItemProjection = `{
   tags
 }`
 
-// Two-stage projection: fetch visits once into `__v`, then derive
-// startDate/endDate/visitCount from that array instead of re-running
-// references(^._id) for each aggregate.
-//
-// Zero-visit trips are filtered out — without visits there is no startDate,
-// no pin, no arc; surfacing them on the timeline / list would project
-// undefined dates into downstream sort + render logic.
-export const allTripsQuery = groq`
-  *[_type == "trip"] {
-    _id,
-    title,
-    slug,
-    "hasArticle": defined(articleBody) && length(articleBody) > 0,
-    "__v": *[_type == "visit" && references(^._id)] { startDate, endDate }
-  } [count(__v) > 0] {
-    _id,
-    title,
-    slug,
-    hasArticle,
-    "startDate": __v | order(startDate asc)[0].startDate,
-    "endDate":   __v | order(endDate desc)[0].endDate,
-    "visitCount": count(__v),
-  } | order(startDate desc)
-`
-
 export const allVisitsQuery = groq`
   *[_type == "visit"] {
     _id,
@@ -97,10 +72,14 @@ export const allVisitsQuery = groq`
   } | order(startDate desc)
 `
 
-// Bulk trip fetch with embedded visits — drives the trip panel (C4) so it
-// has per-visit sections + items without a second network round-trip.
-// Deliberately separate from `allTripsQuery` (which stays lean for the
-// timeline) so we don't pay the item-reference cost for every timeline render.
+// Bulk trip fetch with embedded visits — drives both the trip panel (C4)
+// and the lightweight `TripSummary` shape the timeline + list need.
+// `(globe)/layout.tsx` derives `TripSummary[]` from this query's result
+// instead of running a second lean fetch (TripWithVisits is a superset).
+//
+// Zero-visit trips are filtered out — without visits there is no startDate,
+// no pin, no arc; surfacing them on the timeline / list would project
+// undefined dates into downstream sort + render logic.
 export const allTripsWithVisitsQuery = groq`
   *[_type == "trip"] {
     _id,

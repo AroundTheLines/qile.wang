@@ -4,7 +4,6 @@ import { client } from '@/lib/sanity'
 import { wardrobeContentQuery } from '@/lib/queries'
 import type { ContentSummary } from '@/lib/types'
 import WardrobeProvider from '@/components/wardrobe/WardrobeProvider'
-// import '@/bones/registry' // Uncomment after running: npx boneyard-js build
 
 // Server Component: data fetch + forwarding. The wardrobe-only navbar,
 // the carousel, the transit element, and the bottom scrim are all

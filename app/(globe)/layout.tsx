@@ -17,9 +17,8 @@ export default async function GlobeLayout({
 }) {
   // Use allSettled so one query failing doesn't blank the others — e.g. if
   // the visits query fails, the timeline still renders (no pins) instead of
-  // blanking the page.
-  // The light `allTripsQuery` was eliminated; `TripSummary` is derived from
-  // tripsWithVisits below since TripWithVisits is a superset.
+  // blanking the page. `TripSummary[]` is derived from `tripsWithVisits`
+  // below since `TripWithVisits` is a superset.
   const [visitsResult, tripsWithVisitsResult] = await Promise.allSettled([
     client.fetch<VisitSummary[]>(allVisitsQuery),
     client.fetch<TripWithVisits[]>(allTripsWithVisitsQuery),
