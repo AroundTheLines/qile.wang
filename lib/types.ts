@@ -49,8 +49,10 @@ export interface LocationDoc {
   slug?: { current: string }
 }
 
-// Trips returned from `allTripsQuery` and `allTripsWithVisitsQuery` are
-// filtered to those with ≥1 visit, so startDate / endDate are always present.
+// Trips returned from `allTripsWithVisitsQuery` are filtered to those with
+// ≥1 visit, so startDate / endDate are always present. `TripSummary` is
+// derived from that query in `(globe)/layout.tsx` for downstream consumers
+// that don't need the visits payload.
 export interface TripSummary {
   _id: string
   title: string
