@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic'
 // Matches app/(globe)/layout.tsx.
 import { readClient as client } from '@/lib/sanity'
 import { tripBySlugQuery } from '@/lib/queries'
-import type { TripWithVisits } from '@/lib/types'
+import type { TripArticle } from '@/lib/types'
 import { notFound } from 'next/navigation'
 import TripArticleContent from '@/components/globe/TripArticleContent'
 import TripArticleReveal from '@/components/globe/TripArticleReveal'
@@ -16,7 +16,7 @@ interface Props {
 
 export default async function TripArticlePage({ params }: Props) {
   const { slug } = await params
-  const trip: TripWithVisits | null = await client.fetch(tripBySlugQuery, { slug })
+  const trip: TripArticle | null = await client.fetch(tripBySlugQuery, { slug })
   // GROQ projects `null { ... }` into an all-null object, so `!trip` alone
   // misses the missing-slug case. `trip._id` is the authoritative signal.
   if (!trip || !trip._id) return notFound()

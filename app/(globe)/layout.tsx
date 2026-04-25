@@ -1,7 +1,8 @@
 export const dynamic = 'force-dynamic'
 
+import '@/bones/registry'
 import { readClient as client } from '@/lib/sanity'
-import { allTripsQuery, allVisitsQuery, allTripsWithVisitsQuery } from '@/lib/queries'
+import { allVisitsQuery, allTripsWithVisitsQuery } from '@/lib/queries'
 import { aggregatePins } from '@/lib/globe'
 import type { TripSummary, TripWithVisits, VisitSummary } from '@/lib/types'
 import GlobeProvider from '@/components/globe/GlobeProvider'
@@ -14,23 +15,29 @@ export default async function GlobeLayout({
 }: {
   children: React.ReactNode
 }) {
-  // Use allSettled so one query failing (e.g. the heavier tripsWithVisits
-  // projection) doesn't blank the timeline + pins too. `fetchError` stays
-  // true whenever any query fails so downstream UI can still surface a
-  // degraded-state banner.
-  const [tripsResult, visitsResult, tripsWithVisitsResult] = await Promise.allSettled([
-    client.fetch<TripSummary[]>(allTripsQuery),
+  // Use allSettled so one query failing doesn't blank the others — e.g. if
+  // the visits query fails, the timeline still renders (no pins) instead of
+  // blanking the page.
+  // The light `allTripsQuery` was eliminated; `TripSummary` is derived from
+  // tripsWithVisits below since TripWithVisits is a superset.
+  const [visitsResult, tripsWithVisitsResult] = await Promise.allSettled([
     client.fetch<VisitSummary[]>(allVisitsQuery),
     client.fetch<TripWithVisits[]>(allTripsWithVisitsQuery),
   ])
-  const trips: TripSummary[] = tripsResult.status === 'fulfilled' ? tripsResult.value : []
   const visits: VisitSummary[] = visitsResult.status === 'fulfilled' ? visitsResult.value : []
   const tripsWithVisits: TripWithVisits[] =
     tripsWithVisitsResult.status === 'fulfilled' ? tripsWithVisitsResult.value : []
+  const trips: TripSummary[] = tripsWithVisits.map((t) => ({
+    _id: t._id,
+    title: t.title,
+    slug: t.slug,
+    hasArticle: t.hasArticle,
+    startDate: t.startDate,
+    endDate: t.endDate,
+    visitCount: t.visitCount,
+  }))
   const fetchError =
-    tripsResult.status === 'rejected' ||
-    visitsResult.status === 'rejected' ||
-    tripsWithVisitsResult.status === 'rejected'
+    visitsResult.status === 'rejected' || tripsWithVisitsResult.status === 'rejected'
   const pins = aggregatePins(visits)
 
   return (

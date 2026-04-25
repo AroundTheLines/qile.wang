@@ -1,9 +1,11 @@
 'use client'
 
+import { useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { Skeleton } from 'boneyard-js/react'
 import { useGlobeData, useGlobeTrip } from './GlobeContext'
 import { formatDateRange } from '@/lib/formatDates'
+import { prefersReducedMotion } from '@/lib/useReducedMotion'
 
 const ROW_TITLE_CLASS = 'text-sm tracking-wide font-light text-black dark:text-white'
 const ROW_META_CLASS = 'text-[10px] tracking-widest uppercase text-gray-400 dark:text-gray-500 mt-1'
@@ -29,14 +31,14 @@ export default function MobileTripList() {
     router.push(`/globe?trip=${encodeURIComponent(slug)}`, { scroll: false })
     // Smooth-scroll back to the top so the globe and timeline come into
     // view alongside the newly opened trip panel below. Without this the
-    // viewport stays parked on the tapped row. `scrollTo`'s smooth
-    // behavior doesn't check `prefers-reduced-motion` on its own, so we
-    // honor it explicitly.
+    // viewport stays parked on the tapped row. `scrollTo`'s smooth behavior
+    // doesn't check `prefers-reduced-motion` on its own.
     if (typeof window !== 'undefined') {
-      const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-      window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' })
+      window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
     }
   }
+
+  const fixture = useMemo(() => fixtureList(), [])
 
   if (trips.length === 0) {
     return (
@@ -47,7 +49,7 @@ export default function MobileTripList() {
   }
 
   return (
-    <Skeleton name="trip-list-default" loading={false} fixture={fixtureList()}>
+    <Skeleton name="trip-list-default" loading={false} fixture={fixture}>
       <ul aria-label="Trips" className={LIST_CLASS}>
         {trips.map((trip) => (
           <li key={trip._id}>

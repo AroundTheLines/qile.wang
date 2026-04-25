@@ -6,6 +6,7 @@ import { Line } from '@react-three/drei'
 import * as THREE from 'three'
 import { useGlobeData, useGlobeTrip, useGlobePlayback, useGlobeUI } from './GlobeContext'
 import { GLOBE_RADIUS } from '@/lib/globe'
+import { useReducedMotion } from '@/lib/useReducedMotion'
 
 const ARC_SURFACE_OFFSET = 0.01
 const ARC_SEGMENTS = 32
@@ -132,6 +133,7 @@ interface ArcLineProps {
   tripArcCount: number
   tripPhaseOffset: number
   arcTotalLength: number
+  reducedMotion: boolean
 }
 
 // drei's <Line> exposes a Line2 whose material is a LineMaterial (from
@@ -158,6 +160,7 @@ function ArcLine({
   tripArcCount,
   tripPhaseOffset,
   arcTotalLength,
+  reducedMotion,
 }: ArcLineProps) {
   const baseRef = useRef<LineRef>(null)
   const baseOpacity = useRef(
@@ -201,13 +204,20 @@ function ArcLine({
     if (!obj) return
     const mat = obj.material
 
+    // prefers-reduced-motion: freeze the comet. Highlighted trips show the
+    // overlay at full length statically; non-highlighted trips hide it so
+    // only the static base layer reads.
     const period = isHighlighted ? activePeriod : inactivePeriod
-    const t =
-      ((clock.elapsedTime + tripPhaseOffset * period) % period) / period
+    const t = reducedMotion
+      ? 0
+      : ((clock.elapsedTime + tripPhaseOffset * period) % period) / period
 
     let tripHead: number
     let tripTail: number
-    if (t < drawFrac) {
+    if (reducedMotion) {
+      tripHead = isHighlighted ? 1 : 0
+      tripTail = 0
+    } else if (t < drawFrac) {
       tripHead = smoothstep01(t / drawFrac)
       tripTail = 0
     } else if (t < retractStart) {
@@ -265,7 +275,7 @@ function ArcLine({
     }
 
     let finalOpacity = overlayOpacity.current
-    if (isLocked) {
+    if (isLocked && !reducedMotion) {
       const breath = 0.1 * Math.sin(clock.elapsedTime * Math.PI)
       finalOpacity = Math.min(1, 0.85 + breath)
     }
@@ -358,6 +368,7 @@ export default function TripArcs() {
   const { hoveredTrip, lockedTrip } = useGlobeTrip()
   const { playbackHighlightedTripIds } = useGlobePlayback()
   const { isDark } = useGlobeUI()
+  const reducedMotion = useReducedMotion()
 
   const arcs: ArcData[] = useMemo(() => {
     const result: ArcData[] = []
@@ -429,6 +440,7 @@ export default function TripArcs() {
             tripArcCount={arc.tripArcCount}
             tripPhaseOffset={arc.tripPhaseOffset}
             arcTotalLength={arc.arcTotalLength}
+            reducedMotion={reducedMotion}
           />
         )
       })}

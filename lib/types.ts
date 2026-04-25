@@ -49,6 +49,8 @@ export interface LocationDoc {
   slug?: { current: string }
 }
 
+// Trips returned from `allTripsQuery` and `allTripsWithVisitsQuery` are
+// filtered to those with ≥1 visit, so startDate / endDate are always present.
 export interface TripSummary {
   _id: string
   title: string
@@ -101,6 +103,21 @@ export interface VisitInTrip {
 
 export interface TripWithVisits extends Trip {
   visits: VisitInTrip[]
+}
+
+// `tripBySlugQuery` permits zero-visit (article-only) trips, so the date /
+// count fields can be missing. Distinct from TripWithVisits to keep the
+// list-side guarantees tight.
+export interface TripArticle {
+  _id: string
+  title: string
+  slug: { current: string }
+  articleBody?: PortableTextBlock[]
+  hasArticle: boolean
+  visits: VisitInTrip[]
+  startDate?: string
+  endDate?: string
+  visitCount: number
 }
 
 export interface PinWithVisits {

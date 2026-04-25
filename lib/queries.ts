@@ -64,6 +64,10 @@ const visitItemProjection = `{
 // Two-stage projection: fetch visits once into `__v`, then derive
 // startDate/endDate/visitCount from that array instead of re-running
 // references(^._id) for each aggregate.
+//
+// Zero-visit trips are filtered out — without visits there is no startDate,
+// no pin, no arc; surfacing them on the timeline / list would project
+// undefined dates into downstream sort + render logic.
 export const allTripsQuery = groq`
   *[_type == "trip"] {
     _id,
@@ -71,7 +75,7 @@ export const allTripsQuery = groq`
     slug,
     "hasArticle": defined(articleBody) && length(articleBody) > 0,
     "__v": *[_type == "visit" && references(^._id)] { startDate, endDate }
-  } {
+  } [count(__v) > 0] {
     _id,
     title,
     slug,
@@ -110,7 +114,7 @@ export const allTripsWithVisitsQuery = groq`
       "location": location->{ _id, name, coordinates, slug },
       "items": items[]->${visitItemProjection}
     }
-  } {
+  } [count(visits) > 0] {
     _id,
     title,
     slug,

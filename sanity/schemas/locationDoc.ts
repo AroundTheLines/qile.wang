@@ -32,7 +32,9 @@ export const locationDoc = defineType({
       title: 'Slug',
       type: 'slug',
       options: { source: 'name', maxLength: 96 },
-      description: 'Optional — for internal cross-refs. Not a user-facing URL in this phase.',
+      description:
+        'Used as the stable URL key for this location (?pin=<slug>). Falls back to the document _id if absent, but the fallback creates inconsistent URLs across edits — set this and keep it stable.',
+      validation: (rule) => rule.required(),
     }),
   ],
   preview: {
