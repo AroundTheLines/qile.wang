@@ -113,6 +113,10 @@ export default function WardrobeProvider({ items, children }: Props) {
       ro.disconnect()
       window.removeEventListener('resize', measure)
     }
+    // navbarHideOffset is a stable MotionValue — its `.get()` reads live each
+    // call, so the effect doesn't need to re-run when its internal value
+    // changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // ── Scroll-driven transit progress (spring-wrapped) ────────────────────

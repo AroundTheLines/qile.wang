@@ -21,6 +21,7 @@ export default function GlobeDetailItem({ item }: { item: VisitItemSummary }) {
     >
       <div className="w-16 h-20 flex-shrink-0 bg-gray-100 dark:bg-gray-900 overflow-hidden">
         {item.cover_image ? (
+          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={urlFor(item.cover_image).width(128).height(160).url()}
             alt={item.title}
