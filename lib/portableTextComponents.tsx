@@ -8,19 +8,38 @@ interface InlineImageValue extends SanityImage {
   caption?: string
 }
 
+// Sanity asset _ref encodes intrinsic dimensions:
+//   `image-<sha>-<width>x<height>-<format>` (e.g. `image-abc123-2000x3000-jpg`).
+// We parse the ref so next/image can reserve the correct aspect ratio
+// without forcing every image into a hardcoded 1.5:1 box (which would
+// squish portrait shots).
+function dimensionsFromRef(ref: string | undefined): { width: number; height: number } {
+  const fallback = { width: 1200, height: 800 }
+  if (!ref) return fallback
+  const match = ref.match(/-(\d+)x(\d+)-/)
+  if (!match) return fallback
+  const w = Number(match[1])
+  const h = Number(match[2])
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w === 0 || h === 0) return fallback
+  return { width: w, height: h }
+}
+
 export const portableTextComponents: PortableTextComponents = {
   types: {
     image: ({ value }: { value: InlineImageValue }) => {
       if (!value?.asset) return null
       const url = urlFor(value).width(1200).fit('max').auto('format').url()
       const alt = value.alt ?? value.caption ?? ''
+      const { width, height } = dimensionsFromRef(
+        (value.asset as { _ref?: string })._ref,
+      )
       return (
         <figure className="my-8">
           <Image
             src={url}
             alt={alt}
-            width={1200}
-            height={800}
+            width={width}
+            height={height}
             sizes="(max-width: 768px) 100vw, 720px"
             className="w-full h-auto"
           />
