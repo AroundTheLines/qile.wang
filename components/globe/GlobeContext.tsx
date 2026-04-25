@@ -1,7 +1,14 @@
 'use client'
 
-import { createContext, useContext, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
-import type { GlobePin, GlobeScreenCircle } from '@/lib/globe'
+import {
+  createContext,
+  useContext,
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+} from 'react'
+import type { PinWithVisits, TripSummary, TripWithVisits } from '@/lib/types'
+import type { GlobeScreenCircle } from '@/lib/globe'
 
 export interface ScreenPosition {
   x: number
@@ -15,54 +22,169 @@ export interface ScreenPosition {
 
 export type ViewportTier = 'desktop' | 'tablet' | 'mobile'
 
-export interface GlobeContextValue {
-  pins: GlobePin[]
-  selectedPin: string | null
-  selectPin: (group: string | null) => void
-  hoveredPin: string | null
-  /** React setter — supports functional updates so callers can compare
-      against the current value without racing context reads (e.g. the
-      "only clear if I'm the hovered pin" guard in GlobePins). */
-  setHoveredPin: Dispatch<SetStateAction<string | null>>
-  layoutState: 'default' | 'panel-open' | 'article-open'
-  slideComplete: boolean
-  selectedPinScreenY: number | null
+// ---------- 1. Data (server props + mutable refs; never change identity) ----------
+export interface GlobeDataContextValue {
+  trips: TripSummary[]
+  pins: PinWithVisits[]
+  /** Trips with embedded visits+items. Drives TripPanel (C4). */
+  tripsWithVisits: TripWithVisits[]
+  fetchError: boolean
   pinPositionRef: MutableRefObject<Record<string, ScreenPosition>>
   /** Globe silhouette in screen-space (canvas-local pixels). Null until
       the first frame is projected. Connectors read this to occlude the
       back-of-globe segment of their line. */
   globeScreenRef: MutableRefObject<GlobeScreenCircle | null>
-  /** Callbacks invoked by GlobePositionBridge at the end of every R3F
-      frame, after pin positions and the globe silhouette are written.
-      Connector components register here instead of running their own
-      requestAnimationFrame loops — that way the SVG line is updated in
-      the same browser tick the canvas paints, eliminating the one-frame
-      lag that lets the line lag behind the pin during rotation. */
+  /**
+   * Callbacks invoked by GlobePositionBridge at the end of every R3F frame,
+   * after pin positions and the globe silhouette are written.
+   *
+   * ### Canonical subscription pattern
+   *
+   * Consumers register a tick callback inside a `useEffect` and must remove
+   * the same reference in the cleanup to prevent leaks:
+   *
+   * ```tsx
+   * useEffect(() => {
+   *   const subscribers = frameSubscribersRef.current
+   *   const update = () => { ... read refs, update DOM ... }
+   *   subscribers.add(update)
+   *   return () => {
+   *     subscribers.delete(update)
+   *   }
+   * }, [])
+   * ```
+   *
+   * Rules:
+   * - Alias `subscribers = frameSubscribersRef.current` once inside the
+   *   effect; write both `.add` and `.delete` against that alias.
+   * - The `update` closure must be a named `const` — passing a fresh inline
+   *   arrow to both `.add` and `.delete` silently leaks because the `delete`
+   *   reference doesn't match the one that was added.
+   * - Subscribers should read all external state (selectedPin, layoutState,
+   *   pin positions) through refs, so the effect doesn't have to tear down
+   *   and re-register on every context update.
+   *
+   * Audit callers: `rg '(frameSubscribersRef\.current|subscribers)\.(add|delete)' components`
+   * — both direct and aliased access must be paired.
+   */
   frameSubscribersRef: MutableRefObject<Set<() => void>>
-  /** Slug of the article currently open in article-open state, or null */
-  activeArticleSlug: string | null
-  /** Exit article-open back to panel-open (desktop only) */
-  closeArticle: () => void
-  /** 'desktop' ≥1024, 'tablet' 768–1023, 'mobile' <768 */
+}
+export const GlobeDataContext = createContext<GlobeDataContextValue | null>(null)
+export function useGlobeData(): GlobeDataContextValue {
+  const ctx = useContext(GlobeDataContext)
+  if (!ctx) {
+    throw new Error('useGlobeData must be used inside <GlobeProvider>')
+  }
+  return ctx
+}
+
+// ---------- 2. Pin (selection, hover, scroll signal) ----------
+export interface GlobePinContextValue {
+  /** Pin identity = locationDoc._id. Was globe_group string pre-5C. */
+  selectedPin: string | null
+  selectPin: (id: string | null) => void
+  hoveredPin: string | null
+  /** React setter — supports functional updates so callers can compare
+      against the current value without racing context reads. */
+  setHoveredPin: Dispatch<SetStateAction<string | null>>
+  /** Pin id whose visit sub-regions should light up on the timeline. Set by C2. */
+  pinSubregionHighlight: string | null
+  setPinSubregionHighlight: Dispatch<SetStateAction<string | null>>
+  /** Pin whose visit section should be scrolled to in the open trip panel.
+   *  Carries a nonce so repeat clicks on the same pin are distinguishable —
+   *  identical-id setState would bail out and the pulse wouldn't replay.
+   *  Consumed by TripPanel; cleared by TripPanel after scroll completes,
+   *  or by the provider when lockedTrip clears. (C7) */
+  pinToScrollTo: { id: string; nonce: number } | null
+  /** Request a pin-scroll. Always bumps the nonce so the consumer's effect
+   *  re-fires even if the same pin is clicked twice in a row. */
+  requestPinScroll: (id: string) => void
+  clearPinScroll: () => void
+  selectedPinScreenY: number | null
+}
+export const GlobePinContext = createContext<GlobePinContextValue | null>(null)
+export function useGlobePin(): GlobePinContextValue {
+  const ctx = useContext(GlobePinContext)
+  if (!ctx) {
+    throw new Error('useGlobePin must be used inside <GlobeProvider>')
+  }
+  return ctx
+}
+
+// ---------- 3. Trip (lock, hover, mobile preview) ----------
+export interface GlobeTripContextValue {
+  lockedTrip: string | null
+  setLockedTrip: (id: string | null) => void
+  hoveredTrip: string | null
+  setHoveredTrip: Dispatch<SetStateAction<string | null>>
+  /** Mobile-only preview state (E3). */
+  previewTrip: string | null
+  setPreviewTrip: (id: string | null) => void
+}
+export const GlobeTripContext = createContext<GlobeTripContextValue | null>(null)
+export function useGlobeTrip(): GlobeTripContextValue {
+  const ctx = useContext(GlobeTripContext)
+  if (!ctx) {
+    throw new Error('useGlobeTrip must be used inside <GlobeProvider>')
+  }
+  return ctx
+}
+
+// ---------- 4. Playback (sweep highlight + pause reasons) ----------
+export interface GlobePlaybackContextValue {
+  /** Trip ids currently lit by the playback sweep. Set by B6. */
+  playbackHighlightedTripIds: string[]
+  setPlaybackHighlightedTripIds: (ids: string[]) => void
+  /** Active after 5s idle; gates the playback RAF loop. Computed. */
+  playbackActive: boolean
+  addPauseReason: (reason: string) => void
+  removePauseReason: (reason: string) => void
+  /** Computed: any pause reason set, OR a locked trip, OR an open article. */
+  isPaused: boolean
+}
+export const GlobePlaybackContext = createContext<GlobePlaybackContextValue | null>(null)
+export function useGlobePlayback(): GlobePlaybackContextValue {
+  const ctx = useContext(GlobePlaybackContext)
+  if (!ctx) {
+    throw new Error('useGlobePlayback must be used inside <GlobeProvider>')
+  }
+  return ctx
+}
+
+// ---------- 5. UI (viewport tier, theme, layout derivation) ----------
+export interface GlobeUIContextValue {
   tier: ViewportTier
-  /** Derived conveniences */
   isDesktop: boolean
   isTablet: boolean
   isMobile: boolean
-  /** Hover UI is shown on desktop + tablet */
   showHover: boolean
-  /** Connector lines are shown on desktop only */
   showConnectors: boolean
-  /** System dark-mode preference */
   isDark: boolean
+  layoutState: 'default' | 'panel-open' | 'article-open'
+  slideComplete: boolean
+  /** Which panel to render. Null = nothing. */
+  panelVariant: 'pin' | 'trip' | null
+}
+export const GlobeUIContext = createContext<GlobeUIContextValue | null>(null)
+export function useGlobeUI(): GlobeUIContextValue {
+  const ctx = useContext(GlobeUIContext)
+  if (!ctx) {
+    throw new Error('useGlobeUI must be used inside <GlobeProvider>')
+  }
+  return ctx
 }
 
-export const GlobeContext = createContext<GlobeContextValue | null>(null)
-
-export function useGlobe(): GlobeContextValue {
-  const ctx = useContext(GlobeContext)
+// ---------- 6. Route (URL-derived state + close action) ----------
+export interface GlobeRouteContextValue {
+  activeArticleSlug: string | null // /globe/<slug> item article
+  activeTripSlug: string | null // /trip/<slug> trip article
+  closeArticle: () => void
+}
+export const GlobeRouteContext = createContext<GlobeRouteContextValue | null>(null)
+export function useGlobeRoute(): GlobeRouteContextValue {
+  const ctx = useContext(GlobeRouteContext)
   if (!ctx) {
-    throw new Error('useGlobe must be used inside <GlobeProvider>')
+    throw new Error('useGlobeRoute must be used inside <GlobeProvider>')
   }
   return ctx
 }

@@ -1,0 +1,180 @@
+'use client'
+
+import { memo, useEffect, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { useRouter } from 'next/navigation'
+import { useGlobeData } from '../GlobeContext'
+import GlobeDetailItem from '../GlobeDetailItem'
+import { formatDateRange } from '@/lib/formatDates'
+import type { VisitSummary, VisitInTrip } from '@/lib/types'
+
+type VisitLike = VisitSummary | (VisitInTrip & { trip?: { _id: string; title: string; slug: { current: string } } })
+
+interface Props {
+  visit: VisitLike
+  /** Show per-section "View trip article" link. Pin panels: true. Trip panels: false (global link at top). */
+  showViewTripArticleLink: boolean
+  /** Sticky header if this section lives in a scrollable list. */
+  sticky?: boolean
+  /** Header label variant: pin panels show trip title, trip panels show location name. */
+  secondaryLabel?: string
+  /**
+   * Callback exposed for C7 auto-scroll pattern.
+   *
+   * NOTE: the ref is attached with an inline arrow (`el => onRef?.(el, visit._id)`),
+   * so it fires on every render. Callers MUST wrap their handler in `useCallback`
+   * (keyed on a stable identity) to avoid re-registering on each parent render.
+   */
+  onRef?: (el: HTMLElement | null, visitId: string) => void
+  /**
+   * Monotonically-increasing nonce that triggers a 600ms keyframe pulse
+   * (spec §17.3 — fade up, hold, fade down). Each new value replays the
+   * animation imperatively (toggle `data-pulsing` + force reflow), so the
+   * section is NOT remounted and local state (e.g. `expanded`) survives.
+   * Pass `null` for "not pulsing."
+   */
+  pulseNonce?: number | null
+  /**
+   * Hover-driven accent tint (C7). Persists for the duration of a pin
+   * hover when this section's visit matches the hovered pin and a trip
+   * is locked. Held tint, no animation.
+   */
+  hovered?: boolean
+}
+
+const PULSE_DURATION_MS = 600
+
+function VisitSection({
+  visit,
+  showViewTripArticleLink,
+  sticky,
+  secondaryLabel,
+  onRef,
+  pulseNonce,
+  hovered,
+}: Props) {
+  const router = useRouter()
+  const { trips } = useGlobeData()
+  const [expanded, setExpanded] = useState(true)
+  const sectionRef = useRef<HTMLElement | null>(null)
+
+  // Imperatively replay the pulse keyframe each time `pulseNonce` changes.
+  // Why imperative: toggling a `pulsing` boolean prop and re-keying the
+  // section to remount it would replay the animation, but it would also
+  // throw away `expanded` (and any future local state). Restarting via
+  // attribute toggle + forced reflow keeps the same DOM node.
+  useEffect(() => {
+    if (pulseNonce == null) return
+    const el = sectionRef.current
+    if (!el) return
+    el.removeAttribute('data-pulsing')
+    // Force reflow so the next attribute set is treated as an animation start.
+    void el.offsetWidth
+    el.setAttribute('data-pulsing', 'true')
+    const t = setTimeout(() => {
+      el.removeAttribute('data-pulsing')
+    }, PULSE_DURATION_MS)
+    return () => clearTimeout(t)
+  }, [pulseNonce])
+
+  const tripRef = 'trip' in visit ? visit.trip : undefined
+  const tripMeta = tripRef ? trips.find((t) => t._id === tripRef._id) : undefined
+  const hasArticle = tripMeta?.hasArticle ?? false
+
+  const dateLabel = formatDateRange(visit.startDate, visit.endDate)
+  const resolvedSecondary = secondaryLabel ?? tripRef?.title ?? ''
+
+  const handleViewArticle = () => {
+    if (!hasArticle || !tripRef) return
+    router.push(`/trip/${encodeURIComponent(tripRef.slug.current)}`, { scroll: false })
+  }
+
+  return (
+    <section
+      ref={(el) => {
+        sectionRef.current = el
+        onRef?.(el, visit._id)
+      }}
+      className={`visit-section border-b border-gray-200 dark:border-gray-800 last:border-b-0 transition-colors duration-200 ${
+        hovered ? 'bg-[rgba(37,99,235,0.10)]' : 'bg-transparent'
+      }`}
+    >
+      <header
+        className={`visit-section-header px-4 pt-3 pb-2 transition-colors duration-200 ${
+          hovered ? 'bg-[rgb(232,238,254)] dark:bg-[rgb(20,29,56)]' : 'bg-white dark:bg-black'
+        } ${sticky ? 'sticky top-0 z-10' : ''}`}
+      >
+        <div className="flex items-baseline justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-xs tracking-widest uppercase font-light text-black dark:text-white truncate">
+              {dateLabel}
+            </p>
+            {resolvedSecondary && (
+              <p className="text-[10px] tracking-wide text-gray-400 dark:text-gray-500 truncate">
+                {resolvedSecondary}
+              </p>
+            )}
+          </div>
+          {showViewTripArticleLink && tripRef && (
+            <button
+              onClick={handleViewArticle}
+              disabled={!hasArticle}
+              aria-disabled={!hasArticle}
+              title={hasArticle ? 'View trip article' : 'No content available for this trip.'}
+              className={`text-[10px] tracking-widest uppercase shrink-0 px-2 py-1 border transition-colors ${
+                hasArticle
+                  ? 'border-black dark:border-white text-black dark:text-white hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black cursor-pointer'
+                  : 'border-gray-200 dark:border-gray-800 text-gray-300 dark:text-gray-700 cursor-not-allowed'
+              }`}
+            >
+              View trip article
+            </button>
+          )}
+        </div>
+      </header>
+
+      {visit.items.length > 0 && (
+        <>
+          <button
+            onClick={() => setExpanded((e) => !e)}
+            className="w-full px-4 py-1.5 flex items-center justify-between text-left text-[10px] tracking-widest uppercase text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white transition-colors cursor-pointer"
+            aria-expanded={expanded}
+          >
+            <span>
+              {visit.items.length} {visit.items.length === 1 ? 'item' : 'items'}
+            </span>
+            <motion.span
+              data-no-skeleton
+              aria-hidden
+              animate={{ rotate: expanded ? 0 : 180 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+              className="inline-block"
+            >
+              ▴
+            </motion.span>
+          </button>
+          <AnimatePresence initial={false}>
+            {expanded && (
+              <motion.div
+                key="items"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+                className="overflow-hidden"
+              >
+                <div className="pb-3">
+                  {visit.items.map((item) => (
+                    <GlobeDetailItem key={item._id} item={item} />
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </>
+      )}
+    </section>
+  )
+}
+
+export default memo(VisitSection)

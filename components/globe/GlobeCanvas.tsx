@@ -5,8 +5,9 @@ import { Canvas } from '@react-three/fiber'
 import GlobeScene from './GlobeScene'
 import GlobeMesh from './GlobeMesh'
 import GlobePins from './GlobePins'
+import TripArcs from './TripArcs'
 import GlobePositionBridge from './GlobePositionBridge'
-import { useGlobe } from './GlobeContext'
+import { useGlobePin, useGlobeUI, useGlobeRoute } from './GlobeContext'
 
 const DRAG_THRESHOLD = 5
 
@@ -15,7 +16,9 @@ export default function GlobeCanvas({
 }: {
   dragDistanceRef: React.MutableRefObject<number>
 }) {
-  const { selectPin, selectedPin, layoutState, closeArticle } = useGlobe()
+  const { selectPin, selectedPin } = useGlobePin()
+  const { layoutState } = useGlobeUI()
+  const { closeArticle } = useGlobeRoute()
 
   const handleMissed = useCallback(() => {
     // Cumulative drag distance since pointerdown; accumulated by the parent
@@ -43,6 +46,7 @@ export default function GlobeCanvas({
         <GlobeScene />
         <GlobeMesh />
         <GlobePins />
+        <TripArcs />
         <GlobePositionBridge />
       </Canvas>
     </div>

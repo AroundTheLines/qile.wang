@@ -488,3 +488,139 @@ To keep this ticket mergeable, **fix the trivial grep-and-replace sites inline i
 3. Manually set `selectedPin` via DevTools to a valid `locationDoc._id`. Observe `panelVariant` becomes `'pin'`, `layoutState` becomes `'panel-open'`. (Panel doesn't render yet — that's C3.)
 4. Navigate to `/globe?trip=<slug>` of a seeded trip. `lockedTrip` picks up the id. `panelVariant` becomes `'trip'`.
 5. Add `addPauseReason('test')` via DevTools. `isPaused` → true. `playbackActive` → false. `removePauseReason('test')`. Wait 5s. `playbackActive` → true.
+
+---
+
+## Implementation log (shipped)
+
+Landed on branch `claude/stupefied-swartz-1357a5`. Notes for C2/C3/C4/D2/E1/B4/B6 implementers consuming this state.
+
+### Product decisions made before implementation
+
+Four ambiguities were resolved with the user before writing code:
+
+1. **`setLockedTrip` clears `selectedPin`** — Confirmed. Pin panel and trip panel share the same screen region, so they're mutually exclusive (spec §7.3.2). Implemented in `setLockedTrip`.
+2. **`pinSubregionHighlight` vs `hoveredPin`** — Kept separate. Can be revisited in a B5 cleanup if the two prove redundant.
+3. **`isPaused` includes article-open** — Confirmed. Derived directly from `activeArticleSlug || activeTripSlug` rather than via a pause-reason registration, per simplicity.
+4. **`playbackActive` on first mount** — **Override from the ticket's default.** User chose **instant start**: `useState(true)`. The 5s `IDLE_RESUME_MS` delay only applies on *resume* after a pause, not on cold load. If you need a different first-mount behavior, this is the knob.
+
+### Files changed
+
+- `components/globe/GlobeContext.tsx` — rewritten to the new `GlobeContextValue` shape.
+- `components/globe/GlobeProvider.tsx` — rewritten: new state, new derivations, new props (`trips`, `pins`, `fetchError`).
+- `components/globe/GlobeTooltip.tsx` — identity fields migrated: `pin.group` → `pin.location._id` (lookup key) / `pin.location.name` (display). `pin.items.length` → sum of visit items across all visits.
+- `app/globe/layout.tsx` — swapped from `globeContentQuery` + `groupPins` to `allTripsQuery` + `allVisitsQuery` + `aggregatePins`. Wraps in `try/catch` so `fetchError` is passed through on Sanity failure. A3 will add the timeline stub + richer error UI.
+- `components/globe/GlobeClickConnector.tsx`, `components/globe/GlobeHoverConnector.tsx` — **not modified**. They only use `selectedPin` / `hoveredPin` as keys into `pinPositionRef`, so the semantic shift from `globe_group` string to `locationDoc._id` is transparent to them. The ticket called for a "grep-and-replace" here; none was needed.
+
+### Identity type contract (important for C2)
+
+`selectedPin`, `hoveredPin`, and all keys of `pinPositionRef.current` are now `locationDoc._id` strings. Previously they were `globe_group` strings.
+
+**GlobePositionBridge (C2) must key `pinPositionRef` by `pin.location._id`.** If this contract breaks, the click connector, hover connector, tooltip, and panel screen-Y capture all silently fail (they'll look up the wrong key and no position is found).
+
+### Shape of downstream compile errors (expected)
+
+After C1 landed, `npx tsc --noEmit` reports errors in exactly these files — all owned by C2/C3/C4:
+
+- `components/globe/GlobePins.tsx` — C2
+- `components/globe/GlobeDetailPanel.tsx` — C3
+- `components/globe/GlobeViewport.tsx` — C3/C4
+- `components/globe/GlobeScene.tsx` — references `pin.group` for entrance target; C2 or C5
+- `components/globe/GlobePositionBridge.tsx` — C2
+
+Plus one pre-existing error not caused by C1:
+
+- `app/globe/[slug]/page.tsx(19)` — references `l.globe_group` on the legacy `Location` type; remnant from A1's schema removal, to be handled by C3/D1/D3 when the article routing is rebuilt.
+
+And one pre-existing environment issue:
+
+- `lib/*.test.ts` — `Cannot find module 'vitest'`. Test config issue unrelated to C1.
+
+### `closeArticle` behavior
+
+`closeArticle()` now branches on URL:
+
+- `/globe/<slug>` (item article) → `router.push('/globe')`
+- `/trip/<slug>` (trip article) → `router.push('/globe?trip=<slug>')` if `lockedTrip` resolves to a trip, else `/globe`
+
+The trip branch reads the slug from `trips.find((t) => t._id === lockedTrip)` rather than `activeTripSlug`. This is intentional: the state's `lockedTrip` is the source of truth for which trip panel to re-open, and `trips` is always the canonical slug list.
+
+**Caveat for D2**: `closeArticle` reads `lockedTrip`, so D2's URL write logic must set `lockedTrip` before the user hits `/trip/<slug>` for the round-trip to work. D2's existing "URL is the source of truth" plan already handles this.
+
+### `playbackActive` timer behavior
+
+State machine:
+
+- **On mount**: `playbackActive = true`, `isPaused = false` (assuming no URL, no pin, no trip locked).
+- **When `isPaused` → true**: `playbackActive` immediately set to `false`. Any pending resume timer is cleared.
+- **When `isPaused` → false**: A `setTimeout(IDLE_RESUME_MS = 5000)` starts. When it fires, `playbackActive` flips to `true`.
+- **Re-pause within the 5s window**: the pending timer is cleared in the cleanup; `playbackActive` stays at `false`.
+
+B6 consumers should read `playbackActive` as the gate for the playback RAF loop. Do not start the loop before `playbackActive` flips.
+
+### Pause-reason registry contract (important for B6/B7, F2)
+
+`addPauseReason(reason)` / `removePauseReason(reason)` take an arbitrary string key. The provider deduplicates via a `Set<string>` in a ref; a second `add` with the same key is a no-op. Reasons are additive: the globe is paused while *any* reason is registered.
+
+**Convention**: pair `add` and `remove` in the same `useEffect` cleanup, or in matching `pointerenter` / `pointerleave` handlers. A component that adds a reason and never removes it will pin `isPaused` to `true` indefinitely. F2 will audit for leaks.
+
+Suggested reason-key naming to avoid collisions (not enforced):
+
+- `trip-hover:<tripId>` — set by trip hover (C4)
+- `pin-hover:<pinId>` — set by pin hover (C2)
+- `timeline-scrub` — set by timeline interaction (B5)
+
+`lockedTrip !== null` and article-open already contribute to `isPaused` directly — do not also register a reason for them.
+
+### `panelVariant` derivation edge cases
+
+- `{ selectedPin: null, lockedTrip: null }` → `null`
+- `{ selectedPin: X, lockedTrip: null }` → `'pin'`
+- `{ selectedPin: null, lockedTrip: Y }` → `'trip'`
+- `{ selectedPin: X, lockedTrip: Y }` → `'pin'` (pin wins)
+
+The last case should be transient: `setLockedTrip(Y)` clears `selectedPin`. If C2/C3/C4 ever sets both directly (bypassing `setLockedTrip`), the pin panel is shown. This is a safety default, not a feature.
+
+### Deep-link trip resolution caveat
+
+The effect that reads `?trip=<slug>` or `/trip/<slug>` and sets `lockedTrip` is **read-only**. It never clears `lockedTrip` when the URL drops the param. That's D2's job — D2 has the write side and the equality checks to avoid ping-pong.
+
+Specifically: if the user navigates from `/globe?trip=X` to `/globe` (no param), `lockedTrip` remains `X` until D2 (or a component) explicitly clears it.
+
+### `Suspense` boundary
+
+`useSearchParams` is now called inside `GlobeProvider`. The Next.js 16 hook does not require a `<Suspense>` wrapper in this component's position within the layout tree (verified by typecheck). If a runtime CSR bailout error appears on a route that exercises this code, wrap the provider's `children` in `<Suspense fallback={null}>`.
+
+### Field-by-field consumer map
+
+| Field | Written by | Read by |
+|---|---|---|
+| `trips`, `pins`, `fetchError` | Layout (A3) | C2 (pins), C3/C4 (panels), B4 (timeline), E1 |
+| `selectedPin`, `selectPin` | C2 (pin click), article deep-link effect | C3 (pin panel), click connector |
+| `hoveredPin`, `setHoveredPin` | C2 (pin hover) | tooltip, hover connector |
+| `pinSubregionHighlight` | C2 | B5 (timeline bands) |
+| `lockedTrip`, `setLockedTrip` | C4 (trip label click), D2 (URL sync) | C4 (trip panel), C5 (camera rotate), C6 (trip arcs) |
+| `hoveredTrip`, `setHoveredTrip` | C4, B5 | C6 (arc highlights), timeline |
+| `previewTrip`, `setPreviewTrip` | E3 (mobile) | E3 preview label |
+| `playbackHighlightedTripIds` | B6 | C6 (arc sweep) |
+| `playbackActive` | provider (computed) | B6 |
+| `addPauseReason`, `removePauseReason` | C2 (hover), B5, etc. | — |
+| `isPaused` | provider (computed) | B6, globe auto-rotate |
+| `panelVariant` | provider (computed) | C3/C4 panel dispatch |
+| `layoutState` | provider (computed) | GlobeViewport, camera |
+| `slideComplete` | provider (computed) | click connector, camera rotate-to-fit |
+| `selectedPinScreenY` | `selectPin`, polling effect, article-close effect | click connector, panel Y |
+| `activeTripSlug` | provider (URL) | C4, D2 |
+| `closeArticle` | provider | C3/C4 article close buttons |
+
+### What's intentionally not done in C1
+
+Per the ticket's non-goals — all deferred:
+
+- Panel rendering (C3/C4)
+- Pin hover/click event wiring (C2)
+- URL write side for `?trip=<slug>` (D2)
+- Playback RAF controller (B6)
+- Camera rotate-to-fit (C5)
+- Timeline stub insertion in layout (A3)
+- Fixing compile errors in `GlobePins.tsx`, `GlobeDetailPanel.tsx`, `GlobeViewport.tsx`, `GlobeScene.tsx`, `GlobePositionBridge.tsx`

@@ -362,6 +362,23 @@ rm scripts/seed-globe-groups.mts
 
    **Resolution**: wipe only the 3 new types. Content docs untouched.
 
+## Implementation notes (from PR #28)
+
+Surfaced during review and worth recording for future seed-script work:
+
+- **Deterministic `_id`s for idempotency.** The initial draft used `randomUUID()` for every doc's `_id`. That meant `createIfNotExists` never matched anything on re-run, so the script silently double-seeded instead of "conflicting" as the header claimed. Fixed by deriving stable IDs from slugs/names via helpers:
+  - `locationId(name)` → `seed.location.<kebab-name>`
+  - `tripId(slug)` → `seed.trip.<slug>`
+  - `visitId(tripSlug, locName, startDate)` → `seed.visit.<tripSlug>.<kebab-loc>.<YYYY-MM-DD>`
+
+  Consequence for editors: `createIfNotExists` is now genuinely idempotent. If you edit a fixture's content (e.g., add an item to a visit) and re-run *without* `--wipe-first`, the change will **not** propagate — the existing doc with the same `_id` wins. Always re-seed with `--wipe-first` when changing fixture content. `_key` on array-of-refs entries still uses `randomUUID()` (per-run churn there is harmless since Sanity only requires uniqueness within the array).
+
+- **Dataset safety regex.** `startsWith('dev')` was too loose (would match hypothetical names like `devastating-prod`). Tightened to `/^dev(elopment)?([-_].*)?$/` — matches `dev`, `development`, `dev-foo`, `dev_foo`, `development-staging`, etc., but not arbitrary words starting with "dev". Pass `--force-any-dataset` to bypass.
+
+- **Env file path is hardcoded to `.env.local`** (matches existing `scripts/seed.mts`). Users with differently-named env files (`.env.development`, `.dev.local`) should symlink or rename. Not worth adding a `--env-file` flag for a one-off seed script.
+
+- **`_key` required on `items` array entries.** Sanity flags "Missing keys" otherwise. Use `randomUUID()` for the `_key` value — unlike `_id`, these don't need to be deterministic.
+
 ## Handoff / outputs consumed by later tickets
 
 - **Fixture dataset** on a dev Sanity dataset — F3's verification matrix depends on the coverage cases above.

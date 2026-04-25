@@ -1,18 +1,13 @@
 'use client'
 
 import { useRef, useEffect, useState } from 'react'
-import { useGlobe } from './GlobeContext'
+import { useGlobeData, useGlobePin, useGlobeUI } from './GlobeContext'
 import { clipLineByGlobe } from '@/lib/globe'
 
 export default function GlobeHoverConnector() {
-  const {
-    hoveredPin,
-    pinPositionRef,
-    globeScreenRef,
-    frameSubscribersRef,
-    showConnectors,
-    isDark,
-  } = useGlobe()
+  const { pinPositionRef, globeScreenRef, frameSubscribersRef } = useGlobeData()
+  const { hoveredPin } = useGlobePin()
+  const { showConnectors, isDark } = useGlobeUI()
   const svgRef = useRef<SVGSVGElement>(null)
   const lineRef = useRef<SVGLineElement>(null)
   const [viewport, setViewport] = useState({ w: 0, h: 0 })

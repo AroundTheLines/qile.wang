@@ -2,15 +2,18 @@
 
 import dynamic from 'next/dynamic'
 import { useRef, useCallback, useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
-import { useGlobe } from './GlobeContext'
-import { clampPanelTop } from '@/lib/globe'
+import { useGlobePin, useGlobeUI, useGlobeRoute } from './GlobeContext'
+import { clampPanelTop, TRIP_PANEL_TOP_PX } from '@/lib/globe'
 import GlobeFallbackSVG from './GlobeFallbackSVG'
 import GlobeDetailPanel from './GlobeDetailPanel'
+import GlobePinTriggers from './GlobePinTriggers'
 import GlobeTooltip from './GlobeTooltip'
 import GlobeHoverConnector from './GlobeHoverConnector'
 import GlobeClickConnector from './GlobeClickConnector'
+import MobileContentRegion from './MobileContentRegion'
+import MobileNavChrome from './MobileNavChrome'
+import Timeline from './Timeline'
 
 const GlobeCanvas = dynamic(() => import('./GlobeCanvas'), {
   ssr: false,
@@ -21,19 +24,9 @@ const GlobeCanvas = dynamic(() => import('./GlobeCanvas'), {
 const ARTICLE_GLOBE_WIDTH_FRAC = 0.3
 
 export default function GlobeViewport({ children }: { children?: React.ReactNode }) {
-  const {
-    selectedPin,
-    selectPin,
-    selectedPinScreenY,
-    tier,
-    isMobile,
-    isDesktop,
-    pins,
-    layoutState,
-    activeArticleSlug,
-    closeArticle,
-  } = useGlobe()
-  const router = useRouter()
+  const { selectedPinScreenY } = useGlobePin()
+  const { tier, isMobile, isDesktop, layoutState, panelVariant } = useGlobeUI()
+  const { closeArticle } = useGlobeRoute()
 
   // Drag-vs-click discriminator — accumulate total travel between
   // pointerdown and pointerup so any wiggle beyond 5px cancels the close.
@@ -63,129 +56,22 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
   const viewportW = viewportSize.w
   const viewportH = viewportSize.h
 
-  const panelTop = clampPanelTop(selectedPinScreenY, viewportH || 800)
-  const selectedPinData = pins.find((p) => p.group === selectedPin)
+  // Trip panel is always pinned just below the timeline (§7.2) so it reads
+  // visually distinct from pin panels, which anchor to their pin's Y and
+  // draw a connector from pin → panel header. Fixed anchor keeps trip panels
+  // stable regardless of what was selected before.
+  const panelTop =
+    panelVariant === 'trip'
+      ? TRIP_PANEL_TOP_PX
+      : clampPanelTop(selectedPinScreenY, viewportH || 800)
 
   if (isMobile) {
-    // On mobile, article content opens *inside* the sidecar panel — no separate
-    // full-screen article page. The panel shows either the pin's item list or
-    // the inline article (with a back-to-list button), keeping the globe
-    // visible behind the scrim so the user can always tap back to the globe.
-    const isArticle = layoutState === 'article-open'
-    const resolvedPin =
-      selectedPinData ||
-      (activeArticleSlug
-        ? pins.find((p) =>
-            p.items.some((i) => i.slug.current === activeArticleSlug),
-          )
-        : undefined)
-    const showPanel = Boolean(resolvedPin) && (!!selectedPin || isArticle)
-
-    // Mobile panel width — must match the motion.div style below
-    // (`width: 85vw, maxWidth: 380`). Translating the globe wrapper by half
-    // the panel width puts the canvas center (where the camera-centered pin
-    // lands) at the center of the visible globe sliver.
-    //
-    // We deliberately translate but do NOT scale the wrapper: R3F measures
-    // its container's getBoundingClientRect (which is post-transform), so a
-    // CSS scale shrinks the canvas itself and the pin no longer lands at
-    // the predictable canvas-center pixel. The dim scrim already does the
-    // visual job of de-emphasizing the globe; scaling is unnecessary.
-    const mobilePanelWidth = viewportW
-      ? Math.min(viewportW * 0.85, 380)
-      : 0
-    const mobileGlobeShiftPx = showPanel ? -mobilePanelWidth / 2 : 0
-    // The fixed top navbar consumes the upper ~72px of the viewport. The
-    // pin renders at the canvas vertical center (h/2), but the visible
-    // globe area is below the navbar, so its center sits at (navbar+h)/2.
-    // Shifting the wrapper down by half the navbar height re-centers the
-    // pin in the area that's actually visible to the user.
-    const NAVBAR_HEIGHT = 72
-    const mobileGlobeShiftYPx = showPanel ? NAVBAR_HEIGHT / 2 : 0
-
-    const closeAll = () => {
-      if (isArticle) router.push('/globe', { scroll: false })
-      selectPin(null)
-    }
-
-    const backToList = () => {
-      router.push('/globe', { scroll: false })
-    }
-
     return (
       <>
-        <div className="fixed inset-0 w-screen h-screen" style={{ touchAction: 'none' }}>
-          <motion.div
-            className="relative w-full h-full"
-            animate={{
-              x: mobileGlobeShiftPx,
-              y: mobileGlobeShiftYPx,
-            }}
-            transition={{ type: 'spring', stiffness: 200, damping: 30 }}
-          >
-            <GlobeCanvas dragDistanceRef={dragDistance} />
-          </motion.div>
-        </div>
-
-        {/* Scrim + panel are siblings of the globe wrapper (not nested inside)
-            so they share the root stacking context with GlobeNavbar and, being
-            later in DOM at z-50, paint above it. */}
-        <AnimatePresence>
-          {showPanel && (
-            <motion.div
-              className="fixed inset-0 z-50"
-              style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={closeAll}
-            />
-          )}
-        </AnimatePresence>
-
-        <AnimatePresence>
-          {showPanel && resolvedPin && (
-            <motion.div
-              className="fixed top-0 right-0 z-50 h-full"
-              style={{ width: '85vw', maxWidth: 380 }}
-              initial={{ x: '100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              transition={{ type: 'spring', stiffness: 200, damping: 30 }}
-              drag="x"
-              dragConstraints={{ left: 0, right: 0 }}
-              dragElastic={0.2}
-              onDragEnd={(_, info) => {
-                if (info.offset.x > 100) closeAll()
-              }}
-            >
-              {isArticle ? (
-                <div className="bg-white dark:bg-black border border-gray-200 dark:border-gray-800 h-full flex flex-col">
-                  <div className="flex items-center justify-between p-4 pb-2 border-b border-gray-100 dark:border-gray-900">
-                    <button
-                      onClick={backToList}
-                      className="flex items-center gap-2 text-xs tracking-widest uppercase font-light text-black dark:text-white hover:opacity-50 transition-opacity cursor-pointer"
-                      aria-label={`Back to ${resolvedPin.group} list`}
-                    >
-                      <span aria-hidden>&larr;</span>
-                      {resolvedPin.group}
-                    </button>
-                    <button
-                      onClick={closeAll}
-                      className="w-12 h-12 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-black dark:hover:text-white transition-colors text-lg cursor-pointer"
-                      aria-label="Close panel"
-                    >
-                      &times;
-                    </button>
-                  </div>
-                  <div className="flex-1 min-h-0">{children}</div>
-                </div>
-              ) : (
-                <GlobeDetailPanel pin={resolvedPin} />
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <GlobePinTriggers />
+        <MobileGlobeLayout dragDistanceRef={dragDistance} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove}>
+          {children}
+        </MobileGlobeLayout>
       </>
     )
   }
@@ -211,7 +97,10 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
   // - article-open: shrunk to articleGlobeWidthPx, pinned left, article on right
   const isArticle = layoutState === 'article-open'
   const globeWidth = isArticle ? articleGlobeWidthPx : viewportW
-  const globeX = isArticle ? 0 : selectedPin ? -panelWidthPx / 2 : 0
+  // Shift the globe to make room for the panel whenever any panel variant
+  // is open (pin or trip — C4). Keyed on panelVariant rather than selectedPin
+  // so a trip-only lock also opens the panel slot.
+  const globeX = isArticle ? 0 : panelVariant ? -panelWidthPx / 2 : 0
 
   return (
     <div
@@ -219,6 +108,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
     >
+      <GlobePinTriggers />
       <motion.div
         key={tier}
         className={
@@ -276,7 +166,7 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
       </AnimatePresence>
 
       <AnimatePresence>
-        {selectedPin && selectedPinData && layoutState === 'panel-open' && (
+        {panelVariant && layoutState === 'panel-open' && (
           <motion.div
             className="absolute top-0 bottom-0"
             style={{ width: panelWidthPx, right: 16 }}
@@ -285,15 +175,84 @@ export default function GlobeViewport({ children }: { children?: React.ReactNode
             exit={{ x: '110%' }}
             transition={SLIDE_TRANSITION}
           >
-            <div
+            {/* Animate `top` so variant switches (pin → trip and back)
+                tween the panel's Y alongside the inner content cross-fade,
+                rather than snapping instantly. Duration matches the inner
+                fade (200ms) so the two motions land together. */}
+            <motion.div
               className="absolute left-0 w-full"
-              style={{ top: panelTop, maxHeight: 'calc(100vh - 48px)' }}
+              // 100dvh tracks the dynamic viewport height so the panel's max
+              // height collapses cleanly when iOS Safari hides its address bar
+              // (100vh would leave dead space at the bottom).
+              style={{ maxHeight: 'calc(100dvh - 48px)' }}
+              initial={false}
+              animate={{ top: panelTop }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
             >
-              <GlobeDetailPanel pin={selectedPinData} />
-            </div>
+              <GlobeDetailPanel />
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  )
+}
+
+interface MobileGlobeLayoutProps {
+  children?: React.ReactNode
+  dragDistanceRef: React.MutableRefObject<number>
+  onPointerDown: (e: React.PointerEvent) => void
+  onPointerMove: (e: React.PointerEvent) => void
+}
+
+function MobileGlobeLayout({
+  children,
+  dragDistanceRef,
+  onPointerDown,
+  onPointerMove,
+}: MobileGlobeLayoutProps) {
+  const { layoutState } = useGlobeUI()
+
+  const isArticle = layoutState === 'article-open'
+
+  return (
+    <div className="flex flex-col min-h-screen w-full bg-white dark:bg-black">
+      {/* Globe region — not sticky, scrolls with the page. Navbar (fixed, 72px)
+          overlaps the top of this region; we accept that so the globe reaches
+          full 45vh height without getting cropped. */}
+      <div
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        className="relative w-full flex-shrink-0"
+        style={{ height: '70vh', touchAction: 'none' }}
+      >
+        <GlobeCanvas dragDistanceRef={dragDistanceRef} />
+        <GlobeTooltip />
+      </div>
+
+      {/* Timeline — scrolls with the page on mobile (no sticky pin). */}
+      <div className="z-30 w-full bg-white dark:bg-black border-b border-black/5 dark:border-white/5 py-2">
+        <Timeline />
+      </div>
+
+      {/* Content region — part of the page's vertical flow, not a nested
+          scroll container. Page scroll handles overflow.
+          `min-h-screen` keeps the document tall enough that switching
+          between the (long) trip list and a (shorter) pin/trip panel
+          doesn't snap the page's scroll position when MobileTripList
+          triggers a smooth-scroll back to the globe. Without it, the
+          document shortens mid-animation and scrollY clamps to the new
+          max, cutting the animation short. */}
+      <div className="flex-1 w-full min-h-screen">
+        {isArticle ? (
+          <div className="w-full border-t border-gray-100 dark:border-gray-900">
+            <MobileNavChrome mode="close" />
+            {children}
+          </div>
+        ) : (
+          <MobileContentRegion />
+        )}
+      </div>
     </div>
   )
 }

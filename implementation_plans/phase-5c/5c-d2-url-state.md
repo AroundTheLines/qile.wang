@@ -213,6 +213,66 @@ If any of these behave unexpectedly, adjust. Log findings in PR.
 - URL state fully wired — D3 builds escape handling on top.
 - No code handoff.
 
+## Shipped decisions (for future implementers)
+
+Recording the non-obvious choices that landed, so you can skip re-deriving them.
+
+### 1. Write-side effect gates on `lockedTrip` changes via a ref, NOT on URL changes
+
+**What shipped**: `prevLockedTripRef` compares previous vs. current `lockedTrip`; the effect bails if they're equal.
+
+**Why it matters**: Without this, the effect re-fires whenever `pathname`/`searchParams` change. During browser back from `/globe?trip=X` → `/globe`, React commits the new `searchParams` before the read-side's scheduled `setLockedTripState(null)` lands in the same commit. The write-side would see stale `lockedTrip=X` + empty query → push `/globe?trip=X` → trap history in a cycle. Verified empirically: without the ref, back from `/globe?trip=X` cycles back to `/globe?trip=X` indefinitely.
+
+**Consequence**: The deps array still includes `pathname`, `searchParams`, `router`, `trips` because the body reads them (React exhaustive-deps). The ref is the actual gate.
+
+### 2. Read-side MUST clear `lockedTrip` when URL drops `?trip=` on `/globe`
+
+**What shipped**: The existing "URL → state" effect now also runs `setLockedTripState(null)` when `pathname === '/globe' && !searchParams.get('trip') && !activeTripSlug`.
+
+**Why it matters**: Without this, back-nav leaves stale state. Paired with the write-side's ref gate, this is what makes back-nav settle correctly.
+
+**Guard**: Only clears when `pathname === '/globe'`. On `/globe/<item-slug>` (item article route), `lockedTrip` must survive — the item may belong to the locked trip, and the cross-interactions expect the lock to persist across article viewing.
+
+### 3. Write-side AND manual callers both push — Next.js dedupes
+
+**What shipped**: Timeline label click and TripPanel close handler still call `router.push` directly. The write-side also pushes as a safety net.
+
+**Why both**: Manual pushes update URL synchronously with the user's click (perceived responsiveness). The write-side is the safety net for any code path that mutates `lockedTrip` without doing its own push (future callers, playback engine, mobile flows).
+
+**Why it doesn't double history**: Verified via `history.length` — exactly +1 per user action. Next.js deduplicates same-URL `router.push` calls. Redundant call is cheap; don't optimize away without evidence.
+
+**Not doing**: consolidating so write-side is the single source of truth. Would introduce a one-render lag on every URL update. Out of scope.
+
+### 4. `?pin=` is stripped whenever `?trip=` is set
+
+**What shipped**: Write-side effect strips `?pin=` whenever `lockedTrip` is non-null — even on cold-load when the slug already matches.
+
+**Why it matters**: `setLockedTrip` clears `selectedPin` in memory (mutual exclusion per §7.3.2). The URL must reflect that. Edge case: deep-link `/globe?pin=X&trip=Y` — if we only checked the trip slug, the stale `?pin=X` would linger. Condition is `(lockedTripSlug !== currentTripQuery || currentPinQuery)`.
+
+**Cost**: one extra push on the `/globe?pin=X&trip=Y` cold-load path (rare).
+
+### 5. `router.push` with `{ scroll: false }` everywhere
+
+**What shipped**: Every push in the provider uses `{ scroll: false }`. No exceptions.
+
+**Why**: Losing it makes the page scroll to top on every inline state transition, which would be catastrophic for the timeline/globe UX.
+
+### 6. Next.js 16 quirks — verified, no surprises
+
+Tested empirically:
+- `router.push('/globe?trip=X', { scroll: false })` updates `useSearchParams()` on next render. ✓
+- Creates a history entry (`history.length` +1). ✓
+- Back button pops correctly. ✓
+- `useSearchParams()` is readable synchronously in effects. ✓
+
+No adjustments needed for the App Router model.
+
+### 7. Not handled here (deferred to D3)
+
+- `/trip/does-not-exist` → 404 redirect behavior
+- Escape key globally
+- Synthetic history on cold-load `/trip/<slug>` (intentionally NOT done — spec §8.7 accepts "whatever browser had" for cold-load back)
+
 ## How to verify
 
 1. Sequence:

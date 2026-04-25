@@ -24,3 +24,18 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* C7: cross-interaction pulse on a visit section. Spec §17.3 — fade up,
+   hold briefly, fade down, totaling 600ms. Hover tint is handled by the
+   bg-[rgba(...)] class on the same element; this animation overlays on
+   top during the brief pulse window. */
+@keyframes visit-section-pulse {
+  0% { background-color: rgba(37, 99, 235, 0); }
+  25% { background-color: rgba(37, 99, 235, 0.12); }
+  70% { background-color: rgba(37, 99, 235, 0.12); }
+  100% { background-color: rgba(37, 99, 235, 0); }
+}
+.visit-section[data-pulsing="true"],
+.visit-section[data-pulsing="true"] .visit-section-header {
+  animation: visit-section-pulse 600ms ease-in-out;
+}

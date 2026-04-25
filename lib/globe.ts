@@ -1,41 +1,36 @@
-import type { ContentType, Coordinates, SanityImage } from './types'
+import type { Coordinates, PinWithVisits, VisitSummary } from './types'
 
-// --- Types ---
+// --- Scene constants ---
 
-export interface GlobePinItem {
-  _id: string
-  title: string
-  slug: { current: string }
-  content_type: ContentType
-  cover_image?: SanityImage
-  locationLabel: string
-  year?: string
-}
+/**
+ * Globe mesh radius. Referenced by anything that needs to place objects
+ * on/near the sphere surface, project screen positions, or compute camera
+ * framing. Previously duplicated in `GlobeMesh.tsx`, `GlobePins.tsx`,
+ * `GlobePositionBridge.tsx`, and `GlobeScene.tsx` — consolidated here so
+ * tweaking the globe size doesn't require a multi-file hunt.
+ */
+export const GLOBE_RADIUS = 2
 
-export interface GlobePin {
-  group: string
-  coordinates: Coordinates
-  items: GlobePinItem[]
-  latestDate?: string
-}
+// --- Layout constants ---
 
-export interface GlobeContentItem {
-  _id: string
-  title: string
-  slug: { current: string }
-  content_type: ContentType
-  cover_image?: SanityImage
-  tags?: string[]
-  acquired_at?: string
-  latest_location_date?: string
-  locations: {
-    label: string
-    coordinates: Coordinates
-    sort_date?: string
-    date_label?: string
-    globe_group?: string
-  }[]
-}
+/**
+ * Height of the fixed top navbar on `/globe` (see `GlobeNavbar.tsx`). Shared
+ * so layout shells (timeline offset, mobile globe re-centering) don't drift
+ * if the navbar height changes.
+ */
+export const NAVBAR_HEIGHT_PX = 72
+
+/**
+ * Vertical anchor used by the trip panel (§7.2). Unlike the pin panel —
+ * which is anchored to the selected pin's Y so the connector line reads
+ * cleanly from pin → panel header — the trip panel has no geometric
+ * anchor on the globe, so we pin it just below the timeline rail. The
+ * fixed offset is what visually distinguishes the two variants.
+ *
+ * Navbar (72) + timeline rail (~92) + a visible gap (~28) ≈ 192. Rounded
+ * to 200 to keep the floor resilient to small timeline-height changes.
+ */
+export const TRIP_PANEL_TOP_PX = NAVBAR_HEIGHT_PX + 128
 
 // --- Utilities ---
 
@@ -48,6 +43,94 @@ export function clampPanelTop(pinY: number | null, viewportHeight: number): numb
   // Align panel top ~60px above the pin (so pin visually connects to header)
   const desired = pinY - 60
   return Math.max(24, Math.min(desired, viewportHeight - 400))
+}
+
+// --- Camera framing (C5) ---
+
+/**
+ * Compute the camera position (relative to globe origin) that frames all
+ * `coords` of a trip inside the viewport. Returns a position along the
+ * centroid direction at a distance clamped to [minDistance, maxDistance].
+ *
+ * Derivation (see §17.3 and the C5 shipped notes for full context):
+ *   At camera distance D from globe center, a pin at angular offset θ
+ *   from the centroid direction projects to screen half-angle φ where
+ *     tan(φ) = R · sin(θ) / (D − R · cos(θ))
+ *   Solving for D:
+ *     D = R · cos(θ) + R · sin(θ) / tan(φ)
+ *   Choosing φ so that a hemisphere-spread trip (θ = π/2) lands exactly
+ *   at `maxDistance` gives tan(φ) = R / maxDistance, which simplifies to
+ *     D = R · cos(θ) + maxDistance · sin(θ)
+ *
+ * This yields a smooth gradient: tight clusters land at `minDistance`
+ * (clamped), mid-spread trips land proportionally further back, and
+ * hemisphere-straddling trips naturally approach `maxDistance` without
+ * a separate singularity branch. Antipodal pairs fall back to the first
+ * visit's direction (centroid sum ≈ 0).
+ */
+export interface ComputeFitCameraOpts {
+  /** Globe radius in the same units as min/maxDistance. */
+  globeRadius: number
+  /** Floor distance — tight clusters clamp to this. */
+  minDistance: number
+  /** Ceiling — hemisphere-straddling trips land at this. */
+  maxDistance: number
+}
+
+export function computeFitCamera(
+  coords: Coordinates[],
+  opts: ComputeFitCameraOpts,
+): { x: number; y: number; z: number; distance: number } {
+  if (coords.length === 0) {
+    return {
+      x: 0,
+      y: 0,
+      z: opts.minDistance,
+      distance: opts.minDistance,
+    }
+  }
+  const vectors = coords.map((c) => sphericalToCartesian(c.lat, c.lng, 1))
+
+  let cx = 0
+  let cy = 0
+  let cz = 0
+  for (const [x, y, z] of vectors) {
+    cx += x
+    cy += y
+    cz += z
+  }
+  let clen = Math.hypot(cx, cy, cz)
+  if (clen < 1e-6) {
+    // Antipodal — fall back to the first visit's direction.
+    ;[cx, cy, cz] = vectors[0]
+    clen = Math.hypot(cx, cy, cz)
+  }
+  cx /= clen
+  cy /= clen
+  cz /= clen
+
+  let maxAngle = 0
+  for (const [vx, vy, vz] of vectors) {
+    const dot = Math.min(1, Math.max(-1, cx * vx + cy * vy + cz * vz))
+    const a = Math.acos(dot)
+    if (a > maxAngle) maxAngle = a
+  }
+
+  // `rawDistance` is exact on θ ∈ [0, π/2]. Past π/2 the cos term goes
+  // negative and the curve starts bending back down — at θ=π it
+  // evaluates to −R. That's outside the formula's meaningful domain;
+  // the outer clamp to [minDistance, maxDistance] is what actually
+  // guarantees a sane output for degenerate-spread inputs. Antipodal
+  // inputs never reach this branch because the centroid fallback above
+  // picks the first visit direction (θ=0) instead.
+  const rawDistance =
+    opts.globeRadius * Math.cos(maxAngle) + opts.maxDistance * Math.sin(maxAngle)
+  const distance = Math.min(
+    opts.maxDistance,
+    Math.max(opts.minDistance, rawDistance),
+  )
+
+  return { x: cx * distance, y: cy * distance, z: cz * distance, distance }
 }
 
 export function sphericalToCartesian(
@@ -120,77 +203,43 @@ export function clipLineByGlobe(
   }
 }
 
-export function groupPins(content: GlobeContentItem[]): GlobePin[] {
-  const groups = new Map<
-    string,
-    {
-      lats: number[]
-      lngs: number[]
-      items: Map<string, { item: GlobePinItem; sortDate?: string }>
-      latestDate?: string
+/**
+ * Aggregate visits into pins (one pin per unique location document).
+ * - Each pin's `visits` are sorted startDate desc (most recent first) — matches §7.1.
+ * - Pins are sorted by each pin's most-recent visit, descending — preserves
+ *   the entrance-target contract GlobeScene relies on (`pins[0]` = freshest).
+ */
+export function aggregatePins(visits: VisitSummary[]): PinWithVisits[] {
+  const byLocation = new Map<string, PinWithVisits>()
+  const tripIdSets = new Map<string, Set<string>>()
+  for (const v of visits) {
+    const key = v.location._id
+    let pin = byLocation.get(key)
+    let tripSet = tripIdSets.get(key)
+    if (!pin || !tripSet) {
+      pin = {
+        location: v.location,
+        visits: [],
+        coordinates: v.location.coordinates,
+        visitCount: 0,
+        tripIds: [],
+      }
+      tripSet = new Set<string>()
+      byLocation.set(key, pin)
+      tripIdSets.set(key, tripSet)
     }
-  >()
-
-  for (const c of content) {
-    for (const loc of c.locations) {
-      if (!loc.globe_group) continue
-
-      let group = groups.get(loc.globe_group)
-      if (!group) {
-        group = { lats: [], lngs: [], items: new Map() }
-        groups.set(loc.globe_group, group)
-      }
-
-      group.lats.push(loc.coordinates.lat)
-      group.lngs.push(loc.coordinates.lng)
-
-      // Track latest date across all locations in group
-      if (loc.sort_date) {
-        if (!group.latestDate || loc.sort_date > group.latestDate) {
-          group.latestDate = loc.sort_date
-        }
-      }
-
-      // Deduplicate content: if item already in group, keep most recent location label
-      const existing = group.items.get(c._id)
-      if (!existing || (loc.sort_date && (!existing.sortDate || loc.sort_date > existing.sortDate))) {
-        group.items.set(c._id, {
-          item: {
-            _id: c._id,
-            title: c.title,
-            slug: c.slug,
-            content_type: c.content_type,
-            cover_image: c.cover_image,
-            locationLabel: loc.label,
-            year: loc.sort_date ? loc.sort_date.slice(0, 4) : undefined,
-          },
-          sortDate: loc.sort_date,
-        })
-      }
+    pin.visits.push(v)
+    pin.visitCount++
+    if (!tripSet.has(v.trip._id)) {
+      tripSet.add(v.trip._id)
+      pin.tripIds.push(v.trip._id)
     }
   }
-
-  const pins: GlobePin[] = []
-
-  for (const [groupName, group] of groups) {
-    const avgLat = group.lats.reduce((a, b) => a + b, 0) / group.lats.length
-    const avgLng = group.lngs.reduce((a, b) => a + b, 0) / group.lngs.length
-
-    pins.push({
-      group: groupName,
-      coordinates: { lat: avgLat, lng: avgLng },
-      items: Array.from(group.items.values()).map((v) => v.item),
-      latestDate: group.latestDate,
-    })
+  for (const pin of byLocation.values()) {
+    pin.visits.sort((a, b) => b.startDate.localeCompare(a.startDate))
   }
-
-  // Sort by latestDate descending (most recent first)
-  pins.sort((a, b) => {
-    if (!a.latestDate && !b.latestDate) return 0
-    if (!a.latestDate) return 1
-    if (!b.latestDate) return -1
-    return b.latestDate.localeCompare(a.latestDate)
-  })
-
-  return pins
+  return Array.from(byLocation.values()).sort((a, b) =>
+    b.visits[0].startDate.localeCompare(a.visits[0].startDate),
+  )
 }
+

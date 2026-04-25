@@ -2,10 +2,8 @@
 
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
-import { useGlobe } from './GlobeContext'
-import { sphericalToCartesian } from '@/lib/globe'
-
-const GLOBE_RADIUS = 2
+import { useGlobeData } from './GlobeContext'
+import { GLOBE_RADIUS, sphericalToCartesian } from '@/lib/globe'
 
 // Module-scoped scratch vectors. useFrame runs at 60fps; allocating a
 // fresh THREE.Vector3 per frame per pin churns GC. Reusing these in
@@ -30,7 +28,7 @@ const tmpProj = new THREE.Vector3()
 
 export default function GlobePositionBridge() {
   const { camera, size } = useThree()
-  const { pins, pinPositionRef, globeScreenRef, frameSubscribersRef } = useGlobe()
+  const { pins, pinPositionRef, globeScreenRef, frameSubscribersRef } = useGlobeData()
 
   useFrame(() => {
     const positions: Record<string, { x: number; y: number; visible: boolean; behind: boolean }> = {}
@@ -91,7 +89,7 @@ export default function GlobePositionBridge() {
       pinNormal.copy(pinWorld).normalize()
       const behind = cameraToPin.dot(pinNormal) > 0
 
-      positions[pin.group] = {
+      positions[pin.location._id] = {
         x: (ndc.x * 0.5 + 0.5) * size.width,
         y: (-ndc.y * 0.5 + 0.5) * size.height,
         visible: ndc.z < 1,

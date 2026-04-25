@@ -266,6 +266,100 @@ This guard lives in GlobeScene's existing pin-rotate effect. Coordinate with C7.
 - C7 reads `pin.tripIds` to decide whether to trigger rotate or scroll panel. Confirm the pin-rotate-guard is in place.
 - None other.
 
+---
+
+## Shipped implementation notes (2026-04-22)
+
+Record of what actually landed and the decisions made during implementation. Reviewers and future implementers should treat this section as authoritative over the pseudocode in *Implementation guidance* above when they disagree.
+
+### Where the code lives
+
+- **`lib/globe.ts`** owns `computeFitCamera` as a pure, parameter-driven helper. Extracted from `GlobeScene.tsx` so it's unit-testable without a R3F runtime and because the math is independent of any component state. The ticket suggested keeping it local; we chose to extract because the test harness pattern (`aggregatePins` + friends in `lib/globe.ts` with a `lib/globe.test.ts` companion) was already established in Phase 5C.
+- **`components/globe/GlobeScene.tsx`** owns the scene-side glue: state refs, the `useEffect` that fires on `lockedTrip` change, the `useFrame` animation branch, and a `kickOffTripFit` `useCallback` that both the effect and the entrance-done handler call. Extracted because the two call sites had duplicated coord-collection + ref-write logic.
+- **`lib/globe.test.ts`** covers the 5 branches of `computeFitCamera`: single coord, tight cluster, hemisphere-straddle (→ max), antipodal (→ fallback direction, not NaN), and empty input (→ resting, defensive).
+
+### Fit formula (final form)
+
+The shipped formula is a proper camera-frustum fit — not the ticket's `1/tan` approximation, which had transcription bugs and produced near-binary behavior. Derivation:
+
+> At camera distance `D` from globe center looking at the centroid direction, a pin at angular offset `θ` from the centroid projects to screen half-angle `φ` where `tan(φ) = R · sin(θ) / (D − R · cos(θ))`. Solving for `D` and choosing `φ` so that a hemisphere-spread trip (`θ = π/2`) lands exactly at `maxDistance` yields:
+>
+> **`D = R · cos(θ) + maxDistance · sin(θ)`**
+>
+> Clamped to `[minDistance, maxDistance]`.
+
+This is smooth, monotonic, and handles the hemisphere cusp analytically — no separate singularity branch needed. `minDistance` sets the close-up floor for tight clusters; `maxDistance` sets the pulled-back ceiling for globe-spanning trips.
+
+### Evolution of this formula
+
+Three iterations during review:
+
+1. **Ticket pseudocode v1** (never shipped): `rawDistance = 1/tan(α + margin) * RESTING`. The `* RESTING` multiplier was a copy-paste bug inconsistent with the derivation above it. Every trip clamped to max.
+2. **Transcription fix** (shipped, then replaced): dropped the multiplier. Near-binary — tight clusters → resting, hemisphere-straddle → max. Morocco '18 at ~6.62, Japan at 6.5, RTW at 13.
+3. **Proper frustum fit** (current): replaced the whole `1/tan` approximation with the exact camera-geometry formula. Smooth gradient between `minDistance` and `maxDistance`. Tight clusters clamp to min (close-up feel); mid-spreads grow proportionally; RTW lands exactly at max.
+
+### Distance gradient (final)
+
+With `globeRadius = 2`, `minDistance = 5.5`, `maxDistance = 8.6`:
+
+| Angular spread (from centroid) | Example | Computed D | Clamped D |
+|---|---|---|---|
+| 0° (single) | Morocco '18 | 2.0 | 5.5 (min) |
+| ~2° (cluster) | Japan Spring '22 | ~2.3 | 5.5 (min) |
+| 15° | close continental pair | ~4.16 | 5.5 (min) |
+| 30° | ~30° continental spread | ~6.03 | 6.03 |
+| 45° (hemisphere edge) | — | ~7.49 | 7.49 |
+| 60° | — | ~8.45 | 8.45 |
+| ≥ 65° | RTW (Tokyo/NYC/Sydney) | 8.6+ | 8.6 (max) |
+
+Japan and single-visit trips clamp to `minDistance ≈ 4.24` (close-up, globe overflows viewport at ~125%). RTW lands at `maxDistance ≈ 8.57` (globe fills ~60% of viewport). The transition through continental and hemispheric spreads is smooth.
+
+### Constants
+
+Everything is derived from four primary inputs — `GLOBE_RADIUS`, `CAMERA_FOV_DEG`, and two viewport-fraction targets — so tuning is a one-place change:
+
+- `GLOBE_RADIUS = 2` — now the **single source of truth** in [`lib/globe.ts`](../../lib/globe.ts). Previously duplicated across `GlobeMesh.tsx`, `GlobePins.tsx`, `GlobePositionBridge.tsx`, and `GlobeScene.tsx` — all four now import it.
+- `CAMERA_FOV_DEG = 45` — mirrors the `Canvas` prop in `GlobeCanvas.tsx`. Still a duplication, but a narrow one that lives next to its consumer. If the camera FOV ever changes, update both.
+- `TRIP_FIT_MIN_VIEWPORT_FRAC = 1.25` — tight clusters fill 125% of the viewport (intentionally overflow). Derives `TRIP_FIT_MIN_DISTANCE ≈ 4.24`, which has ~0.24 clearance above OrbitControls `minDistance = 4`.
+- `TRIP_FIT_MAX_VIEWPORT_FRAC = 0.6` — globe-spanning trips fill 60% of viewport. Derives `TRIP_FIT_MAX_DISTANCE ≈ 8.57`, below OrbitControls `maxDistance = 13` (which stays looser so user wheel-zoom has headroom).
+
+`distanceForViewportFraction(f) = R / sin(f · FOV / 2)` handles the conversion. Both endpoints use the same helper so the symmetry is obvious.
+
+### Invariant: `minDistance < maxDistance`
+
+Enforced implicitly by the choice of constants (5.5 < 8.6). The fit formula is only meaningful when this holds. `OrbitControls maxDistance` stays at 13 (looser) so the user's scroll-wheel has headroom past the trip-fit cap.
+
+### `OrbitControls maxDistance` vs `TRIP_FIT_MAX_DISTANCE`
+
+Two independent caps with different jobs. `OrbitControls maxDistance = 13` is kept looser than `TRIP_FIT_MAX_DISTANCE = 8.6` so the user's scroll-wheel can push past the fit cap if they want to. Invariant: `OrbitControls.maxDistance ≥ TRIP_FIT_MAX_DISTANCE` so the fit animation is never clipped by controls.
+
+### Cold-URL `?trip=` handling
+
+Implemented via a `pendingTripFit` ref. If the `lockedTrip` effect fires *before* the entrance animation completes, we set the pending flag and return. The entrance-done branch inside `useFrame` consumes the flag and calls `kickOffTripFit(lockedTrip)` directly — no extra effect dance, same helper.
+
+This pattern mirrors the existing `pendingArticleZoom` mechanism for cold-URL article loads.
+
+### Article-open guard + `prevLockedTripRef` ordering
+
+The effect returns early when `layoutState === 'article-open'` *without* updating `prevLockedTripRef`. This is intentional: if a user deep-links to `/trip/<slug>/<article>` (article-open while trip is locked) and then closes the article back to `panel-open`, the effect re-fires with the same `lockedTrip` value. Because `prev !== lockedTrip` still holds (we never marked it seen), the fit lands on article close. If you ever want to suppress that re-fit, update `prevLockedTripRef.current = lockedTrip` before returning.
+
+### `kickOffTripFit` shared helper
+
+Both the `useEffect` and the entrance-done consumer inside `useFrame` collect coords from `pins[]` where `v.trip._id === tripId`, compute the fit camera position, and populate `rotateToFitTripRef`. The shared callback is the single place to update if the data model's trip-id key ever moves.
+
+Guards intentionally stay at the call sites (not inside the helper) so each path can express its own preconditions (`entranceDone.current`, `layoutState !== 'article-open'`, `pins` non-empty) without the helper having to read them.
+
+### Duration tuning: 800ms → 1100ms
+
+Spec §17.3 calls for ~800ms. After initial implementation, PR review feedback flagged trip-to-trip transitions as feeling whiplash-y — the abrupt mid-animation peak velocity from `0 → endPos` over 0.8s reads as jerky when the user re-targets quickly between locked trips. Bumped to **1.1s** without changing the quadratic ease-in-out curve (`t < 0.5 ? 2*t² : 1 − (−2t+2)²/2`). The longer runway lowers peak velocity ~27%, which is the knob that actually affects perceived abruptness; the curve shape is fine.
+
+If future polish wants even softer edges (not currently needed), swap to a quintic ease-in-out (`t < 0.5 ? 16*t⁵ : 1 − (−2t+2)⁵/32`) — flatter boundaries, same midpoint.
+
+### Scope left for follow-ups
+
+- **Proper frustum-fit math.** The current near-binary behavior works but isn't a "proper" camera-FOV frustum fit. If a future ticket wants a smooth `distance(spread)` curve — e.g. Japan at resting, Europe slightly pulled back, RTW at max — revisit the derivation using the camera's actual vertical FOV. Out of scope for C5.
+- **Pending-flag state machine.** Both `pendingArticleZoom` and `pendingTripFit` are consumed in the same post-entrance block; if a third "pending X on entrance" ever shows up, the interaction matrix grows and a dedicated state machine would be cleaner. Not needed at two.
+
 ## How to verify
 
 1. `/globe` — click Japan Spring '22 timeline label.

@@ -1,10 +1,10 @@
 'use client'
 
-import { useRef, useCallback, useMemo } from 'react'
+import { memo, useRef, useCallback, useMemo } from 'react'
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
-import { useGlobe } from './GlobeContext'
-import { sphericalToCartesian } from '@/lib/globe'
+import { useGlobeData, useGlobePin, useGlobeTrip, useGlobePlayback, useGlobeUI } from './GlobeContext'
+import { GLOBE_RADIUS, sphericalToCartesian } from '@/lib/globe'
 
 const PIN_RADIUS = 0.042
 // The dot is a full sphere sitting on the globe surface, so half of it
@@ -20,7 +20,6 @@ const SURFACE_OFFSET = 0.006
 // hover/click from neighbors when the globe is zoomed in.
 const HIT_RADIUS = 0.075
 const PIN_COLOR = '#EF4444'
-const GLOBE_RADIUS = 2
 
 // Render-order bands — explicit so the transparent-sort order is
 // deterministic and doesn't flip per-frame based on camera depth.
@@ -37,16 +36,36 @@ const RENDER_ORDER_PIN = -1
 const FADE_START = -0.1
 const FADE_END = 0.2
 
+// Module-scoped scratch vectors shared across all Pin instances. Safe
+// because R3F's useFrame callbacks are synchronous and non-reentrant —
+// same pattern as GlobePositionBridge. Keeps per-frame allocations at
+// zero (was 3 × Vector3 per pin per frame = ~90k/sec at 500 pins/60fps).
+const _pinScratchCameraDir = new THREE.Vector3()
+// Reusable +Y basis used to build the pin's orientation quaternion at
+// mount time. Kept module-scoped so we don't allocate a Vector3 per Pin.
+const _pinUpAxis = new THREE.Vector3(0, 1, 0)
+
 function Pin({
-  group,
+  locationId,
   lat,
   lng,
 }: {
-  group: string
+  locationId: string
   lat: number
   lng: number
 }) {
-  const { selectedPin, selectPin, hoveredPin, setHoveredPin, showHover } = useGlobe()
+  const { pins } = useGlobeData()
+  const {
+    selectedPin,
+    selectPin,
+    hoveredPin,
+    setHoveredPin,
+    setPinSubregionHighlight,
+    requestPinScroll,
+  } = useGlobePin()
+  const { lockedTrip, setLockedTrip, hoveredTrip } = useGlobeTrip()
+  const { playbackHighlightedTripIds } = useGlobePlayback()
+  const { showHover } = useGlobeUI()
   const meshRef = useRef<THREE.Mesh>(null)
   const hitRef = useRef<THREE.Mesh>(null)
   const ringRef = useRef<THREE.Mesh>(null)
@@ -61,15 +80,48 @@ function Pin({
   const hoveredT = useRef(0)
   const scaleT = useRef(1)
 
-  const pos = sphericalToCartesian(lat, lng, GLOBE_RADIUS)
-  const isSelected = selectedPin === group
-  const isHovered = hoveredPin === group
+  // Stable Vector3 for this pin's surface position. Computed once per
+  // lat/lng change and reused by `<group position>`, the orientation
+  // quaternion, and the per-frame back-face fade — avoids churning
+  // Vector3 allocations inside useFrame.
+  const pinPositionVec = useMemo(() => {
+    const [x, y, z] = sphericalToCartesian(lat, lng, GLOBE_RADIUS)
+    return new THREE.Vector3(x, y, z)
+  }, [lat, lng])
+  // Outward surface normal. Depends only on lat/lng, not on the camera —
+  // no reason to recompute this per frame.
+  const pinNormal = useMemo(
+    () => pinPositionVec.clone().normalize(),
+    [pinPositionVec],
+  )
+  const isSelected = selectedPin === locationId
+  const isHovered = hoveredPin === locationId
+  // A pin is "trip-active" when it belongs to any trip currently being
+  // highlighted — locked, hovered, or lit by the playback sweep. Trip-
+  // active pins adopt the same visual active state as a selected pin
+  // (ring + shared pulse) so the highlighted trip reads as a connected
+  // set of stops rather than just animated arcs. Matches the arc
+  // highlight rule in TripArcs.
+  const pinTripIds = useMemo(
+    () => pins.find((p) => p.location._id === locationId)?.tripIds ?? [],
+    [pins, locationId],
+  )
+  const isInActiveTrip = useMemo(() => {
+    // When a trip is locked, the lock conveys the user's explicit intent —
+    // ignore the playback highlight (which by design lights up every trip
+    // whose date range contains the playhead, so overlapping trips would
+    // otherwise bleed the selection ring onto unrelated pins).
+    if (lockedTrip) return pinTripIds.includes(lockedTrip)
+    if (hoveredTrip && pinTripIds.includes(hoveredTrip)) return true
+    if (playbackHighlightedTripIds.some((id) => pinTripIds.includes(id))) return true
+    return false
+  }, [pinTripIds, lockedTrip, hoveredTrip, playbackHighlightedTripIds])
+  const isActive = isSelected || isInActiveTrip
 
   // Orient the pin stem so its +Y axis points outward from the globe center.
   const quat = useMemo(() => {
-    const normal = new THREE.Vector3(...pos).normalize()
-    return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal)
-  }, [pos])
+    return new THREE.Quaternion().setFromUnitVectors(_pinUpAxis, pinNormal)
+  }, [pinNormal])
 
   useFrame(({ clock }, delta) => {
     if (!meshRef.current || !pinMaterialRef.current) return
@@ -77,14 +129,14 @@ function Pin({
     // --- Back-face fade ---
     // INVARIANT: assumes the globe is fixed at the world origin and
     // rotation happens by orbiting the camera (same assumption as
-    // GlobePositionBridge). `pos` is the pin's local-space surface
-    // point, so `pos.normalized()` doubles as the outward surface
-    // normal in world space. If the globe group is ever rotated in
-    // place, this dot product needs to take the world matrix into
-    // account.
-    const pinNormal = new THREE.Vector3(...pos).normalize()
-    const cameraDir = new THREE.Vector3()
-      .subVectors(camera.position, new THREE.Vector3(...pos))
+    // GlobePositionBridge). `pinPositionVec` is the pin's local-space
+    // surface point, so its normalized form (`pinNormal`) doubles as
+    // the outward surface normal in world space. If the globe group
+    // is ever rotated in place, this dot product needs to take the
+    // world matrix into account.
+    const cameraDir = _pinScratchCameraDir
+      .copy(camera.position)
+      .sub(pinPositionVec)
       .normalize()
     const dot = pinNormal.dot(cameraDir)
     const tRange = Math.max(0, Math.min(1, (dot - FADE_START) / (FADE_END - FADE_START)))
@@ -95,35 +147,39 @@ function Pin({
       hitRef.current.visible = opacity > 0.1
     }
 
-    // --- Smoothly tween selected / hovered toward target ---
+    // --- Smoothly tween active / hovered toward target ---
     // Equivalent to ~180ms exponential easing at 60fps
     const k = Math.min(1, delta * 8)
-    selectedT.current += ((isSelected ? 1 : 0) - selectedT.current) * k
+    selectedT.current += ((isActive ? 1 : 0) - selectedT.current) * k
     hoveredT.current += ((isHovered ? 1 : 0) - hoveredT.current) * k
 
     // --- Target scale ---
-    // Selected adds a gentle pulse on top of a 1.0 baseline; hover pushes
-    // up modestly. Both are intentionally small so the active dot stays
-    // close in size to its neighbors.
-    const pulse = 0.1 * Math.sin(clock.elapsedTime * 3)
-    const selectedScale = 1 + pulse
+    // The dot itself never changes size for active — the pulse lives
+    // entirely on the ring border, so neighboring active pins don't
+    // jitter in size. Only hover bumps the dot.
     const hoverScale = 1.15
-    const targetScale =
-      1 + (selectedScale - 1) * selectedT.current + (hoverScale - 1) * hoveredT.current
+    const targetScale = 1 + (hoverScale - 1) * hoveredT.current
     scaleT.current += (targetScale - scaleT.current) * k
     meshRef.current.scale.setScalar(scaleT.current)
 
     // --- Ring ---
-    // Ring stays tangent to the surface (painted alongside the dot), so no
-    // camera-facing counter-rotation — the static rotation on the mesh wins.
-    // Ring scale is decoupled from the dot's pulse so the outline doesn't
-    // pulsate with the dot; only the selection tween drives its growth.
+    // Ring breathes outward and back with a smooth ease (sine → smoothstep)
+    // whenever the pin is active — selected or part of an active trip
+    // (locked, hovered, or playback-lit). Globally phased on
+    // clock.elapsedTime so every active pin pulses in sync, matching
+    // the shared rhythm of the trip arcs.
     if (ringRef.current && ringMaterialRef.current) {
       const sel = selectedT.current
       ringRef.current.visible = sel > 0.01 && opacity > 0.1
       if (ringRef.current.visible) {
-        ringRef.current.scale.setScalar(1 + 0.4 * sel)
-        ringMaterialRef.current.opacity = 0.4 * sel * opacity
+        // 0..1 triangle-ish wave from a sine, then smoothstepped so the
+        // in/out transitions ease rather than linearly ping-pong.
+        const raw = 0.5 + 0.5 * Math.sin(clock.elapsedTime * 2)
+        const pulse = raw * raw * (3 - 2 * raw)
+        // Grow outward with the pulse; fade back toward baseline opacity
+        // as it expands so it reads as a breathing halo.
+        ringRef.current.scale.setScalar(1 + (0.25 + 0.35 * pulse) * sel)
+        ringMaterialRef.current.opacity = (0.55 - 0.3 * pulse) * sel * opacity
       }
     }
   })
@@ -136,10 +192,21 @@ function Pin({
       // you aim at London in a tight cluster.
       e.stopPropagation()
       if (!showHover) return
-      if (selectedPin === group) return // don't show tooltip when panel is open for this pin
-      setHoveredPin(group)
+      if (selectedPin === locationId) return // don't show tooltip when panel is open for this pin
+      setHoveredPin(locationId)
+      // §7.5 / §9.2: emit sub-region highlight signal for the timeline
+      // bands (B5 consumes).
+      setPinSubregionHighlight(locationId)
+      // §5.5 playback pause on pin hover is handled in GlobeProvider via
+      // an effect on `hoveredPin`, with a 150ms debounce. See B7.
     },
-    [showHover, selectedPin, group, setHoveredPin],
+    [
+      showHover,
+      selectedPin,
+      locationId,
+      setHoveredPin,
+      setPinSubregionHighlight,
+    ],
   )
 
   const handlePointerOut = useCallback(
@@ -149,22 +216,68 @@ function Pin({
       // Only clear if *this* pin is the currently hovered one. When moving
       // between close pins, the new pin's pointer-over can fire before the
       // old pin's pointer-out — guarding prevents wiping out the new hover.
-      setHoveredPin((prev) => (prev === group ? null : prev))
+      setHoveredPin((prev) => (prev === locationId ? null : prev))
+      // Keep sub-region bands lit while the pin panel is open for this
+      // pin (spec §7.5). The provider clears the highlight when
+      // selectedPin clears.
+      if (selectedPin !== locationId) {
+        setPinSubregionHighlight((prev) => (prev === locationId ? null : prev))
+      }
+      // Pause removal is handled by the cleanup of the `hoveredPin` effect
+      // in GlobeProvider — no call needed here.
     },
-    [showHover, group, setHoveredPin],
+    [
+      showHover,
+      locationId,
+      selectedPin,
+      setHoveredPin,
+      setPinSubregionHighlight,
+    ],
   )
 
   const handleClick = useCallback(
     (e: ThreeEvent<MouseEvent>) => {
       e.stopPropagation()
-      selectPin(group)
+
+      // §9.2: context-aware dispatch when a trip is locked.
+      if (lockedTrip) {
+        const pin = pins.find((p) => p.location._id === locationId)
+        const inLockedTrip = pin?.tripIds.includes(lockedTrip) ?? false
+        if (inLockedTrip) {
+          // Pin belongs to the locked trip — keep the lock, don't open a
+          // pin panel, and signal TripPanel to scroll to this visit + pulse.
+          setHoveredPin(null)
+          requestPinScroll(locationId)
+          return
+        }
+        // Outside the locked trip — release the lock and open pin panel.
+        setLockedTrip(null)
+        selectPin(locationId)
+        setHoveredPin(null)
+        setPinSubregionHighlight(locationId)
+        return
+      }
+
+      // No lock — standard pin selection.
+      selectPin(locationId)
       setHoveredPin(null)
+      // §7.5: click keeps sub-region bands lit while the panel is open.
+      setPinSubregionHighlight(locationId)
     },
-    [group, selectPin, setHoveredPin],
+    [
+      pins,
+      lockedTrip,
+      locationId,
+      selectPin,
+      setLockedTrip,
+      setHoveredPin,
+      setPinSubregionHighlight,
+      requestPinScroll,
+    ],
   )
 
   return (
-    <group position={pos} quaternion={quat}>
+    <group position={pinPositionVec} quaternion={quat}>
       {/* Dot — half-embedded sphere with basic (unlit) material. Reads as a
           perfect flat-color circle from any viewing angle, unlike a flat
           disc which foreshortens to a line near the globe's silhouette.
@@ -218,15 +331,17 @@ function Pin({
   )
 }
 
+const MemoPin = memo(Pin)
+
 export default function GlobePins() {
-  const { pins } = useGlobe()
+  const { pins } = useGlobeData()
 
   return (
     <>
       {pins.map((pin) => (
-        <Pin
-          key={pin.group}
-          group={pin.group}
+        <MemoPin
+          key={pin.location._id}
+          locationId={pin.location._id}
           lat={pin.coordinates.lat}
           lng={pin.coordinates.lng}
         />

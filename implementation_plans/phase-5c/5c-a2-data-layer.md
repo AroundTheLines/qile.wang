@@ -2,6 +2,8 @@
 
 **Epic**: A. Foundation · **Owner**: Dev A · **Can be run by agent?**: Yes · **Estimated size**: M
 
+> **Status**: ✅ Shipped 2026-04-20 — see [Implementation log](#implementation-log) at the bottom for what was built, deviations from this spec, and notes for downstream tickets.
+
 ## Dependencies
 
 ### Hard
@@ -307,3 +309,85 @@ Downstream tickets import these names verbatim. Do not rename them without coord
 1. `npx tsc --noEmit lib/**/*.ts` (or equivalent) — no errors in `lib/`.
 2. Run unit tests (if added): `npx vitest run lib/globe.test.ts`.
 3. Manual smoke: open `app/globe/layout.tsx`. The compile error will be `Module '"@/lib/queries"' has no exported member 'globeContentQuery'.` — expected, handed off to A3.
+
+---
+
+## Implementation log
+
+Shipped in PR [#27](https://github.com/AroundTheLines/qile.wang/pull/27) on 2026-04-20.
+
+### Files actually shipped
+
+- `lib/queries.ts` — added `allTripsQuery`, `allVisitsQuery`, `tripBySlugQuery`; deleted `globeContentQuery`; also removed the dead `globe_group` projection from `contentBySlugQuery` (the field no longer exists on the `Location` type).
+- `lib/types.ts` — added `LocationDoc`, `TripSummary`, `Trip`, `VisitSummary`, `Visit` (alias of `VisitSummary`), `VisitInTrip`, `TripWithVisits`, `PinWithVisits`, plus a new narrower `VisitItemSummary` (see deviation #1 below). Removed `globe_group` from `Location`.
+- `lib/globe.ts` — replaced `groupPins` + `GlobeContentItem` + `GlobePin` with `aggregatePins`. Kept `GlobePinItem`, `sphericalToCartesian`, `clampPanelTop`, `clipLineByGlobe`, `GlobeScreenCircle` untouched.
+- `lib/globe.test.ts` — 4 vitest cases matching the ticket's acceptance criteria (empty, single visit, same-location/two-trips, two-locations).
+
+### Deviations from this spec
+
+**1. New `VisitItemSummary` type instead of `ContentSummary` on `items`.**
+This spec says `VisitSummary.items: ContentSummary[]` and same for `VisitInTrip`. But `ContentSummary` requires `published_at: string`, and the GROQ projections for visit items intentionally do *not* include `published_at` (visit items are worn/used references, not full content cards). Using `ContentSummary` would make the type optimistic — TS would claim `published_at` exists when it doesn't at runtime.
+
+Shipped a narrower type:
+```ts
+export interface VisitItemSummary {
+  _id: string
+  title: string
+  slug: { current: string }
+  content_type: ContentType
+  cover_image?: SanityImage
+  tags?: string[]
+}
+```
+Both `VisitSummary.items` and `VisitInTrip.items` use it. Both queries (`allVisitsQuery` and `tripBySlugQuery`) project these fields consistently via a shared `visitItemProjection` constant — one place to edit if C3/C4 decide they need more fields.
+
+**If C3/C4 need additional fields on items** (e.g., `published_at`, `acquired_at`): (a) add them to the `VisitItemSummary` type, (b) add them to `visitItemProjection` in [lib/queries.ts](../../lib/queries.ts). Both queries pick them up automatically.
+
+**2. Two-stage projections for `allTripsQuery` and `tripBySlugQuery`.**
+This spec's example GROQ runs `*[_type == "visit" && references(^._id)]` three to four times per trip (once for `startDate`, `endDate`, `visitCount`, and `visits`). Shipped a two-stage projection that fetches visits once, then derives aggregates from the embedded array:
+
+```groq
+*[_type == "trip" && slug.current == $slug][0] {
+  _id, title, slug, articleBody,
+  "hasArticle": defined(articleBody) && length(articleBody) > 0,
+  "visits": *[_type == "visit" && references(^._id)] | order(startDate asc) { ... }
+} {
+  ...,
+  "startDate": visits[0].startDate,
+  "endDate":   visits | order(endDate desc)[0].endDate,
+  "visitCount": count(visits),
+}
+```
+
+Same shape for `allTripsQuery` with a slim `__v` array (just `startDate`/`endDate`). Semantics unchanged; fewer round-trips.
+
+### Resolved ambiguities
+
+1. **Test harness**: moot — B1 shipped first and installed `vitest` + added `"test": "vitest run"`. A2 just added its test file; no new tooling.
+2. **`GlobePinItem` retention**: kept. Only [components/globe/GlobeDetailItem.tsx](../../components/globe/GlobeDetailItem.tsx) imports it. Safe to inline later if desired, but not worth touching in this ticket.
+3. **Item projection fields**: shipped `{ _id, title, slug, content_type, cover_image, tags }` for both queries. No `published_at`, no `acquired_at`. See deviation #1 for how C3/C4 should extend if needed.
+
+### Notes for downstream tickets
+
+- **A3 (wire layout)**: import `allTripsQuery` + `allVisitsQuery` from [lib/queries.ts](../../lib/queries.ts); call `aggregatePins(visits)` to get `PinWithVisits[]`. The compile error `Module '"@/lib/queries"' has no exported member 'globeContentQuery'` in `app/globe/layout.tsx` is your entry point.
+- **A4 (seed fixtures)**: the queries assume visits reference location docs and trips via `location->` / `trip->`. Fixtures must create `locationDoc` + `trip` before `visit`. Zero-visit trips are *not* filtered in GROQ — they'll return `startDate: null`. B4 is supposed to filter them from the timeline; if A4 seeds any, expect null dates to surface.
+- **C1 (provider refactor)**: `PinWithVisits` replaces `GlobePin`. Each pin has `.location`, `.visits` (sorted desc by startDate), `.coordinates`, `.visitCount`, `.tripIds`. Pins array is sorted by each pin's most-recent visit, descending — so `pins[0]` is still the freshest pin (entrance-target contract preserved).
+- **C3 (pin panel)**: the pin panel's visit list is already sorted newest-first per spec §7.1. Items on each visit are `VisitItemSummary[]` — not `ContentSummary[]`. If the panel needs `published_at` on items, see deviation #1.
+- **C4 (trip panel)**: use `tripBySlugQuery` — it returns `TripWithVisits` (includes `articleBody` + embedded `visits: VisitInTrip[]`). Visits are ordered by startDate asc (chronological).
+- **D1 (trip article route)**: `tripBySlugQuery` takes a `$slug` param and returns `null` for missing slugs → use for the 404 check.
+
+### Issues fixed during review
+
+- `items` projection was typed `ContentSummary[]` but actually returned a narrower shape — replaced with `VisitItemSummary`.
+- `tripBySlugQuery` re-ran `references(^._id)` four times per trip — refactored to a single subquery.
+- `allTripsQuery` re-ran `references(^._id)` three times per trip — same refactor.
+- `aggregatePins` used `Array.includes` for `tripId` dedup (O(n²)) — swapped for a parallel `Set` (O(n)) while preserving insertion-order `tripIds`.
+- `contentBySlugQuery` still projected the now-dead `globe_group` field — removed.
+
+### How to run the tests
+
+```
+npm test
+# or a single file:
+npx vitest run lib/globe.test.ts
+```

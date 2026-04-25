@@ -1,42 +1,91 @@
 'use client'
 
-import { useGlobe } from './GlobeContext'
-import GlobeDetailItem from './GlobeDetailItem'
-import type { GlobePin } from '@/lib/globe'
+import { useEffect, useRef, useState } from 'react'
+import { motion } from 'framer-motion'
+import { useGlobeData, useGlobePin, useGlobeTrip, useGlobeUI } from './GlobeContext'
+import PinPanel from './panels/PinPanel'
+import TripPanel from './panels/TripPanel'
 
-export default function GlobeDetailPanel({ pin }: { pin: GlobePin }) {
-  const { selectPin } = useGlobe()
+/**
+ * Panel dispatcher. Cross-fades the inner content on variant switch (§7.3.2).
+ *
+ * We drive the cross-fade manually rather than via `<AnimatePresence>`:
+ * - `mode="wait"` stalled here — the outgoing child never completed its exit
+ *   when nested inside GlobeViewport's already-animated slide-in container.
+ * - `mode="sync"` left the outgoing panel mounted indefinitely.
+ *
+ * Manual two-phase fade keeps the contract explicit: target key change →
+ * fade current out (200ms) → swap content → fade in. The keyed remount also
+ * resets scroll position and item-expansion state (§7.3.2) because React
+ * unmounts the old panel tree.
+ *
+ * The outer slide-in container lives in GlobeViewport and stays keyed on
+ * "panel open vs not" — it does NOT resize or translate when the variant
+ * switches, per spec §7.3.2.
+ */
+const FADE_MS = 200
+
+export default function GlobeDetailPanel() {
+  const { pins, tripsWithVisits } = useGlobeData()
+  const { selectedPin } = useGlobePin()
+  const { lockedTrip } = useGlobeTrip()
+  const { panelVariant } = useGlobeUI()
+
+  const pin =
+    panelVariant === 'pin' && selectedPin
+      ? pins.find((p) => p.location._id === selectedPin)
+      : null
+  const trip =
+    panelVariant === 'trip' && lockedTrip
+      ? tripsWithVisits.find((t) => t._id === lockedTrip)
+      : null
+
+  const targetKey = pin ? `pin-${pin.location._id}` : trip ? `trip-${trip._id}` : null
+  const targetContent: React.ReactNode = pin
+    ? <PinPanel pin={pin} />
+    : trip
+      ? <TripPanel trip={trip} />
+      : null
+
+  const [displayed, setDisplayed] = useState<{ key: string | null; node: React.ReactNode }>(
+    { key: targetKey, node: targetContent },
+  )
+  const [opacity, setOpacity] = useState(1)
+  const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Track the last key we kicked a fade for, so the initial mount (which
+  // React runs effects for even when targetKey === displayed.key) doesn't
+  // flash the panel opacity down and back up.
+  const lastFadeKey = useRef(targetKey)
+  useEffect(() => {
+    if (targetKey === lastFadeKey.current) return
+    lastFadeKey.current = targetKey
+    setOpacity(0)
+    if (fadeTimer.current) clearTimeout(fadeTimer.current)
+    fadeTimer.current = setTimeout(() => {
+      setDisplayed({ key: targetKey, node: targetContent })
+      setOpacity(1)
+    }, FADE_MS)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetKey])
+
+  useEffect(() => () => {
+    if (fadeTimer.current) clearTimeout(fadeTimer.current)
+  }, [])
 
   return (
-    <div className="bg-white dark:bg-black border border-gray-200 dark:border-gray-800 h-full flex flex-col">
-      {/* Header */}
-      <div className="flex items-start justify-between p-4 pb-2">
-        <div>
-          <h2 className="text-sm tracking-widest uppercase font-light text-black dark:text-white">
-            {pin.group}
-          </h2>
-          <span className="text-[10px] tracking-widest uppercase text-gray-400 dark:text-gray-500">
-            {pin.items.length} {pin.items.length === 1 ? 'item' : 'items'}
-          </span>
-        </div>
-        <button
-          onClick={() => selectPin(null)}
-          className="w-12 h-12 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-black dark:hover:text-white transition-colors text-lg cursor-pointer"
-          aria-label="Close panel"
+    <div className="h-full">
+      {displayed.node && (
+        <motion.div
+          key={displayed.key ?? 'empty'}
+          animate={{ opacity }}
+          initial={{ opacity: 0 }}
+          transition={{ duration: FADE_MS / 1000 }}
+          className="h-full"
         >
-          &times;
-        </button>
-      </div>
-
-      {/* Item list — scrollable */}
-      <div
-        className="flex-1 overflow-y-auto"
-        style={{ overscrollBehavior: 'contain' }}
-      >
-        {pin.items.map((item) => (
-          <GlobeDetailItem key={item._id} item={item} />
-        ))}
-      </div>
+          {displayed.node}
+        </motion.div>
+      )}
     </div>
   )
 }

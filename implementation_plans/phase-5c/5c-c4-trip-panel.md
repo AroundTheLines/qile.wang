@@ -345,3 +345,118 @@ Already handled implicitly: `VisitSection` renders its `visit.items` list. If th
 10. Scroll in pin panel, then click a trip label: variant switches, content scrolled back to top.
 11. Click the "View trip article" in trip panel with body — goes to `/trip/...`.
 12. Click "View trip article" for "Weekend in Lisbon" (no body) — grayed, hover shows tooltip.
+
+---
+
+## Shipped implementation notes
+
+Decisions made during implementation that deviate from or clarify the spec
+above. Future tickets should treat this section as authoritative over the
+earlier "Implementation guidance" where they conflict.
+
+### Data fetch
+
+- `allTripsWithVisitsQuery` added to `lib/queries.ts` (alongside the existing
+  `allTripsQuery`, which stays lean for the timeline).
+- `app/globe/layout.tsx` now fetches **three** queries in parallel via
+  `Promise.allSettled`, not `Promise.all`. If one heavy query fails, the
+  others still populate and `fetchError` is set so downstream UI can surface
+  a degraded state. Previous two-query behavior was all-or-nothing.
+- `tripsWithVisits` is threaded through `GlobeProvider` → `GlobeContext` →
+  `TripPanel`. There is **no** client-side per-trip fetch; the bulk payload
+  is considered cheap enough for the spec's 50-trip / 200-visit cap.
+
+### Cross-fade mechanism — manual, not AnimatePresence
+
+`GlobeDetailPanel` does **not** use `<AnimatePresence>` for variant switching
+(despite the original spec recommending it). Both Framer Motion modes failed
+in practice:
+
+- `mode="wait"` stalled: the outgoing child never completed its exit when
+  nested inside GlobeViewport's already-animated slide-in container.
+- `mode="sync"` left the outgoing panel mounted indefinitely.
+
+The shipped approach is a manual two-phase fade in the dispatcher:
+
+1. When `targetKey` (variant + id) changes, `setOpacity(0)` starts a 200ms
+   fade-out on the current `<motion.div>`.
+2. After `FADE_MS` (200), a timer swaps `displayed.{key, node}` atomically
+   and sets `opacity` back to 1. The `<motion.div>` has `initial={{opacity:0}}`
+   so the new child fades in cleanly.
+
+`initial={false}` was tried but skipped the fade-in entirely — new panels
+popped in at full opacity. Keep `initial={{opacity: 0}}`.
+
+A `lastFadeKey` ref guards against the initial mount of the dispatcher
+firing a spurious fade when `targetKey === displayed.key`.
+
+### Panel position — trip vs pin is visually distinct by design
+
+**This deviates from spec §7.3.2's literal wording** ("container does not
+slide or resize — only the inner content transitions"). Deliberate product
+call after review:
+
+- **Pin panel**: anchored to `clampPanelTop(selectedPinScreenY, …)`. Draws
+  a connector line from the pin to the panel header. Can appear anywhere
+  between y=24 and y=viewportH-400 depending on where the pin projects.
+- **Trip panel**: always pinned to `TRIP_PANEL_TOP_PX` (`NAVBAR_HEIGHT_PX +
+  128` = 200), just below the timeline rail. Trips have no single
+  geographic anchor, so the fixed offset is itself the visual tell that
+  you are looking at a trip rather than a pin.
+
+Cross-fade between variants now intentionally tweens the panel's `top`
+value alongside the opacity swap. Implementation: the inner
+`<motion.div animate={{ top: panelTop }}>` in `GlobeViewport.tsx` with
+duration 0.2s so the Y tween matches the inner fade.
+
+`setLockedTrip` clears `selectedPinScreenY` because the trip panel does
+not read it — keeps state tidy for the next pin selection.
+
+### GlobeViewport panel-open gate
+
+The desktop/tablet sidecar's `AnimatePresence` is now keyed on
+`panelVariant && layoutState === 'panel-open'` (was `selectedPin &&
+selectedPinData && …`). Required so trip locks (which have no
+`selectedPin`) still open the panel slot. Same reason `globeX`'s shift
+now triggers on `panelVariant` rather than `selectedPin`.
+
+### Accessibility / markup
+
+- The "View trip article" button uses `disabled` only (not `disabled +
+  aria-disabled`). The native `disabled` attribute implies `aria-disabled`;
+  doubling up added noise without changing AT behavior.
+- `data-no-skeleton` on the button so Boneyard doesn't capture it as a bone
+  skeleton (F1).
+
+### Non-goals actually shipped / not shipped
+
+| Non-goal from spec | Status |
+|---|---|
+| Cross-interaction pulse on pin click inside trip | Not shipped — C7 |
+| Fixture JSX for boneyard | Not shipped — F1. `loading={false}` hardcoded, TODO comment in place |
+| Mobile layout | Not shipped — E1. Mobile panel flow untouched, no trip-panel branch there |
+| Trip article route | Not shipped — D1. `router.push('/trip/<slug>')` works, but target route may be a stub |
+| Camera rotation on trip lock | Not shipped — C5 |
+
+### Files touched beyond spec
+
+- `app/globe/layout.tsx` — switched to `Promise.allSettled` (improves
+  resilience, covers the new heavier query).
+- `components/globe/GlobeProvider.tsx` — accepts and forwards
+  `tripsWithVisits`; `setLockedTrip` wrapper clears
+  `selectedPinScreenY`.
+- `components/globe/GlobeViewport.tsx` — panel-slot gate widened to
+  `panelVariant`, added variant-conditional `panelTop`, wrapped the
+  positioned wrapper in `motion.div` for the Y tween, removed the now-unused
+  `selectedPinData` module-level const (inlined in the mobile block).
+- `lib/globe.ts` — added `TRIP_PANEL_TOP_PX` constant.
+
+### Known follow-ups / deferred
+
+- No unit tests added for the dispatcher's fade logic. Timer-based and
+  subtle — worth a vitest when test infra around `components/globe` is set
+  up.
+- `F1` still owes fixture JSX for `<Skeleton name="trip-panel">`.
+- `D2` (URL-write sync) should verify it plays nicely with
+  `setLockedTrip(null) + router.push('/globe')` in the close handler.
+

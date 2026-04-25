@@ -4,8 +4,9 @@ import { useRef, useEffect, useState, useCallback } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
-import { useGlobe } from './GlobeContext'
-import { sphericalToCartesian } from '@/lib/globe'
+import { useGlobeData, useGlobePin, useGlobeTrip, useGlobeUI, useGlobeRoute, useGlobePlayback } from './GlobeContext'
+import { computeFitCamera, GLOBE_RADIUS, sphericalToCartesian } from '@/lib/globe'
+import type { Coordinates } from '@/lib/types'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 
 const ENTRANCE_DURATION = 0.75
@@ -18,6 +19,50 @@ const PIN_ROTATE_DURATION = 0.3
 const ARTICLE_ZOOM_DURATION = 0.4
 // When zoomed for article-open, pull camera closer than resting.
 const ARTICLE_CAMERA_DISTANCE = 4.2
+// Camera vertical FOV (degrees). Must match the Canvas prop in
+// GlobeCanvas.tsx. Threaded through the trip-fit distances below.
+const CAMERA_FOV_DEG = 45
+
+// Target viewport fractions for the trip-fit animation endpoints,
+// expressed as `globe vertical angular diameter / camera vertical FOV`.
+// Values > 1 mean the globe intentionally overflows the viewport
+// (tight-cluster close-up feel). Both distances are derived from these
+// fractions so they stay coupled to the camera FOV and globe radius.
+const TRIP_FIT_MIN_VIEWPORT_FRAC = 1.25 // tight clusters overflow by ~25%
+const TRIP_FIT_MAX_VIEWPORT_FRAC = 0.6 // hemisphere-spread trips at ~60%
+
+/** distance(viewport_fraction) — inverse of `2·asin(R/D) / FOV`. */
+function distanceForViewportFraction(fraction: number): number {
+  const halfAngle = (fraction * CAMERA_FOV_DEG * Math.PI) / 360
+  return GLOBE_RADIUS / Math.sin(halfAngle)
+}
+
+// Closest the trip-fit animation will land (tight clusters like Japan
+// Spring '22). Kept above `OrbitControls minDistance = 4` so the fit
+// doesn't collide with the user-zoom floor — asserted below.
+const TRIP_FIT_MIN_DISTANCE = distanceForViewportFraction(TRIP_FIT_MIN_VIEWPORT_FRAC)
+// Farthest the trip-fit animation will land (globe-spanning trips).
+// See §16 Q4 — originally spec'd as ~40% visible, bumped to 60% after
+// the RTW visual review (the globe read as too small).
+const TRIP_FIT_MAX_DISTANCE = distanceForViewportFraction(TRIP_FIT_MAX_VIEWPORT_FRAC)
+
+// Cinematic rotate-to-fit duration for trip lock (§17.3). Nudged up
+// from the spec's 800ms after PR review flagged trip-to-trip transitions
+// as "whiplash-y" — the longer runway softens the mid-animation peak
+// velocity without changing the ease curve.
+const TRIP_FIT_DURATION = 1.1
+
+const FIT_CAMERA_OPTS = {
+  globeRadius: GLOBE_RADIUS,
+  minDistance: TRIP_FIT_MIN_DISTANCE,
+  maxDistance: TRIP_FIT_MAX_DISTANCE,
+} as const
+
+// Module-scoped scratch vector for the entrance-animation useFrame body.
+// Reused in place to keep per-frame allocations at zero. Same pattern as
+// GlobePositionBridge — safe because R3F's useFrame callbacks run
+// synchronously and never concurrently.
+const _sceneEntranceDir = new THREE.Vector3()
 
 type RotateState = {
   active: boolean
@@ -28,7 +73,12 @@ type RotateState = {
 
 export default function GlobeScene() {
   const controlsRef = useRef<OrbitControlsImpl>(null)
-  const { pins, selectedPin, layoutState, isMobile } = useGlobe()
+  const { pins, tripsWithVisits } = useGlobeData()
+  const { selectedPin } = useGlobePin()
+  const { lockedTrip } = useGlobeTrip()
+  const { layoutState, isMobile } = useGlobeUI()
+  const { activeTripSlug } = useGlobeRoute()
+  const { addPauseReason, removePauseReason } = useGlobePlayback()
   const { camera } = useThree()
 
   // Reactive enabled state — avoids the "React re-renders and reapplies
@@ -58,6 +108,19 @@ export default function GlobeScene() {
     duration: ARTICLE_ZOOM_DURATION,
   })
   const preArticleCameraPos = useRef<THREE.Vector3 | null>(null)
+
+  // Rotate-to-fit for locked trips (C5). Separate ref from rotateRef so
+  // pin-click and trip-lock can both be in-flight without clobbering each
+  // other's bookkeeping — the useFrame tick runs both; later write wins.
+  const rotateToFitTripRef = useRef<RotateState & { duration: number }>({
+    active: false,
+    elapsed: 0,
+    startPos: new THREE.Vector3(),
+    endPos: new THREE.Vector3(),
+    duration: TRIP_FIT_DURATION,
+  })
+  const prevLockedTripRef = useRef<string | null>(null)
+  const pendingTripFit = useRef(false)
   // Init to 'default' so a mount directly in article-open still detects
   // the transition and queues the zoom.
   const prevLayoutState = useRef<'default' | 'panel-open' | 'article-open'>(
@@ -86,8 +149,8 @@ export default function GlobeScene() {
   }, [pins, camera])
 
   const startArticleZoom = useCallback(
-    (pinGroup: string) => {
-      const pin = pins.find((p) => p.group === pinGroup)
+    (pinId: string) => {
+      const pin = pins.find((p) => p.location._id === pinId)
       if (!pin) return
 
       preArticleCameraPos.current = camera.position.clone()
@@ -112,7 +175,9 @@ export default function GlobeScene() {
         endPos,
         duration: ARTICLE_ZOOM_DURATION,
       }
-      setAutoRotate(false)
+      // Don't touch `autoRotate` — the OrbitControls prop is already gated on
+      // `layoutState === 'default'`, so rotation is suppressed while the
+      // article is open. See 5c-g1.
       setControlsEnabled(false)
     },
     [pins, camera, isMobile],
@@ -120,17 +185,41 @@ export default function GlobeScene() {
 
   const pendingArticleZoom = useRef(false)
 
+  // Keep `tripsWithVisits` in a ref so resolver identity (and the effects
+  // that depend on it) don't re-fire when the layout re-renders with a new
+  // array reference but equivalent data — which would otherwise re-trigger
+  // the article-open zoom mid-view.
+  const tripsWithVisitsRef = useRef(tripsWithVisits)
+  useEffect(() => {
+    tripsWithVisitsRef.current = tripsWithVisits
+  }, [tripsWithVisits])
+
+  // Resolve the pin to zoom to for the currently open article. Pin articles
+  // use the currently selected pin; trip articles (§8.1) target the first
+  // (earliest) visit of the trip.
+  const resolveArticleZoomPinId = useCallback((): string | null => {
+    if (selectedPin) return selectedPin
+    if (activeTripSlug) {
+      const trip = tripsWithVisitsRef.current.find((t) => t.slug.current === activeTripSlug)
+      if (trip && trip.visits.length > 0) return trip.visits[0].location._id
+    }
+    return null
+  }, [selectedPin, activeTripSlug])
+
   // Article open/close → drive a camera zoom animation and disable controls.
   useEffect(() => {
     const prev = prevLayoutState.current
     prevLayoutState.current = layoutState
 
     if (layoutState === 'article-open' && prev !== 'article-open') {
-      if (!entranceDone.current || !selectedPin) {
+      const zoomPin = resolveArticleZoomPinId()
+      if (!entranceDone.current || !zoomPin) {
         pendingArticleZoom.current = true
         return
       }
-      startArticleZoom(selectedPin)
+      // startArticleZoom flips controlsEnabled and sets animation refs.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- camera-zoom state machine
+      startArticleZoom(zoomPin)
       return
     }
 
@@ -147,16 +236,19 @@ export default function GlobeScene() {
       }
       preArticleCameraPos.current = null
     }
-  }, [layoutState, selectedPin, camera, startArticleZoom])
+  }, [layoutState, camera, startArticleZoom, resolveArticleZoomPinId])
 
-  // When selectedPin resolves after a deep-link, trigger the pending zoom.
+  // When selectedPin / trip data resolves after a deep-link, trigger the pending zoom.
   useEffect(() => {
     if (!pendingArticleZoom.current) return
     if (!entranceDone.current) return
-    if (layoutState !== 'article-open' || !selectedPin) return
+    if (layoutState !== 'article-open') return
+    const zoomPin = resolveArticleZoomPinId()
+    if (!zoomPin) return
     pendingArticleZoom.current = false
-    startArticleZoom(selectedPin)
-  }, [selectedPin, layoutState, startArticleZoom])
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- deferred zoom once deep-link data resolves
+    startArticleZoom(zoomPin)
+  }, [selectedPin, activeTripSlug, tripsWithVisits, layoutState, startArticleZoom, resolveArticleZoomPinId])
 
   // On any pin selection (initial click OR switch between pins), rotate
   // the camera so the pin sits at the center of the canvas. With the
@@ -171,8 +263,12 @@ export default function GlobeScene() {
     if (!selectedPin || prev === selectedPin) return
     if (!entranceDone.current) return
 
-    const pin = pins.find((p) => p.group === selectedPin)
+    const pin = pins.find((p) => p.location._id === selectedPin)
     if (!pin) return
+    // C5/C7: if this pin belongs to the locked trip, skip pin-rotate.
+    // The trip-fit framing stays in place; C7 owns the panel-scroll
+    // behavior for in-trip pin clicks.
+    if (lockedTrip && pin.tripIds.includes(lockedTrip)) return
 
     const [x, y, z] = sphericalToCartesian(
       pin.coordinates.lat,
@@ -188,9 +284,70 @@ export default function GlobeScene() {
       startPos: camera.position.clone(),
       endPos,
     }
-    // Disable controls during programmatic rotation
+    // Disable controls during programmatic rotation (RAF-driven animation).
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- camera-rotate state machine
     setControlsEnabled(false)
-  }, [selectedPin, pins, camera])
+  }, [selectedPin, pins, camera, lockedTrip])
+
+  // Kick off the fit animation for a given lockedTrip id. Shared between
+  // the `useEffect` driven by `lockedTrip` changes and the entrance-done
+  // consumer in `useFrame` (cold `?trip=` URL). Caller is responsible for
+  // the guards (entranceDone, layoutState) — this helper only does the
+  // coord-collection and animation bookkeeping.
+  const kickOffTripFit = useCallback(
+    (tripId: string) => {
+      const coords: Coordinates[] = []
+      for (const p of pins) {
+        for (const v of p.visits) {
+          if (v.trip._id === tripId) {
+            coords.push(p.coordinates)
+            break
+          }
+        }
+      }
+      if (coords.length === 0) return
+      prevLockedTripRef.current = tripId
+      const fit = computeFitCamera(coords, FIT_CAMERA_OPTS)
+      rotateToFitTripRef.current = {
+        active: true,
+        elapsed: 0,
+        startPos: camera.position.clone(),
+        endPos: new THREE.Vector3(fit.x, fit.y, fit.z),
+        duration: TRIP_FIT_DURATION,
+      }
+      // Don't touch `autoRotate` — the OrbitControls prop is already
+      // gated on `layoutState === 'default'`, so lock suppresses rotation
+      // without needing an explicit disable. Mirrors the pin-rotate path,
+      // so deselecting a trip returns to passive spin just like a pin.
+      setControlsEnabled(false)
+    },
+    [pins, camera],
+  )
+
+  // C5: rotate-to-fit when a trip locks. Runs when lockedTrip changes to a
+  // new non-null id. Pulls visit coordinates from the already-hydrated pins
+  // list — if pins haven't arrived yet, the effect re-fires once they do.
+  useEffect(() => {
+    const prev = prevLockedTripRef.current
+    if (!lockedTrip) {
+      prevLockedTripRef.current = null
+      return
+    }
+    if (prev === lockedTrip) return
+    if (!entranceDone.current) {
+      // Cold `?trip=…` URL: defer until entrance finishes. Mark pending
+      // but keep prevRef stale so this effect re-fires once state settles.
+      pendingTripFit.current = true
+      return
+    }
+    // Article-open owns its own camera state — don't stomp it. We
+    // intentionally do NOT update prevLockedTripRef here so that when
+    // the article later closes, a re-fire of this effect still sees
+    // `prev !== lockedTrip` and lands the fit.
+    if (layoutState === 'article-open') return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- trip-fit camera animation
+    kickOffTripFit(lockedTrip)
+  }, [lockedTrip, layoutState, kickOffTripFit])
 
   // Single useFrame driving entrance + programmatic rotation
   useFrame((_, delta) => {
@@ -200,7 +357,7 @@ export default function GlobeScene() {
       const t = Math.min(entranceElapsed.current / ENTRANCE_DURATION, 1)
       const eased = 1 - Math.pow(1 - t, 3)
       const dist = FAR_DISTANCE + (RESTING_DISTANCE - FAR_DISTANCE) * eased
-      const dir = targetDir.current.clone()
+      const dir = _sceneEntranceDir.copy(targetDir.current)
       camera.position.copy(dir.multiplyScalar(dist))
       camera.lookAt(0, 0, 0)
 
@@ -208,9 +365,16 @@ export default function GlobeScene() {
         entranceDone.current = true
         setControlsEnabled(true)
         setTimeout(() => setAutoRotate(true), 500)
-        if (pendingArticleZoom.current && layoutState === 'article-open' && selectedPin) {
-          pendingArticleZoom.current = false
-          startArticleZoom(selectedPin)
+        if (pendingArticleZoom.current && layoutState === 'article-open') {
+          const zoomPin = resolveArticleZoomPinId()
+          if (zoomPin) {
+            pendingArticleZoom.current = false
+            startArticleZoom(zoomPin)
+          }
+        }
+        if (pendingTripFit.current && lockedTrip && layoutState !== 'article-open') {
+          pendingTripFit.current = false
+          kickOffTripFit(lockedTrip)
         }
       }
       return
@@ -236,7 +400,29 @@ export default function GlobeScene() {
       }
     }
 
-    // 3) Article zoom (in / out)
+    // 3) Trip rotate-to-fit (C5) — cinematic ease-in-out, 800ms.
+    const tripFit = rotateToFitTripRef.current
+    if (tripFit.active) {
+      tripFit.elapsed += delta
+      const t = Math.min(tripFit.elapsed / tripFit.duration, 1)
+      const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+      camera.position.lerpVectors(tripFit.startPos, tripFit.endPos, eased)
+      camera.lookAt(0, 0, 0)
+
+      if (t >= 1) {
+        tripFit.active = false
+        // Re-enable controls so the user can drag-to-take-over (§9.3).
+        // We don't snap back on release — OrbitControls just owns the
+        // camera from here until the trip unlocks or another lock fires.
+        if (layoutState !== 'article-open') setControlsEnabled(true)
+        if (controlsRef.current) {
+          controlsRef.current.target.set(0, 0, 0)
+          controlsRef.current.update()
+        }
+      }
+    }
+
+    // 4) Article zoom (in / out)
     const zoom = articleZoomRef.current
     if (zoom.active) {
       zoom.elapsed += delta
@@ -267,10 +453,19 @@ export default function GlobeScene() {
 
     const handleStart = () => {
       setAutoRotate(false)
+      // §5.5: clicking-and-dragging the globe pauses playback. OrbitControls
+      // `start` fires for both drag and zoom; we pause on either — cheap
+      // simplification (documented as a minor deviation from spec drag-only).
+      addPauseReason('globe-drag')
       if (interactionTimeout.current) clearTimeout(interactionTimeout.current)
     }
     const handleEnd = () => {
       if (interactionTimeout.current) clearTimeout(interactionTimeout.current)
+      // Release the playback pause immediately so the provider's idle-resume
+      // timer (IDLE_RESUME_MS) runs from the moment interaction ends. Passive
+      // spin has its own AUTO_ROTATE_RESUME_DELAY — the two resume delays are
+      // independent but similar enough that they land close together.
+      removePauseReason('globe-drag')
       interactionTimeout.current = setTimeout(
         () => setAutoRotate(true),
         AUTO_ROTATE_RESUME_DELAY,
@@ -283,8 +478,10 @@ export default function GlobeScene() {
       controls.removeEventListener('start', handleStart)
       controls.removeEventListener('end', handleEnd)
       if (interactionTimeout.current) clearTimeout(interactionTimeout.current)
+      // Defense: if the component unmounts mid-drag, release the reason.
+      removePauseReason('globe-drag')
     }
-  }, [controlsEnabled])
+  }, [controlsEnabled, addPauseReason, removePauseReason])
 
   return (
     <>
@@ -294,7 +491,9 @@ export default function GlobeScene() {
         enablePan={false}
         enableZoom={true}
         minDistance={4}
-        maxDistance={11}
+        // Deliberately looser than TRIP_FIT_MAX_DISTANCE so the user can
+        // wheel-zoom out past the trip-fit cap during an unlocked session.
+        maxDistance={13}
         enableDamping={true}
         dampingFactor={0.05}
         rotateSpeed={0.5}

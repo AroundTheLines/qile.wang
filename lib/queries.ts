@@ -33,7 +33,6 @@ export const contentBySlugQuery = groq`
       date_label,
       body,
       images,
-      globe_group,
     },
   }
 `
@@ -51,22 +50,87 @@ export const wardrobeContentQuery = groq`
   }
 `
 
-export const globeContentQuery = groq`
-  *[_type == "content" && count(locations[defined(globe_group)]) > 0] {
+// Projection fragment for visit items. Narrower than ContentSummary —
+// matches VisitItemSummary in lib/types.ts.
+const visitItemProjection = `{
+  _id,
+  title,
+  slug,
+  content_type,
+  cover_image,
+  tags
+}`
+
+export const allVisitsQuery = groq`
+  *[_type == "visit"] {
+    _id,
+    startDate,
+    endDate,
+    "location": location->{ _id, name, coordinates, slug },
+    "trip": trip->{ _id, title, slug },
+    "items": items[]->${visitItemProjection}
+  } | order(startDate desc)
+`
+
+// Bulk trip fetch with embedded visits — drives both the trip panel (C4)
+// and the lightweight `TripSummary` shape the timeline + list need.
+// `(globe)/layout.tsx` derives `TripSummary[]` from this query's result
+// instead of running a second lean fetch (TripWithVisits is a superset).
+//
+// Zero-visit trips are filtered out — without visits there is no startDate,
+// no pin, no arc; surfacing them on the timeline / list would project
+// undefined dates into downstream sort + render logic.
+export const allTripsWithVisitsQuery = groq`
+  *[_type == "trip"] {
     _id,
     title,
     slug,
-    content_type,
-    cover_image,
-    tags,
-    "acquired_at": locations | order(sort_date asc)[0].sort_date,
-    "latest_location_date": locations | order(sort_date desc)[0].sort_date,
-    locations[] | order(sort_date asc) {
-      label,
-      coordinates,
-      sort_date,
-      date_label,
-      globe_group,
-    },
+    "hasArticle": defined(articleBody) && length(articleBody) > 0,
+    "visits": *[_type == "visit" && references(^._id)] | order(startDate asc) {
+      _id,
+      startDate,
+      endDate,
+      "location": location->{ _id, name, coordinates, slug },
+      "items": items[]->${visitItemProjection}
+    }
+  } [count(visits) > 0] {
+    _id,
+    title,
+    slug,
+    hasArticle,
+    visits,
+    "startDate": visits[0].startDate,
+    "endDate":   visits | order(endDate desc)[0].endDate,
+    "visitCount": count(visits),
+  } | order(startDate desc)
+`
+
+// Two-stage projection: fetch full visits once into `visits`, then derive
+// startDate / endDate / visitCount from that array — avoids running
+// `references(^._id)` four times.
+export const tripBySlugQuery = groq`
+  *[_type == "trip" && slug.current == $slug][0] {
+    _id,
+    title,
+    slug,
+    articleBody,
+    "hasArticle": defined(articleBody) && length(articleBody) > 0,
+    "visits": *[_type == "visit" && references(^._id)] | order(startDate asc) {
+      _id,
+      startDate,
+      endDate,
+      "location": location->{ _id, name, coordinates },
+      "items": items[]->${visitItemProjection}
+    }
+  } {
+    _id,
+    title,
+    slug,
+    articleBody,
+    hasArticle,
+    visits,
+    "startDate": visits[0].startDate,
+    "endDate":   visits | order(endDate desc)[0].endDate,
+    "visitCount": count(visits),
   }
 `

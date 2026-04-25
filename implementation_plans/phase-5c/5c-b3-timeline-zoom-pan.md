@@ -303,12 +303,96 @@ Decision: use the tick marks B1 provides. If coverage is thin under deep zoom, s
 
    **Action**: ignore.
 
+---
+
+## Implementation notes (post-merge)
+
+Deviations from the spec above and load-bearing choices future tickets should know about:
+
+### 1. `MIN_ZOOM_SPAN` has a **20% floor**, not `30/totalDays`
+
+Spec said `MIN_ZOOM_SPAN = Math.min(1, 30 / totalDays)`. In practice, because B1's compression applies `activeBoost=3` (active regions get 3× the x-space of quiet gaps), the pure `30/totalDays` math lets the view zoom so far into a quiet gap that **zero trips are visible** — the cursor lands between clusters in a region the compression shrunk to ~nothing.
+
+Actual formula: `Math.min(1, Math.max(0.2, 30 / totalDays))` — at max zoom, at least 20% of the compressed x-range is visible. With the mock dataset this keeps ~3–5 trips on screen at max zoom. A dense real dataset will pull the floor toward the `30/totalDays` value. Constant is `MIN_ZOOM_SPAN_FLOOR` in [Timeline.tsx](../../components/globe/Timeline.tsx).
+
+**For B5 / tick densification**: since max zoom is now 20% of compressed x (not 1 month of real days), the "zoom past 2 years → show month ticks" threshold in §4.5 should key on `zoomSpan < MIN_ZOOM_SPAN * ~2` or a similar relative measure, not raw days.
+
+### 2. Pan/pinch use **window-level listeners**, not React pointer events
+
+Spec pseudocode used `onPointerMove`/`onPointerUp` on the wrapper with `setPointerCapture`. In real browsers React's delegated pointer events drop frames once the pointer leaves the element's hit area, even with capture — drag silently stops mid-swipe.
+
+Actual pattern: `onPointerDown` (React) attaches `pointermove`/`pointerup`/`pointercancel` listeners on `window`. They detach when all pointers release. Stable-proxy pattern (`moveImplRef` + `useCallback((e) => moveImplRef.current(e), [])`) keeps listener identity constant while letting the impl close over fresh state.
+
+**For B4**: when you add segment click handlers, `stopPropagation` on the segment's `onPointerDown` is still sufficient — the wrapper's `onPointerDown` never fires, window listeners are never attached.
+
+### 3. Row packing uses **full-history anchors**, not the zoomed view
+
+Critical for avoiding vertical jitter. The initial attempt packed against visible items (`projX * innerWidth`), which meant row count + wrapper height changed every time a label culled in/out during pan. Looked like the whole timeline was jittering.
+
+Actual: `packed.items` stores `rawX` (full-history anchor) and `row` — computed once in a memo keyed on `trips`/`compressed`/`innerWidth`/`labelWidths`. The render loop reprojects horizontally via `(rawX - zoomWindow.start) / zoomSpan` but reuses the stable `row`. `rowCount` and `totalHeight` are invariant under zoom/pan.
+
+**For B5 / collision handling**: any collision logic needs to run against the **zoomed** x-coordinates to be useful (labels that don't overlap at 100% may overlap at 5%). But row *assignment* must stay in the full-history pack to preserve vertical stability. Likely need a second pass that adjusts horizontal offset within a row without reassigning rows.
+
+### 4. Gesture updates **coalesced onto rAF**
+
+Spec had `setZoomWindow` called directly from wheel/pointermove. At ~120Hz trackpad input × N labels × N segments, re-projection dominates frame budget on realistic datasets. `scheduleZoom` batches to one update per animation frame. All code paths that produce a new window (wheel, pan, pinch) go through it.
+
+**For B6/B7 (playhead)**: the playback driver should likewise write zoom updates through the same rAF queue if it ever animates zoom (e.g., a "fit-to-trip" transition).
+
+### 5. All gesture math lives in `lib/timelineZoom.ts` as pure helpers
+
+Exports: `clampZoom`, `wheelZoom`, `wheelPan`, `dragPan`, `pinchZoom`, plus the `ZoomWindow` type. Covered by [`lib/timelineZoom.test.ts`](../../lib/timelineZoom.test.ts) (22 cases: boundaries, over/undershoot, min/max span floors, cursor-anchor invariants, zero-width guard, divide-by-zero pinch).
+
+`Timeline.tsx` is the thin orchestration layer — it manages pointer state, window listeners, and the rAF scheduler, then delegates every window calculation to one of these helpers. B4/B5 (e.g., "zoom to this trip", "recenter on playback cursor") should compose these rather than reimplementing the shift-not-truncate clamp or cursor-anchor math.
+
+### 6. Pinch uses the **two oldest pointers only**
+
+A 3rd finger landing mid-pinch is ignored until one of the original two releases. Map-like UX. Implementation reads the two entries directly from `pointers.values()` via iterator `next()` — no `Array.from` allocation per pointermove frame.
+
+### 7. Trackpad horizontal swipe pans, not zooms
+
+Wheel events with `|deltaX| > |deltaY| && !ctrlKey` route to `wheelPan` instead of `wheelZoom`. This covers the Mac trackpad two-finger horizontal swipe and `shift+wheel` on some browsers. Pinch-zoom on trackpads arrives as `ctrlKey+deltaY` (browser synthesizes this) and stays on the zoom path.
+
+**For B4 (hover/click)**: a trackpad swipe never touches the pointer gesture path, so it doesn't interact with the drag-threshold logic. Segment clicks are unaffected.
+
+### 8. rAF scheduler is **hidden-tab aware**
+
+`scheduleZoom` checks `document.hidden` and commits synchronously when true — `requestAnimationFrame` is throttled (or paused) in hidden tabs, so queued updates would otherwise flush in a burst on re-focus. Live gestures can't happen in a hidden tab, but a future playback driver (B6) or programmatic zoom call could.
+
+**For B6/B7**: if you drive zoom from a `setInterval` or rAF loop that should keep advancing in background tabs (e.g., syncing with a shared timeline service), account for the same hidden-tab concern in your own loop — `scheduleZoom` will commit synchronously but your loop may not tick at all.
+
+### 9. Gesture starts go through a shared `currentZoom()` helper
+
+`currentZoom()` returns `pendingZoomRef.current ?? zoomWindowRef.current`. All three gesture-start paths — wheel handler, `handlePointerDown`, and pinch→pan re-seed — call it instead of reading state directly. This prevents a rapid wheel-then-drag (or wheel-then-pinch) from anchoring to the pre-rAF window: if the user wheels and immediately presses down before the next animation frame flushes, the pointerdown sees the staged window, not stale state.
+
+**For B4/B5/B6**: any new gesture-start path (segment-click, playback-triggered zoom, programmatic "fit-to-trip") should call `currentZoom()` too rather than reading `zoomWindow` directly. Otherwise it races the same way.
+
+### 10. Connector / dot alignment (visual)
+
+Three subpixel corrections landed as part of this ticket that future visual work shouldn't undo:
+
+- **Dot position**: single-day segments render the 6px dot with `left: 0; transform: translate(-50%, -50%)` so its visual center sits exactly on `leftPx` (the trip-start anchor). The previous `left: '50%'` centered the dot on the midpoint of a 2px placeholder box, putting it 1px right of the anchor.
+- **Dot size**: `w-1.5 h-1.5` (6px) matches the track height (`h-1.5` = 6px) so the dot is flush, not peaking above/below the track.
+- **Connector nudge**: the 1px-wide connector line is positioned at `left: TRACK_INSET_X + anchorX - 0.5` so its visual center (which would otherwise be at `anchorX + 0.5`) coincides with `anchorX` and the dot center.
+
+Net result: all three share the same x coordinate to within subpixel rounding (verified at 0.000 px offset).
+
+### 11. Active-segment highlight (visual)
+
+`TimelineSegment` accepts an `isActive` boolean. When a label is hovered or click-active, its corresponding segment fill transitions (150ms) from `bg-black/20` → `bg-black/70` (dark: `bg-white/[.18]` → `bg-white/80`). This makes the timeline↔label correspondence legible without needing to follow the connector line visually.
+
+**For B4 (hover/click)**: the `isActive` flag is currently driven by the same `activeId` state used for label hover/click. When B4 adds segment-click-to-select, it should reuse this flag — no separate "selected" vs "hovered" states unless the UX calls for it.
+
+---
+
 ## Handoff / outputs consumed by later tickets
 
 - **`Timeline.tsx`** now tracks `zoomWindow` state. B4 reads it to determine whether a clicked label is in the visible window.
-- **`TimelineSegment.tsx`** accepts `zoomWindow` prop. B5 adds clipping cues when a segment is only partially visible.
+- **`TimelineSegment.tsx`** accepts `zoomWindow` + `isActive` props. B5 adds clipping cues when a segment is only partially visible; B4 can drive `isActive` from segment-click selection (currently wired to the label hover/click state).
 - **`TimelineAxis.tsx`** accepts `zoomWindow` prop.
+- **`lib/timelineZoom.ts`** exports pure gesture math (`clampZoom`, `wheelZoom`, `wheelPan`, `dragPan`, `pinchZoom`) and the `ZoomWindow` type. Reuse for any programmatic zoom (B4 "zoom to trip", B6 playback animations, C5 camera→timeline sync).
 - **Drag-threshold contract**: document the 5px threshold — it's shared with B4 segment click handlers.
+- **`currentZoom()` pattern**: future gesture-start paths must read from `pendingZoomRef.current ?? zoomWindowRef.current` to avoid racing in-flight rAF updates.
 
 ## How to verify
 
