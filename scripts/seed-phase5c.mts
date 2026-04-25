@@ -328,8 +328,15 @@ const locationDefs: Array<{ name: string; lat: number; lng: number }> = [
   { name: 'New York, USA', lat: 40.71, lng: -74.01 },
 ]
 
+// `locationDoc.slug` is required (used as the stable URL routing key for
+// `?pin=<slug>`). Derive it from the name; the schema ensures uniqueness.
 const locationDocs: SanityDoc[] = locationDefs.map(({ name, lat, lng }) =>
-  doc(locationId(name), { _type: 'locationDoc', name, coordinates: { lat, lng } }),
+  doc(locationId(name), {
+    _type: 'locationDoc',
+    name,
+    coordinates: { lat, lng },
+    slug: slug(kebab(name)),
+  }),
 )
 
 const L = Object.fromEntries(locationDefs.map((l) => [l.name, locationId(l.name)])) as Record<string, string>
