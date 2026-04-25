@@ -1,6 +1,38 @@
 import type { PortableTextComponents } from '@portabletext/react'
+import Image from 'next/image'
+import { urlFor } from './sanity'
+import type { SanityImage } from './types'
+
+interface InlineImageValue extends SanityImage {
+  alt?: string
+  caption?: string
+}
 
 export const portableTextComponents: PortableTextComponents = {
+  types: {
+    image: ({ value }: { value: InlineImageValue }) => {
+      if (!value?.asset) return null
+      const url = urlFor(value).width(1200).fit('max').auto('format').url()
+      const alt = value.alt ?? value.caption ?? ''
+      return (
+        <figure className="my-8">
+          <Image
+            src={url}
+            alt={alt}
+            width={1200}
+            height={800}
+            sizes="(max-width: 768px) 100vw, 720px"
+            className="w-full h-auto"
+          />
+          {value.caption ? (
+            <figcaption className="text-xs tracking-widest uppercase text-gray-400 mt-2">
+              {value.caption}
+            </figcaption>
+          ) : null}
+        </figure>
+      )
+    },
+  },
   block: {
     normal: ({ children }) => (
       <p className="text-gray-600 text-base font-light leading-relaxed mb-6 text-justify hyphens-auto">{children}</p>

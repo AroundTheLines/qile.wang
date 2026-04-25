@@ -24,6 +24,16 @@ export default async function GlobeLayout({
     client.fetch<VisitSummary[]>(allVisitsQuery),
     client.fetch<TripWithVisits[]>(allTripsWithVisitsQuery),
   ])
+  // Surface rejection reasons to server logs so a Sanity outage is
+  // diagnosable from the platform's log stream — `allSettled` would
+  // otherwise swallow these and the user only sees the degraded-state
+  // banner downstream.
+  if (visitsResult.status === 'rejected') {
+    console.error('[globe-layout] allVisitsQuery failed:', visitsResult.reason)
+  }
+  if (tripsWithVisitsResult.status === 'rejected') {
+    console.error('[globe-layout] allTripsWithVisitsQuery failed:', tripsWithVisitsResult.reason)
+  }
   const visits: VisitSummary[] = visitsResult.status === 'fulfilled' ? visitsResult.value : []
   const tripsWithVisits: TripWithVisits[] =
     tripsWithVisitsResult.status === 'fulfilled' ? tripsWithVisitsResult.value : []

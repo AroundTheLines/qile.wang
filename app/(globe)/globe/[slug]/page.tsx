@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic'
 
-import { client } from '@/lib/sanity'
+import type { Metadata } from 'next'
+import { client, urlFor } from '@/lib/sanity'
 import { contentBySlugQuery } from '@/lib/queries'
 import type { ContentFull } from '@/lib/types'
 import { notFound } from 'next/navigation'
@@ -9,6 +10,28 @@ import GlobeArticleReveal from '@/components/globe/GlobeArticleReveal'
 
 interface Props {
   params: Promise<{ slug: string }>
+}
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { slug } = await params
+  const item: ContentFull | null = await client.fetch(contentBySlugQuery, { slug })
+  if (!item) return {}
+  const ogImage = item.cover_image
+    ? urlFor(item.cover_image).width(1200).height(630).fit('crop').url()
+    : undefined
+  return {
+    title: item.title,
+    openGraph: {
+      title: item.title,
+      type: 'article',
+      ...(ogImage ? { images: [{ url: ogImage, width: 1200, height: 630 }] } : {}),
+    },
+    twitter: {
+      card: ogImage ? 'summary_large_image' : 'summary',
+      title: item.title,
+      ...(ogImage ? { images: [ogImage] } : {}),
+    },
+  }
 }
 
 export default async function GlobeArticlePage({ params }: Props) {
