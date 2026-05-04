@@ -147,6 +147,102 @@ export function sphericalToCartesian(
   ]
 }
 
+/**
+ * Sample a great-circle arc between two lat/lng points on a sphere of the
+ * given radius. Returns `segments + 1` points as `[x, y, z]` triples. Used
+ * by both the main globe's TripArcs (animated comet overlay on top of these
+ * paths) and the per-item mini-globe (static travel lines connecting the
+ * locations an item visited).
+ *
+ * Edge cases:
+ * - Coincident endpoints (angle ≈ 0) collapse to the two endpoint points so
+ *   a zero-length pair doesn't blow up downstream geometry.
+ * - Antipodal endpoints (angle ≈ π) have an undefined cross product — every
+ *   great circle is valid. We pick a stable axis perpendicular to `start`
+ *   so the arc still curves over the pole instead of degenerating to a
+ *   chord through the sphere.
+ */
+export function greatCircleArcPoints(
+  startLat: number,
+  startLng: number,
+  endLat: number,
+  endLng: number,
+  radius: number,
+  segments = 32,
+): [number, number, number][] {
+  const sUnit = sphericalToCartesian(startLat, startLng, 1)
+  const eUnit = sphericalToCartesian(endLat, endLng, 1)
+  const dot = Math.min(
+    1,
+    Math.max(-1, sUnit[0] * eUnit[0] + sUnit[1] * eUnit[1] + sUnit[2] * eUnit[2]),
+  )
+  const angle = Math.acos(dot)
+
+  // Coincident endpoints — zero-length arc.
+  if (angle < 1e-6) {
+    return [
+      [sUnit[0] * radius, sUnit[1] * radius, sUnit[2] * radius],
+      [eUnit[0] * radius, eUnit[1] * radius, eUnit[2] * radius],
+    ]
+  }
+
+  // Rotation axis = start × end. For antipodal pairs the cross is the zero
+  // vector; fall back to (start × y) — and if `start` itself is the y-axis,
+  // (start × x) instead.
+  let nx: number
+  let ny: number
+  let nz: number
+  const cAx = sUnit[1] * eUnit[2] - sUnit[2] * eUnit[1]
+  const cAy = sUnit[2] * eUnit[0] - sUnit[0] * eUnit[2]
+  const cAz = sUnit[0] * eUnit[1] - sUnit[1] * eUnit[0]
+  const cAlen = Math.hypot(cAx, cAy, cAz)
+  if (cAlen < 1e-6) {
+    // start × (0,1,0) = (-sz, 0, sx)
+    let fx = -sUnit[2]
+    let fy = 0
+    let fz = sUnit[0]
+    let fLen = Math.hypot(fx, fy, fz)
+    if (fLen < 1e-6) {
+      // start ∥ ±y; fall back to start × (1,0,0) = (0, sz, -sy).
+      fx = 0
+      fy = sUnit[2]
+      fz = -sUnit[1]
+      fLen = Math.hypot(fx, fy, fz)
+    }
+    nx = fx / fLen
+    ny = fy / fLen
+    nz = fz / fLen
+  } else {
+    nx = cAx / cAlen
+    ny = cAy / cAlen
+    nz = cAz / cAlen
+  }
+
+  // Rodrigues' rotation: v_rot = v cos θ + (n × v) sin θ + n (n·v) (1-cos θ).
+  // Both `n × start` and `n · start` are constant across the loop — only
+  // cos/sin vary with θ — so they're computed once up front.
+  const dotNS = nx * sUnit[0] + ny * sUnit[1] + nz * sUnit[2]
+  const ncrossSx = ny * sUnit[2] - nz * sUnit[1]
+  const ncrossSy = nz * sUnit[0] - nx * sUnit[2]
+  const ncrossSz = nx * sUnit[1] - ny * sUnit[0]
+  const nDotNSx = nx * dotNS
+  const nDotNSy = ny * dotNS
+  const nDotNSz = nz * dotNS
+
+  const points: [number, number, number][] = []
+  for (let i = 0; i <= segments; i++) {
+    const theta = angle * (i / segments)
+    const cos = Math.cos(theta)
+    const sin = Math.sin(theta)
+    const k = 1 - cos
+    const rx = sUnit[0] * cos + ncrossSx * sin + nDotNSx * k
+    const ry = sUnit[1] * cos + ncrossSy * sin + nDotNSy * k
+    const rz = sUnit[2] * cos + ncrossSz * sin + nDotNSz * k
+    points.push([rx * radius, ry * radius, rz * radius])
+  }
+  return points
+}
+
 export interface GlobeScreenCircle {
   cx: number
   cy: number

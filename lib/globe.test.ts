@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { aggregatePins, computeFitCamera, sphericalToCartesian } from './globe'
+import {
+  aggregatePins,
+  computeFitCamera,
+  greatCircleArcPoints,
+  sphericalToCartesian,
+} from './globe'
 import type { VisitSummary } from './types'
 
 const FIT_OPTS = {
@@ -63,6 +68,71 @@ describe('aggregatePins', () => {
     expect(pins[1].location._id).toBe('tokyo')
     expect(pins[1].visitCount).toBe(2)
     expect(pins[1].tripIds).toEqual(['t1'])
+  })
+})
+
+describe('greatCircleArcPoints', () => {
+  it('produces N+1 points pinned to the requested radius', () => {
+    const points = greatCircleArcPoints(0, 0, 0, 90, 2, 16)
+    expect(points).toHaveLength(17)
+    for (const [x, y, z] of points) {
+      expect(Math.hypot(x, y, z)).toBeCloseTo(2, 5)
+    }
+  })
+
+  it('endpoints match sphericalToCartesian for the given lat/lng', () => {
+    const points = greatCircleArcPoints(35.68, 139.76, -33.87, 151.21, 2, 8)
+    const start = sphericalToCartesian(35.68, 139.76, 2)
+    const end = sphericalToCartesian(-33.87, 151.21, 2)
+    expect(points[0][0]).toBeCloseTo(start[0], 5)
+    expect(points[0][1]).toBeCloseTo(start[1], 5)
+    expect(points[0][2]).toBeCloseTo(start[2], 5)
+    expect(points[points.length - 1][0]).toBeCloseTo(end[0], 5)
+    expect(points[points.length - 1][1]).toBeCloseTo(end[1], 5)
+    expect(points[points.length - 1][2]).toBeCloseTo(end[2], 5)
+  })
+
+  it('coincident endpoints fall back to the two endpoints (no NaN)', () => {
+    const points = greatCircleArcPoints(35.68, 139.76, 35.68, 139.76, 2, 8)
+    expect(points).toHaveLength(2)
+    for (const [x, y, z] of points) {
+      expect(Number.isFinite(x)).toBe(true)
+      expect(Number.isFinite(y)).toBe(true)
+      expect(Number.isFinite(z)).toBe(true)
+    }
+  })
+
+  it('midpoint of an equator quarter-arc lands on the great circle, not the chord', () => {
+    // (0,0) → (0,90) on the equator. The chord midpoint would lie inside
+    // the sphere; the great-circle midpoint should be at lat=0, lng=45 and
+    // sit exactly on the surface at radius 2.
+    const points = greatCircleArcPoints(0, 0, 0, 90, 2, 4)
+    const mid = points[2]
+    const expected = sphericalToCartesian(0, 45, 2)
+    expect(mid[0]).toBeCloseTo(expected[0], 5)
+    expect(mid[1]).toBeCloseTo(expected[1], 5)
+    expect(mid[2]).toBeCloseTo(expected[2], 5)
+    // Sanity: midpoint is genuinely on the sphere, not inside it.
+    expect(Math.hypot(mid[0], mid[1], mid[2])).toBeCloseTo(2, 5)
+  })
+
+  it('antipodal pair curves over the pole instead of cutting through origin', () => {
+    // (0,0) → (0,180) is exactly antipodal — every great circle is valid.
+    // The fallback axis (start × y-axis) sweeps the arc over a pole rather
+    // than letting it degenerate to a chord through the globe.
+    const points = greatCircleArcPoints(0, 0, 0, 180, 2, 4)
+    expect(points).toHaveLength(5)
+    // Every point sits on the sphere — never on the chord through origin.
+    for (const [x, y, z] of points) {
+      expect(Number.isFinite(x)).toBe(true)
+      expect(Number.isFinite(y)).toBe(true)
+      expect(Number.isFinite(z)).toBe(true)
+      expect(Math.hypot(x, y, z)).toBeCloseTo(2, 5)
+    }
+    // Midpoint sits at a pole — |y| = radius — confirming the arc curves
+    // over the surface rather than passing through the centre.
+    const mid = points[2]
+    expect(Math.abs(mid[1])).toBeCloseTo(2, 5)
   })
 })
 

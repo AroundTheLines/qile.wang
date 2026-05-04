@@ -6,7 +6,12 @@ import { Canvas, useThree } from '@react-three/fiber'
 import { Line, OrbitControls } from '@react-three/drei'
 import * as topojson from 'topojson-client'
 import Link from 'next/link'
-import { GLOBE_RADIUS, computeFitCamera, sphericalToCartesian } from '@/lib/globe'
+import {
+  GLOBE_RADIUS,
+  computeFitCamera,
+  greatCircleArcPoints,
+  sphericalToCartesian,
+} from '@/lib/globe'
 import { useIsDark } from '@/lib/useIsDark'
 import { formatDateRange } from '@/lib/formatDates'
 import type { ItemVisit } from '@/lib/types'
@@ -19,6 +24,9 @@ const GRID_SEGMENTS_W = 36
 const GRID_SEGMENTS_H = 18
 const PIN_RADIUS = 0.05
 const PIN_COLOR = '#EF4444'
+// Float arcs just above the surface so they don't z-fight with the wireframe
+// or country borders, but stay below the pin spheres (PIN_RADIUS = 0.05).
+const ARC_SURFACE_OFFSET = 0.01
 
 // Module-scoped lazy parse so multiple consumers (and remounts of this
 // component) don't re-parse the topojson. GlobeMesh keeps its own cache via
@@ -111,8 +119,11 @@ function MiniPin({ lat, lng }: { lat: number; lng: number }) {
     const [x, y, z] = sphericalToCartesian(lat, lng, GLOBE_RADIUS)
     return new THREE.Vector3(x, y, z)
   }, [lat, lng])
+  // Pin renderOrder above arcs (which use the default 0) so the pin sphere
+  // paints last and never gets clipped by the arc tip — both endpoints sit
+  // inside the pin's bounding volume (PIN_RADIUS=0.05, ARC_SURFACE_OFFSET=0.01).
   return (
-    <mesh position={position} renderOrder={-1}>
+    <mesh position={position} renderOrder={1}>
       <sphereGeometry args={[PIN_RADIUS, 16, 16]} />
       <meshBasicMaterial color={PIN_COLOR} transparent depthWrite={false} />
     </mesh>
@@ -125,9 +136,41 @@ interface MiniPinSpec {
   lng: number
 }
 
+interface MiniArcSpec {
+  key: string
+  points: THREE.Vector3[]
+}
+
+function MiniArcs({ arcs }: { arcs: MiniArcSpec[] }) {
+  // Static great-circle paths between the locations the item visited, in
+  // chronological order. Tinted to match the pins (PIN_COLOR) so the journey
+  // reads as one family — red dot → red line → red dot — and stands out
+  // against the neutral wireframe + country borders. No theme variants: the
+  // red holds its hue equally well in light and dark mode, and matching the
+  // pins directly is the whole point.
+  return (
+    <group>
+      {arcs.map((arc) => (
+        <Line
+          key={arc.key}
+          points={arc.points}
+          color={PIN_COLOR}
+          lineWidth={2}
+          transparent
+          opacity={0.9}
+          depthWrite={false}
+        />
+      ))}
+    </group>
+  )
+}
+
 function CameraFit({ pins }: { pins: MiniPinSpec[] }) {
-  const { camera } = useThree()
+  const { camera, invalidate } = useThree()
   // Recompute when the pin set changes; otherwise this fires once on mount.
+  // We mutate camera.position directly (R3F doesn't track that), so under
+  // `frameloop="demand"` we have to invalidate explicitly — otherwise the
+  // canvas keeps rendering its initial pose and never picks up the fit.
   useEffect(() => {
     if (pins.length === 0) return
     const fit = computeFitCamera(pins, {
@@ -137,19 +180,35 @@ function CameraFit({ pins }: { pins: MiniPinSpec[] }) {
     })
     camera.position.set(fit.x, fit.y, fit.z)
     camera.lookAt(0, 0, 0)
-  }, [pins, camera])
+    invalidate()
+  }, [pins, camera, invalidate])
   return null
 }
 
-function MiniGlobe({ pins, isDark }: { pins: MiniPinSpec[]; isDark: boolean }) {
+function MiniGlobe({
+  pins,
+  arcs,
+  isDark,
+}: {
+  pins: MiniPinSpec[]
+  arcs: MiniArcSpec[]
+  isDark: boolean
+}) {
   return (
     <Canvas
       camera={{ fov: 35, near: 0.1, far: 100, position: [0, 0, 7] }}
       gl={{ antialias: true, alpha: true }}
       dpr={[1, 2]}
+      // Demand-driven frameloop: the scene is fully static (no comet, no
+      // auto-rotate), so there's nothing to render between frames. Drei's
+      // OrbitControls invalidates on every change event, and CameraFit
+      // invalidates after mutating `camera.position`. Idle GPU cost drops
+      // from ~60 fps × DPR² of compositing to zero.
+      frameloop="demand"
     >
       <CameraFit pins={pins} />
       <MiniGlobeMesh isDark={isDark} />
+      <MiniArcs arcs={arcs} />
       {pins.map((p) => (
         <MiniPin key={p.id} lat={p.lat} lng={p.lng} />
       ))}
@@ -192,6 +251,33 @@ export default function ArticleItemGlobe({ visits }: ArticleItemGlobeProps) {
     return Array.from(seen.values())
   }, [safeVisits])
 
+  // Travel arcs connect consecutive visits chronologically (visits arrive
+  // oldest → newest from the GROQ query). Same-location consecutive pairs
+  // are skipped — they would project to a degenerate arc — and we de-dupe
+  // by unordered pair so an A→B→A pattern doesn't draw the same line twice.
+  const travelArcs: MiniArcSpec[] = useMemo(() => {
+    const seenPairs = new Set<string>()
+    const result: MiniArcSpec[] = []
+    for (let i = 0; i < safeVisits.length - 1; i++) {
+      const a = safeVisits[i].location
+      const b = safeVisits[i + 1].location
+      if (!a.coordinates || !b.coordinates) continue
+      if (a._id === b._id) continue
+      const pairKey = a._id < b._id ? `${a._id}|${b._id}` : `${b._id}|${a._id}`
+      if (seenPairs.has(pairKey)) continue
+      seenPairs.add(pairKey)
+      const points = greatCircleArcPoints(
+        a.coordinates.lat,
+        a.coordinates.lng,
+        b.coordinates.lat,
+        b.coordinates.lng,
+        GLOBE_RADIUS + ARC_SURFACE_OFFSET,
+      ).map(([x, y, z]) => new THREE.Vector3(x, y, z))
+      result.push({ key: pairKey, points })
+    }
+    return result
+  }, [safeVisits])
+
   if (safeVisits.length === 0) return null
 
   const locationCount = uniquePins.length
@@ -210,7 +296,7 @@ export default function ArticleItemGlobe({ visits }: ArticleItemGlobeProps) {
         role="img"
         aria-label={aLabel}
       >
-        <MiniGlobe pins={uniquePins} isDark={isDark} />
+        <MiniGlobe pins={uniquePins} arcs={travelArcs} isDark={isDark} />
       </div>
 
       {/* Visits ordered oldest → newest in the GROQ query (matches the
