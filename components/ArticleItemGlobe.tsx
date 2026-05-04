@@ -92,6 +92,21 @@ function MiniGlobeMesh({ isDark }: { isDark: boolean }) {
 
   return (
     <group>
+      {/* Silhouette rim — a slightly oversized sphere rendered back-side
+          first. Subsequent passes (occluder, wireframe, borders, arcs)
+          paint within the globe's silhouette and overwrite this layer; the
+          thin annulus that escapes those overwrites is what reads as the
+          outline. Scale 1.012 keeps it tight to the surface. */}
+      <mesh renderOrder={-3}>
+        <sphereGeometry args={[GLOBE_RADIUS * 1.012, 64, 32]} />
+        <meshBasicMaterial
+          color={wireframeHex}
+          side={THREE.BackSide}
+          transparent
+          opacity={isDark ? 0.7 : 0.55}
+          depthWrite={false}
+        />
+      </mesh>
       {/* Depth-only occluder — same render-order strategy as GlobeMesh. */}
       <mesh renderOrder={-2}>
         <sphereGeometry args={[GLOBE_RADIUS * 0.995, 64, 32]} />
