@@ -119,8 +119,11 @@ function MiniPin({ lat, lng }: { lat: number; lng: number }) {
     const [x, y, z] = sphericalToCartesian(lat, lng, GLOBE_RADIUS)
     return new THREE.Vector3(x, y, z)
   }, [lat, lng])
+  // Pin renderOrder above arcs (which use the default 0) so the pin sphere
+  // paints last and never gets clipped by the arc tip — both endpoints sit
+  // inside the pin's bounding volume (PIN_RADIUS=0.05, ARC_SURFACE_OFFSET=0.01).
   return (
-    <mesh position={position} renderOrder={-1}>
+    <mesh position={position} renderOrder={1}>
       <sphereGeometry args={[PIN_RADIUS, 16, 16]} />
       <meshBasicMaterial color={PIN_COLOR} transparent depthWrite={false} />
     </mesh>

@@ -5,7 +5,7 @@ import { useFrame } from '@react-three/fiber'
 import { Line } from '@react-three/drei'
 import * as THREE from 'three'
 import { useGlobeData, useGlobeTrip, useGlobePlayback, useGlobeUI } from './GlobeContext'
-import { GLOBE_RADIUS, greatCircleArcPoints as greatCircleArcCoords } from '@/lib/globe'
+import { GLOBE_RADIUS, greatCircleArcPoints } from '@/lib/globe'
 import { useReducedMotion } from '@/lib/useReducedMotion'
 
 const ARC_SURFACE_OFFSET = 0.01
@@ -71,14 +71,14 @@ interface ArcData {
   arcTotalLength: number
 }
 
-function greatCircleArcPoints(
+function greatCircleArcVectors(
   startLat: number,
   startLng: number,
   endLat: number,
   endLng: number,
   radius: number,
 ): THREE.Vector3[] {
-  return greatCircleArcCoords(startLat, startLng, endLat, endLng, radius).map(
+  return greatCircleArcPoints(startLat, startLng, endLat, endLng, radius).map(
     ([x, y, z]) => new THREE.Vector3(x, y, z),
   )
 }
@@ -354,14 +354,14 @@ export default function TripArcs() {
         // Dedup by unordered pair — also silently handles consecutive
         // same-location visits (pair `A|A` is generated once, arc would be
         // degenerate) by skipping the dedup-hit on the second occurrence.
-        // We still skip explicitly here so `greatCircleArcPoints` isn't
+        // We still skip explicitly here so `greatCircleArcVectors` isn't
         // called with identical endpoints.
         if (a._id === b._id) continue
         const pair =
           a._id < b._id ? `${a._id}|${b._id}` : `${b._id}|${a._id}`
         if (seen.has(pair)) continue
         seen.add(pair)
-        const points = greatCircleArcPoints(
+        const points = greatCircleArcVectors(
           a.coordinates.lat,
           a.coordinates.lng,
           b.coordinates.lat,
