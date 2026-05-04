@@ -5,11 +5,10 @@ import { useFrame } from '@react-three/fiber'
 import { Line } from '@react-three/drei'
 import * as THREE from 'three'
 import { useGlobeData, useGlobeTrip, useGlobePlayback, useGlobeUI } from './GlobeContext'
-import { GLOBE_RADIUS } from '@/lib/globe'
+import { GLOBE_RADIUS, greatCircleArcPoints as greatCircleArcCoords } from '@/lib/globe'
 import { useReducedMotion } from '@/lib/useReducedMotion'
 
 const ARC_SURFACE_OFFSET = 0.01
-const ARC_SEGMENTS = 32
 
 const RENDER_ORDER_ARC = 0
 
@@ -72,43 +71,16 @@ interface ArcData {
   arcTotalLength: number
 }
 
-function latLngToVec3(lat: number, lng: number): THREE.Vector3 {
-  const latRad = (lat * Math.PI) / 180
-  const lngRad = (lng * Math.PI) / 180
-  return new THREE.Vector3(
-    -Math.cos(latRad) * Math.cos(lngRad),
-    Math.sin(latRad),
-    Math.cos(latRad) * Math.sin(lngRad),
-  )
-}
-
 function greatCircleArcPoints(
   startLat: number,
   startLng: number,
   endLat: number,
   endLng: number,
   radius: number,
-  segments = ARC_SEGMENTS,
 ): THREE.Vector3[] {
-  const startVec = latLngToVec3(startLat, startLng)
-  const endVec = latLngToVec3(endLat, endLng)
-  const axis = new THREE.Vector3().crossVectors(startVec, endVec)
-  const angle = startVec.angleTo(endVec)
-  if (axis.lengthSq() < 1e-6 || angle < 1e-6) {
-    return [
-      startVec.clone().multiplyScalar(radius),
-      endVec.clone().multiplyScalar(radius),
-    ]
-  }
-  axis.normalize()
-  const points: THREE.Vector3[] = []
-  const quat = new THREE.Quaternion()
-  for (let i = 0; i <= segments; i++) {
-    const t = i / segments
-    quat.setFromAxisAngle(axis, angle * t)
-    points.push(startVec.clone().applyQuaternion(quat).multiplyScalar(radius))
-  }
-  return points
+  return greatCircleArcCoords(startLat, startLng, endLat, endLng, radius).map(
+    ([x, y, z]) => new THREE.Vector3(x, y, z),
+  )
 }
 
 function totalPolylineLength(points: THREE.Vector3[]): number {

@@ -147,6 +147,63 @@ export function sphericalToCartesian(
   ]
 }
 
+/**
+ * Sample a great-circle arc between two lat/lng points on a sphere of the
+ * given radius. Returns `segments + 1` points as `[x, y, z]` triples. Used
+ * by both the main globe's TripArcs (animated comet overlay on top of these
+ * paths) and the per-item mini-globe (static travel lines connecting the
+ * locations an item visited). Antipodal / coincident inputs degenerate to
+ * the two endpoints — callers (TripArcs, the mini-globe) skip same-location
+ * pairs upstream so this branch is mostly belt-and-braces.
+ */
+export function greatCircleArcPoints(
+  startLat: number,
+  startLng: number,
+  endLat: number,
+  endLng: number,
+  radius: number,
+  segments = 32,
+): [number, number, number][] {
+  const startUnit = sphericalToCartesian(startLat, startLng, 1)
+  const endUnit = sphericalToCartesian(endLat, endLng, 1)
+  const dot = Math.min(
+    1,
+    Math.max(-1, startUnit[0] * endUnit[0] + startUnit[1] * endUnit[1] + startUnit[2] * endUnit[2]),
+  )
+  const angle = Math.acos(dot)
+  // Cross product → rotation axis. Length doubles as a "are these (anti)parallel?" check.
+  const ax = startUnit[1] * endUnit[2] - startUnit[2] * endUnit[1]
+  const ay = startUnit[2] * endUnit[0] - startUnit[0] * endUnit[2]
+  const az = startUnit[0] * endUnit[1] - startUnit[1] * endUnit[0]
+  const axisLen = Math.hypot(ax, ay, az)
+  if (axisLen < 1e-6 || angle < 1e-6) {
+    return [
+      [startUnit[0] * radius, startUnit[1] * radius, startUnit[2] * radius],
+      [endUnit[0] * radius, endUnit[1] * radius, endUnit[2] * radius],
+    ]
+  }
+  const nx = ax / axisLen
+  const ny = ay / axisLen
+  const nz = az / axisLen
+  const points: [number, number, number][] = []
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments
+    const theta = angle * t
+    const cos = Math.cos(theta)
+    const sin = Math.sin(theta)
+    // Rodrigues' rotation: rotate startUnit around `n` by `theta`.
+    const dotNS = nx * startUnit[0] + ny * startUnit[1] + nz * startUnit[2]
+    const cx = ny * startUnit[2] - nz * startUnit[1]
+    const cy = nz * startUnit[0] - nx * startUnit[2]
+    const cz = nx * startUnit[1] - ny * startUnit[0]
+    const rx = startUnit[0] * cos + cx * sin + nx * dotNS * (1 - cos)
+    const ry = startUnit[1] * cos + cy * sin + ny * dotNS * (1 - cos)
+    const rz = startUnit[2] * cos + cz * sin + nz * dotNS * (1 - cos)
+    points.push([rx * radius, ry * radius, rz * radius])
+  }
+  return points
+}
+
 export interface GlobeScreenCircle {
   cx: number
   cy: number
