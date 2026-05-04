@@ -1,11 +1,6 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
-import { getDarkMql, useIsDark } from '@/lib/useIsDark'
-
-// Re-export for tests that still import from this module (kept stable across
-// the lift to lib/useIsDark.ts).
-export { getDarkMql }
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
   GlobeDataContext,
@@ -25,6 +20,12 @@ import {
 } from './GlobeContext'
 import type { PinWithVisits, TripSummary, TripWithVisits } from '@/lib/types'
 import type { GlobeScreenCircle } from '@/lib/globe'
+import { getDarkMql, useIsDark } from '@/lib/useIsDark'
+
+// Re-export `getDarkMql` so the dark-mql-cache test (which historically
+// imported from this module) keeps resolving after the lift to
+// lib/useIsDark.ts. App code should import from lib/useIsDark.ts directly.
+export { getDarkMql }
 
 // External-store subscription for window width tier. Using
 // useSyncExternalStore avoids the `setState in effect` pattern the lint rule

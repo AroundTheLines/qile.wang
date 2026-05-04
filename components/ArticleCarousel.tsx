@@ -20,6 +20,11 @@ export default function ArticleCarousel({ images, alt = '' }: ArticleCarouselPro
     const track = trackRef.current
     if (!track) return
 
+    // Truncate any stale entries left over from a previous render with a
+    // longer image array. Without this, the observer would attempt to watch
+    // detached DOM nodes (harmless, but messy).
+    slideRefs.current.length = images.length
+
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
@@ -101,7 +106,11 @@ export default function ArticleCarousel({ images, alt = '' }: ArticleCarouselPro
         onClick={prev}
         disabled={active === 0}
         aria-label="Previous image"
-        className="hidden sm:flex absolute left-2 top-1/2 -translate-y-1/2 items-center justify-center w-9 h-9 rounded-full bg-white/80 dark:bg-black/80 backdrop-blur text-black dark:text-white shadow opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-0 disabled:pointer-events-none"
+        // Hidden by default; appears on hover. Disabled state fades to 30%
+        // and disables pointer events so a hover at index 0 still reveals
+        // a visibly-disabled affordance rather than competing with the
+        // group-hover opacity reveal.
+        className="hidden sm:flex absolute left-2 top-1/2 -translate-y-1/2 items-center justify-center w-9 h-9 rounded-full bg-white/80 dark:bg-black/80 backdrop-blur text-black dark:text-white shadow opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-30 disabled:pointer-events-none"
       >
         <span aria-hidden>{'←'}</span>
       </button>
@@ -110,7 +119,7 @@ export default function ArticleCarousel({ images, alt = '' }: ArticleCarouselPro
         onClick={next}
         disabled={active === images.length - 1}
         aria-label="Next image"
-        className="hidden sm:flex absolute right-2 top-1/2 -translate-y-1/2 items-center justify-center w-9 h-9 rounded-full bg-white/80 dark:bg-black/80 backdrop-blur text-black dark:text-white shadow opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-0 disabled:pointer-events-none"
+        className="hidden sm:flex absolute right-2 top-1/2 -translate-y-1/2 items-center justify-center w-9 h-9 rounded-full bg-white/80 dark:bg-black/80 backdrop-blur text-black dark:text-white shadow opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-30 disabled:pointer-events-none"
       >
         <span aria-hidden>{'→'}</span>
       </button>

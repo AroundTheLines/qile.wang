@@ -235,7 +235,7 @@ function MobileGlobeLayout({
           onPointerMove={onPointerMove}
           className="relative w-full flex-shrink-0"
           style={{ height: '70vh', touchAction: 'none', ...hideStyle }}
-          aria-hidden={isArticle ? true : undefined}
+          aria-hidden={isArticle || undefined}
         >
           <GlobeCanvas dragDistanceRef={dragDistanceRef} />
           <GlobeTooltip />
@@ -245,7 +245,7 @@ function MobileGlobeLayout({
         <div
           className="z-30 w-full bg-white dark:bg-black border-b border-black/5 dark:border-white/5 py-2"
           style={hideStyle}
-          aria-hidden={isArticle ? true : undefined}
+          aria-hidden={isArticle || undefined}
         >
           <Timeline />
         </div>
@@ -261,7 +261,7 @@ function MobileGlobeLayout({
         <div
           className="flex-1 w-full min-h-screen"
           style={hideStyle}
-          aria-hidden={isArticle ? true : undefined}
+          aria-hidden={isArticle || undefined}
         >
           <MobileContentRegion />
         </div>

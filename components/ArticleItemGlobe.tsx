@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef, useEffect } from 'react'
+import { useMemo, useEffect } from 'react'
 import * as THREE from 'three'
 import { Canvas, useThree } from '@react-three/fiber'
 import { Line, OrbitControls } from '@react-three/drei'
@@ -8,6 +8,7 @@ import * as topojson from 'topojson-client'
 import Link from 'next/link'
 import { GLOBE_RADIUS, computeFitCamera, sphericalToCartesian } from '@/lib/globe'
 import { useIsDark } from '@/lib/useIsDark'
+import { formatDateRange } from '@/lib/formatDates'
 import type { ItemVisit } from '@/lib/types'
 
 interface ArticleItemGlobeProps {
@@ -121,12 +122,17 @@ function MiniPin({ lat, lng }: { lat: number; lng: number }) {
 function CameraFit({ visits }: { visits: ItemVisit[] }) {
   const { camera } = useThree()
   // Recompute when the visit set changes; otherwise this fires once on mount.
+  // Skip dangling location refs so the fit reflects only real coordinates.
   useEffect(() => {
-    if (visits.length === 0) return
-    const fit = computeFitCamera(
-      visits.map((v) => v.location.coordinates),
-      { globeRadius: GLOBE_RADIUS, minDistance: 5.5, maxDistance: 9 },
-    )
+    const coords = visits
+      .map((v) => v.location?.coordinates)
+      .filter((c): c is { lat: number; lng: number } => !!c)
+    if (coords.length === 0) return
+    const fit = computeFitCamera(coords, {
+      globeRadius: GLOBE_RADIUS,
+      minDistance: 5.5,
+      maxDistance: 9,
+    })
     camera.position.set(fit.x, fit.y, fit.z)
     camera.lookAt(0, 0, 0)
   }, [visits, camera])
@@ -135,10 +141,13 @@ function CameraFit({ visits }: { visits: ItemVisit[] }) {
 
 function MiniGlobe({ visits, isDark }: { visits: ItemVisit[]; isDark: boolean }) {
   // De-dupe locations — a single pin per location even if multiple visits land
-  // on the same coords.
+  // on the same coords. Skip visits whose `location` ref didn't resolve
+  // (deleted location doc, partial seed) so we don't crash on missing
+  // coordinates.
   const uniqueLocations = useMemo(() => {
     const seen = new Map<string, { lat: number; lng: number }>()
     for (const v of visits) {
+      if (!v.location?.coordinates) continue
       if (!seen.has(v.location._id)) {
         seen.set(v.location._id, {
           lat: v.location.coordinates.lat,
@@ -170,39 +179,35 @@ function MiniGlobe({ visits, isDark }: { visits: ItemVisit[]; isDark: boolean })
   )
 }
 
-function formatDateRange(start: string, end: string): string {
-  const s = new Date(start)
-  const e = new Date(end)
-  const sameMonth =
-    s.getUTCFullYear() === e.getUTCFullYear() && s.getUTCMonth() === e.getUTCMonth()
-  const sameDay = sameMonth && s.getUTCDate() === e.getUTCDate()
-  const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' }
-  if (sameDay) return s.toLocaleDateString('en-US', opts)
-  if (sameMonth) {
-    return `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}–${e.toLocaleDateString('en-US', { day: 'numeric', year: 'numeric' })}`
-  }
-  return `${s.toLocaleDateString('en-US', opts)} – ${e.toLocaleDateString('en-US', opts)}`
-}
-
 export default function ArticleItemGlobe({ visits }: ArticleItemGlobeProps) {
   const isDark = useIsDark()
-  const fitRef = useRef<HTMLDivElement | null>(null)
 
-  if (visits.length === 0) return null
+  // Drop visits with dangling location/trip refs at the surface — every
+  // downstream consumer (mini-globe pins, timeline list rendering) assumes
+  // both refs resolve, and a partial render is more useful than a crash.
+  const safeVisits = useMemo(
+    () => visits.filter((v) => v.location && v.trip),
+    [visits],
+  )
+
+  if (safeVisits.length === 0) return null
 
   return (
-    <section
-      ref={fitRef}
-      className="mt-16 border-t border-gray-100 dark:border-gray-900 pt-12"
-    >
+    <section className="mt-16 border-t border-gray-100 dark:border-gray-900 pt-12">
       <h2 className="text-xs tracking-widest uppercase text-gray-300 mb-6">Travelled to</h2>
 
-      <div className="relative w-full h-[40vh] sm:h-[50vh]">
-        <MiniGlobe visits={visits} isDark={isDark} />
+      {/* Visits ordered oldest → newest in the GROQ query (matches the
+          locations timeline above) so the list reads as a journey. */}
+      <div
+        className="relative w-full h-[40vh] sm:h-[50vh]"
+        role="img"
+        aria-label={`Map of ${safeVisits.length} location${safeVisits.length === 1 ? '' : 's'} this item travelled to`}
+      >
+        <MiniGlobe visits={safeVisits} isDark={isDark} />
       </div>
 
       <ul className="flex flex-col gap-3 mt-8">
-        {visits.map((v) => (
+        {safeVisits.map((v) => (
           <li key={v._id} className="flex flex-col gap-1">
             <span className="text-xs text-gray-400">{formatDateRange(v.startDate, v.endDate)}</span>
             <span className="text-sm font-light text-gray-800 dark:text-gray-200">

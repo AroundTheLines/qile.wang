@@ -1,3 +1,5 @@
+'use client'
+
 import { useSyncExternalStore } from 'react'
 
 // Read dark-mode preference synchronously from matchMedia, subscribe to
@@ -6,6 +8,12 @@ import { useSyncExternalStore } from 'react'
 // getSnapshot/subscribe invocations reuse the same instance (SSR never
 // reaches the getter — getServerSnapshot returns first).
 // Exported for test consumption only — app code should go through useIsDark.
+//
+// 'use client' marks the file as client-only — the matchMedia call below
+// would crash if Next.js ever bundled this into a server component. Today
+// the only consumers are GlobeProvider and ArticleItemGlobe, both client
+// components; the directive future-proofs against accidental server
+// imports.
 let _darkMql: MediaQueryList | null = null
 export const getDarkMql = (): MediaQueryList =>
   (_darkMql ??= window.matchMedia('(prefers-color-scheme: dark)'))
