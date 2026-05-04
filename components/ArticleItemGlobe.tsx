@@ -119,55 +119,39 @@ function MiniPin({ lat, lng }: { lat: number; lng: number }) {
   )
 }
 
-function CameraFit({ visits }: { visits: ItemVisit[] }) {
+interface MiniPinSpec {
+  id: string
+  lat: number
+  lng: number
+}
+
+function CameraFit({ pins }: { pins: MiniPinSpec[] }) {
   const { camera } = useThree()
-  // Recompute when the visit set changes; otherwise this fires once on mount.
-  // Skip dangling location refs so the fit reflects only real coordinates.
+  // Recompute when the pin set changes; otherwise this fires once on mount.
   useEffect(() => {
-    const coords = visits
-      .map((v) => v.location?.coordinates)
-      .filter((c): c is { lat: number; lng: number } => !!c)
-    if (coords.length === 0) return
-    const fit = computeFitCamera(coords, {
+    if (pins.length === 0) return
+    const fit = computeFitCamera(pins, {
       globeRadius: GLOBE_RADIUS,
       minDistance: 5.5,
       maxDistance: 9,
     })
     camera.position.set(fit.x, fit.y, fit.z)
     camera.lookAt(0, 0, 0)
-  }, [visits, camera])
+  }, [pins, camera])
   return null
 }
 
-function MiniGlobe({ visits, isDark }: { visits: ItemVisit[]; isDark: boolean }) {
-  // De-dupe locations — a single pin per location even if multiple visits land
-  // on the same coords. Skip visits whose `location` ref didn't resolve
-  // (deleted location doc, partial seed) so we don't crash on missing
-  // coordinates.
-  const uniqueLocations = useMemo(() => {
-    const seen = new Map<string, { lat: number; lng: number }>()
-    for (const v of visits) {
-      if (!v.location?.coordinates) continue
-      if (!seen.has(v.location._id)) {
-        seen.set(v.location._id, {
-          lat: v.location.coordinates.lat,
-          lng: v.location.coordinates.lng,
-        })
-      }
-    }
-    return Array.from(seen.entries())
-  }, [visits])
-
+function MiniGlobe({ pins, isDark }: { pins: MiniPinSpec[]; isDark: boolean }) {
   return (
     <Canvas
       camera={{ fov: 35, near: 0.1, far: 100, position: [0, 0, 7] }}
       gl={{ antialias: true, alpha: true }}
       dpr={[1, 2]}
     >
-      <CameraFit visits={visits} />
+      <CameraFit pins={pins} />
       <MiniGlobeMesh isDark={isDark} />
-      {uniqueLocations.map(([id, c]) => (
-        <MiniPin key={id} lat={c.lat} lng={c.lng} />
+      {pins.map((p) => (
+        <MiniPin key={p.id} lat={p.lat} lng={p.lng} />
       ))}
       <OrbitControls
         enableDamping
@@ -190,22 +174,47 @@ export default function ArticleItemGlobe({ visits }: ArticleItemGlobeProps) {
     [visits],
   )
 
+  // De-dupe pins by location: multiple visits to the same place collapse to
+  // a single dot. Computed at the parent so the aria-label count below
+  // matches what the user actually sees on the globe.
+  const uniquePins: MiniPinSpec[] = useMemo(() => {
+    const seen = new Map<string, MiniPinSpec>()
+    for (const v of safeVisits) {
+      if (!v.location.coordinates) continue
+      if (!seen.has(v.location._id)) {
+        seen.set(v.location._id, {
+          id: v.location._id,
+          lat: v.location.coordinates.lat,
+          lng: v.location.coordinates.lng,
+        })
+      }
+    }
+    return Array.from(seen.values())
+  }, [safeVisits])
+
   if (safeVisits.length === 0) return null
+
+  const locationCount = uniquePins.length
+  const visitCount = safeVisits.length
+  const aLabel =
+    visitCount === locationCount
+      ? `Map of ${locationCount} location${locationCount === 1 ? '' : 's'} this item travelled to`
+      : `Map of ${visitCount} visits across ${locationCount} location${locationCount === 1 ? '' : 's'} this item travelled to`
 
   return (
     <section className="mt-16 border-t border-gray-100 dark:border-gray-900 pt-12">
       <h2 className="text-xs tracking-widest uppercase text-gray-300 mb-6">Travelled to</h2>
 
-      {/* Visits ordered oldest → newest in the GROQ query (matches the
-          locations timeline above) so the list reads as a journey. */}
       <div
         className="relative w-full h-[40vh] sm:h-[50vh]"
         role="img"
-        aria-label={`Map of ${safeVisits.length} location${safeVisits.length === 1 ? '' : 's'} this item travelled to`}
+        aria-label={aLabel}
       >
-        <MiniGlobe visits={safeVisits} isDark={isDark} />
+        <MiniGlobe pins={uniquePins} isDark={isDark} />
       </div>
 
+      {/* Visits ordered oldest → newest in the GROQ query (matches the
+          locations timeline above) so the list reads as a journey. */}
       <ul className="flex flex-col gap-3 mt-8">
         {safeVisits.map((v) => (
           <li key={v._id} className="flex flex-col gap-1">
