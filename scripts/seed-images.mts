@@ -10,7 +10,9 @@
  * Flags:
  *   --dry-run            (log plan, write nothing)
  *   --force-any-dataset  (bypass dev-dataset safety rail)
- *   --skip-existing      (don't re-upload if cover_image already set)
+ *   --skip-fully-imaged  (skip docs that already have cover + gallery + (for
+ *                         items) per-location images — avoids double-uploads
+ *                         on a re-run, but won't paper over a partial run)
  *
  * Images come from picsum.photos with deterministic seeds — no auth, no
  * rate limits, same images every run. Network access required.
@@ -36,7 +38,7 @@ if (!token || !dataset || !projectId) {
 const args = new Set(process.argv.slice(2))
 const dryRun = args.has('--dry-run')
 const forceAny = args.has('--force-any-dataset')
-const skipExisting = args.has('--skip-existing')
+const skipFullyImaged = args.has('--skip-fully-imaged')
 
 const DEV_DATASET_RE = /^dev(elopment)?([-_].*)?$/
 if (!DEV_DATASET_RE.test(dataset) && !forceAny) {
@@ -99,20 +101,24 @@ const imageRef = (assetId: string, withKey = false) => ({
 // Patch plan
 // ------------------------------
 
+type ImageRef = { asset?: { _ref: string } }
+
 type ContentDoc = {
   _id: string
   slug: { current: string }
   title: string
   content_type: 'item' | 'post'
-  cover_image?: unknown
-  locations?: Array<{ _key: string; label: string }>
+  cover_image?: ImageRef
+  galleryCount: number
+  locations?: Array<{ _key: string; label: string; imageCount: number }>
 }
 
 type TripDoc = {
   _id: string
   slug: { current: string }
   title: string
-  cover_image?: unknown
+  cover_image?: ImageRef
+  galleryCount: number
 }
 
 const COVER_W = 1200
@@ -127,9 +133,19 @@ const LOC_H = 800
 const ITEM_GALLERY_COUNT = 3
 const TRIP_GALLERY_COUNT = 4
 
+function isFullyImaged(d: ContentDoc): boolean {
+  if (!d.cover_image?.asset?._ref) return false
+  if (d.galleryCount < ITEM_GALLERY_COUNT) return false
+  if (d.content_type === 'item') {
+    const locs = d.locations ?? []
+    if (locs.some((l) => l.imageCount < 1)) return false
+  }
+  return true
+}
+
 async function patchContent(d: ContentDoc) {
-  if (skipExisting && d.cover_image) {
-    console.log(`  ↷ skip ${d.slug.current} (cover already set)`)
+  if (skipFullyImaged && isFullyImaged(d)) {
+    console.log(`  ↷ skip ${d.slug.current} (fully imaged)`)
     return
   }
   const slug = d.slug.current
@@ -189,8 +205,8 @@ async function patchContent(d: ContentDoc) {
 }
 
 async function patchTrip(d: TripDoc) {
-  if (skipExisting && d.cover_image) {
-    console.log(`  ↷ skip trip ${d.slug.current} (cover already set)`)
+  if (skipFullyImaged && d.cover_image?.asset?._ref && d.galleryCount >= TRIP_GALLERY_COUNT) {
+    console.log(`  ↷ skip trip ${d.slug.current} (fully imaged)`)
     return
   }
   const slug = d.slug.current
@@ -225,15 +241,17 @@ async function patchTrip(d: TripDoc) {
 // ------------------------------
 
 async function main() {
-  console.log(`Dataset: ${dataset}${dryRun ? ' (dry run)' : ''}${skipExisting ? ' (skip-existing)' : ''}\n`)
+  console.log(`Dataset: ${dataset}${dryRun ? ' (dry run)' : ''}${skipFullyImaged ? ' (skip-fully-imaged)' : ''}\n`)
 
   const [contentDocs, tripDocs] = await Promise.all([
     client.fetch<ContentDoc[]>(`*[_type == "content"]{
       _id, slug, title, content_type, cover_image,
-      "locations": locations[]{ _key, label }
+      "galleryCount": count(gallery),
+      "locations": locations[]{ _key, label, "imageCount": count(images) }
     } | order(slug.current asc)`),
     client.fetch<TripDoc[]>(`*[_type == "trip"]{
-      _id, slug, title, cover_image
+      _id, slug, title, cover_image,
+      "galleryCount": count(gallery)
     } | order(slug.current asc)`),
   ])
 
