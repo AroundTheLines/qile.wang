@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic'
 
-import { client } from '@/lib/sanity'
+import { readClient as client } from '@/lib/sanity'
 import { allContentQuery } from '@/lib/queries'
 import type { ContentSummary } from '@/lib/types'
 import Link from 'next/link'
@@ -12,8 +12,7 @@ export default async function FeedPage() {
   return (
     <>
       <Navbar />
-      <main className="min-h-screen bg-white px-6 pt-24 pb-16 max-w-2xl mx-auto">
-      <h1 className="text-xs tracking-widest uppercase text-gray-400 mb-12">Feed</h1>
+      <main className="min-h-screen bg-white px-6 pt-24 pb-16 max-w-2xl lg:max-w-4xl xl:max-w-6xl 2xl:max-w-[70vw] mx-auto">
       <ul className="flex flex-col gap-8">
         {items.map((item) => (
           <li key={item._id}>

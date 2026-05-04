@@ -1,4 +1,4 @@
-import { client } from '@/lib/sanity'
+import { readClient as client } from '@/lib/sanity'
 import { contentBySlugQuery } from '@/lib/queries'
 import type { ContentFull } from '@/lib/types'
 import { notFound } from 'next/navigation'

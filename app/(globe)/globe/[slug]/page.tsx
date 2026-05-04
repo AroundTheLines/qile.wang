@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic'
 
 import type { Metadata } from 'next'
-import { client, urlFor } from '@/lib/sanity'
+import { readClient, urlFor } from '@/lib/sanity'
 import { contentBySlugQuery } from '@/lib/queries'
 import type { ContentFull } from '@/lib/types'
 import { notFound } from 'next/navigation'
@@ -14,7 +14,7 @@ interface Props {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params
-  const item: ContentFull | null = await client.fetch(contentBySlugQuery, { slug })
+  const item: ContentFull | null = await readClient.fetch(contentBySlugQuery, { slug })
   if (!item) return {}
   const ogImage = item.cover_image
     ? urlFor(item.cover_image).width(1200).height(630).fit('crop').url()
@@ -36,7 +36,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function GlobeArticlePage({ params }: Props) {
   const { slug } = await params
-  const item: ContentFull | null = await client.fetch(contentBySlugQuery, { slug })
+  const item: ContentFull | null = await readClient.fetch(contentBySlugQuery, { slug })
   if (!item) return notFound()
 
   // Phase 5C: globe membership is determined by visits referencing this

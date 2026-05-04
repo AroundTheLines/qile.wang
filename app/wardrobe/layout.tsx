@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic'
 
-import { client } from '@/lib/sanity'
+import { readClient as client } from '@/lib/sanity'
 import { wardrobeContentQuery } from '@/lib/queries'
 import type { ContentSummary } from '@/lib/types'
 import WardrobeProvider from '@/components/wardrobe/WardrobeProvider'
