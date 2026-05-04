@@ -17,7 +17,7 @@ export default async function WardrobeArticlePage({ params }: Props) {
   return (
     <div className="w-full mt-20">
       <ArticleReveal>
-        <ArticleContent item={item} wardrobe />
+        <ArticleContent item={item} wardrobe visits={item.visits} />
       </ArticleReveal>
     </div>
   )

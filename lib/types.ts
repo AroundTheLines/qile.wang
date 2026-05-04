@@ -38,6 +38,21 @@ export interface ContentFull extends ContentSummary {
   gallery?: SanityImage[]
   locations?: Location[]
   acquisition?: { location_index?: number }
+  visits?: ItemVisit[]
+}
+
+/**
+ * Visit shape returned by `contentBySlugQuery`. Narrower than `VisitSummary`
+ * — no `items[]` (we are *the* item), and the location projection omits
+ * `slug` because the per-item mini-globe doesn't link out from pins. Includes
+ * the trip ref so the timeline list can link to /trip/<slug>.
+ */
+export interface ItemVisit {
+  _id: string
+  startDate: string
+  endDate: string
+  location: { _id: string; name: string; coordinates: Coordinates }
+  trip: { _id: string; title: string; slug: { current: string } }
 }
 
 // --- Phase 5C: trips / visits / locations ---
@@ -115,6 +130,8 @@ export interface TripArticle {
   title: string
   slug: { current: string }
   articleBody?: PortableTextBlock[]
+  cover_image?: SanityImage
+  gallery?: SanityImage[]
   hasArticle: boolean
   visits: VisitInTrip[]
   startDate?: string

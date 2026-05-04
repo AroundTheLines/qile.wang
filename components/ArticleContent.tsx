@@ -1,20 +1,24 @@
 import Image from 'next/image'
 import { PortableText } from '@portabletext/react'
-import type { ContentFull } from '@/lib/types'
+import type { ContentFull, ItemVisit } from '@/lib/types'
 import { urlFor } from '@/lib/sanity'
 import { portableTextComponents } from '@/lib/portableTextComponents'
 import GlobeArticleHeader from './globe/GlobeArticleHeader'
+import ArticleCarousel from './ArticleCarousel'
+import ArticleItemGlobe from './ArticleItemGlobe'
 
 interface ArticleContentProps {
   item: ContentFull
   wardrobe?: boolean
   globe?: boolean
+  visits?: ItemVisit[]
 }
 
 export default function ArticleContent({
   item,
   wardrobe = false,
   globe = false,
+  visits,
 }: ArticleContentProps) {
   const containerClass = globe
     ? 'w-full px-6 pt-0 pb-16 max-w-xl mx-auto'
@@ -77,22 +81,8 @@ export default function ArticleContent({
         </div>
       )}
 
-      {/* Gallery */}
-      {item.gallery && item.gallery.length > 0 && (
-        <section className="mt-12 flex flex-col gap-4">
-          {item.gallery.map((img, i) => (
-            <div key={img.asset?._ref ?? i} className="relative w-full aspect-[4/3] overflow-hidden rounded-sm">
-              <Image
-                src={urlFor(img).width(1200).url()}
-                alt=""
-                fill
-                className="object-cover"
-                sizes="(max-width: 672px) 100vw, 672px"
-              />
-            </div>
-          ))}
-        </section>
-      )}
+      {/* Gallery — horizontal carousel */}
+      <ArticleCarousel images={item.gallery ?? []} alt={item.title} />
 
       {/* Location timeline */}
       {item.locations && item.locations.length > 0 && (
@@ -130,6 +120,13 @@ export default function ArticleContent({
             ))}
           </ul>
         </section>
+      )}
+
+      {/* Per-item mini-globe — auto-derived from visits[]. Suppressed in
+          globe context (the user already sees the locations on the main
+          globe they navigated through). */}
+      {!globe && visits && visits.length > 0 && (
+        <ArticleItemGlobe visits={visits} />
       )}
 
     </div>
