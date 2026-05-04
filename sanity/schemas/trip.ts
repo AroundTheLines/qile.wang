@@ -32,6 +32,18 @@ export const trip = defineType({
       description:
         'Optional long-form body for /trip/<slug>. Leave empty to ship the trip as a timeline-only entry.',
     }),
+    defineField({
+      name: 'cover_image',
+      title: 'Cover Image',
+      type: 'image',
+      options: { hotspot: true },
+    }),
+    defineField({
+      name: 'gallery',
+      title: 'Gallery',
+      type: 'array',
+      of: [{ type: 'image', options: { hotspot: true } }],
+    }),
   ],
   orderings: [
     {
@@ -41,6 +53,6 @@ export const trip = defineType({
     },
   ],
   preview: {
-    select: { title: 'title', subtitle: 'slug.current' },
+    select: { title: 'title', subtitle: 'slug.current', media: 'cover_image' },
   },
 })

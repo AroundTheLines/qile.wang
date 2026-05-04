@@ -34,6 +34,13 @@ export const contentBySlugQuery = groq`
       body,
       images,
     },
+    "visits": *[_type == "visit" && references(^._id)] | order(startDate asc) {
+      _id,
+      startDate,
+      endDate,
+      "location": location->{ _id, name, coordinates },
+      "trip":     trip->{ _id, title, slug }
+    },
   }
 `
 
@@ -114,6 +121,8 @@ export const tripBySlugQuery = groq`
     title,
     slug,
     articleBody,
+    cover_image,
+    gallery,
     "hasArticle": defined(articleBody) && length(articleBody) > 0,
     "visits": *[_type == "visit" && references(^._id)] | order(startDate asc) {
       _id,
@@ -127,6 +136,8 @@ export const tripBySlugQuery = groq`
     title,
     slug,
     articleBody,
+    cover_image,
+    gallery,
     hasArticle,
     visits,
     "startDate": visits[0].startDate,

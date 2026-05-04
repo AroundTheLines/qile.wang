@@ -20,7 +20,7 @@ export default async function ArticlePage({ params }: Props) {
     <>
       <Navbar />
       <main className="min-h-screen bg-white pt-12">
-        <ArticleContent item={item} />
+        <ArticleContent item={item} visits={item.visits} />
       </main>
     </>
   )

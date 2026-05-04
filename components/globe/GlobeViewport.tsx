@@ -215,44 +215,78 @@ function MobileGlobeLayout({
 
   const isArticle = layoutState === 'article-open'
 
+  // When the article overlay is up, the underlying globe column + timeline +
+  // content region stay mounted (so the WebGL canvas keeps its context and
+  // back-nav is instantaneous) but go visibility:hidden + aria-hidden +
+  // pointer-events:none. visibility:hidden — not display:none — because
+  // Safari can drop GL contexts on display transitions.
+  const hideStyle: React.CSSProperties | undefined = isArticle
+    ? { visibility: 'hidden', pointerEvents: 'none' }
+    : undefined
+
   return (
-    <div className="flex flex-col min-h-screen w-full bg-white dark:bg-black">
-      {/* Globe region — not sticky, scrolls with the page. Navbar (fixed, 72px)
-          overlaps the top of this region; we accept that so the globe reaches
-          full 45vh height without getting cropped. */}
-      <div
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        className="relative w-full flex-shrink-0"
-        style={{ height: '70vh', touchAction: 'none' }}
-      >
-        <GlobeCanvas dragDistanceRef={dragDistanceRef} />
-        <GlobeTooltip />
-      </div>
+    <>
+      <div className="flex flex-col min-h-screen w-full bg-white dark:bg-black">
+        {/* Globe region — not sticky, scrolls with the page. Navbar (fixed, 72px)
+            overlaps the top of this region; we accept that so the globe reaches
+            full 45vh height without getting cropped. */}
+        <div
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          className="relative w-full flex-shrink-0"
+          style={{ height: '70vh', touchAction: 'none', ...hideStyle }}
+          aria-hidden={isArticle ? true : undefined}
+        >
+          <GlobeCanvas dragDistanceRef={dragDistanceRef} />
+          <GlobeTooltip />
+        </div>
 
-      {/* Timeline — scrolls with the page on mobile (no sticky pin). */}
-      <div className="z-30 w-full bg-white dark:bg-black border-b border-black/5 dark:border-white/5 py-2">
-        <Timeline />
-      </div>
+        {/* Timeline — scrolls with the page on mobile (no sticky pin). */}
+        <div
+          className="z-30 w-full bg-white dark:bg-black border-b border-black/5 dark:border-white/5 py-2"
+          style={hideStyle}
+          aria-hidden={isArticle ? true : undefined}
+        >
+          <Timeline />
+        </div>
 
-      {/* Content region — part of the page's vertical flow, not a nested
-          scroll container. Page scroll handles overflow.
-          `min-h-screen` keeps the document tall enough that switching
-          between the (long) trip list and a (shorter) pin/trip panel
-          doesn't snap the page's scroll position when MobileTripList
-          triggers a smooth-scroll back to the globe. Without it, the
-          document shortens mid-animation and scrollY clamps to the new
-          max, cutting the animation short. */}
-      <div className="flex-1 w-full min-h-screen">
-        {isArticle ? (
-          <div className="w-full border-t border-gray-100 dark:border-gray-900">
-            <MobileNavChrome mode="close" />
-            {children}
-          </div>
-        ) : (
+        {/* Content region — part of the page's vertical flow, not a nested
+            scroll container. Page scroll handles overflow.
+            `min-h-screen` keeps the document tall enough that switching
+            between the (long) trip list and a (shorter) pin/trip panel
+            doesn't snap the page's scroll position when MobileTripList
+            triggers a smooth-scroll back to the globe. Without it, the
+            document shortens mid-animation and scrollY clamps to the new
+            max, cutting the animation short. */}
+        <div
+          className="flex-1 w-full min-h-screen"
+          style={hideStyle}
+          aria-hidden={isArticle ? true : undefined}
+        >
           <MobileContentRegion />
-        )}
+        </div>
       </div>
-    </div>
+
+      {/* Article overlay — full-screen takeover when an article is opened from
+          the globe on mobile. Same React tree (not a portal) so children rely
+          on the GlobeProvider context already in scope. The back affordance
+          routes through MobileNavChrome → closeArticle(), which preserves
+          selectedPin so item-to-item swap stays snappy. */}
+      <AnimatePresence>
+        {isArticle && (
+          <motion.div
+            key="mobile-article-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            className="fixed inset-0 z-40 bg-white dark:bg-black overflow-y-auto overscroll-contain"
+          >
+            <MobileNavChrome mode="back" />
+            {children}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   )
 }

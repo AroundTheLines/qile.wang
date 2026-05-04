@@ -1,6 +1,11 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
+import { getDarkMql, useIsDark } from '@/lib/useIsDark'
+
+// Re-export for tests that still import from this module (kept stable across
+// the lift to lib/useIsDark.ts).
+export { getDarkMql }
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
   GlobeDataContext,
@@ -44,30 +49,6 @@ function getViewportTierServer(): ViewportTier {
 }
 function useViewportTier(): ViewportTier {
   return useSyncExternalStore(subscribeViewportTier, getViewportTier, getViewportTierServer)
-}
-
-// Same pattern for dark-mode preference: read synchronously from matchMedia,
-// subscribe to changes without touching state in an effect. The
-// MediaQueryList is cached at module scope and lazy-initialized on first
-// client call so repeated getSnapshot/subscribe invocations reuse the same
-// instance (SSR never reaches the getter — getServerSnapshot returns first).
-// Exported for test consumption only — app code should go through useIsDark.
-let _darkMql: MediaQueryList | null = null
-export const getDarkMql = (): MediaQueryList =>
-  (_darkMql ??= window.matchMedia('(prefers-color-scheme: dark)'))
-function subscribeIsDark(callback: () => void): () => void {
-  const mq = getDarkMql()
-  mq.addEventListener('change', callback)
-  return () => mq.removeEventListener('change', callback)
-}
-function getIsDark(): boolean {
-  return getDarkMql().matches
-}
-function getIsDarkServer(): boolean {
-  return false
-}
-function useIsDark(): boolean {
-  return useSyncExternalStore(subscribeIsDark, getIsDark, getIsDarkServer)
 }
 
 // Total delay before the connector re-draws. Covers both the initial
